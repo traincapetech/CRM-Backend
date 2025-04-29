@@ -28,7 +28,7 @@ if (process.env.NODE_ENV === 'development') {
 
 // Enable CORS with configuration
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: process.env.CORS_ORIGIN || 'https://traincapecrm.traincapetech.in/',
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   credentials: true,
   optionsSuccessStatus: 204
