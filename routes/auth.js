@@ -6,7 +6,7 @@ const { protect, authorize } = require('../middleware/auth');
 router.post('/register', register);
 router.post('/login', login);
 router.get('/me', protect, getMe);
-router.get('/users', protect, authorize('Admin', 'Manager'), getAllUsers);
+router.get('/users', protect, getAllUsers);
 
 // Debug route to check token
 router.get('/debug', protect, (req, res) => {
