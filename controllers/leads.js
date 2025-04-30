@@ -165,6 +165,9 @@ exports.createLead = async (req, res) => {
     
     const leadData = { ...req.body };
     
+    // Set createdBy to the current user
+    leadData.createdBy = req.user._id;
+    
     // If the user is a Lead Person, set them as the leadPerson
     if (req.user.role === 'Lead Person') {
       leadData.leadPerson = req.user._id;
@@ -189,13 +192,17 @@ exports.createLead = async (req, res) => {
     const lead = await Lead.create(leadData);
     
     // Verify the created lead
-    const createdLead = await Lead.findById(lead._id).populate('assignedTo');
+    const createdLead = await Lead.findById(lead._id).populate('assignedTo').populate('createdBy');
     console.log('Created lead successfully:', {
       id: createdLead._id,
       name: createdLead.name,
       assignedTo: createdLead.assignedTo ? {
         id: createdLead.assignedTo._id,
         name: createdLead.assignedTo.fullName
+      } : 'None',
+      createdBy: createdLead.createdBy ? {
+        id: createdLead.createdBy._id,
+        name: createdLead.createdBy.fullName
       } : 'None'
     });
     console.log('==============================================');
@@ -310,7 +317,11 @@ exports.getAssignedLeads = async (req, res) => {
 
     const leads = await Lead.find({ 
       assignedTo: req.user._id 
-    }).sort({ createdAt: -1 });
+    })
+    .populate('leadPerson', 'fullName email')
+    .populate('createdBy', 'fullName email')
+    .populate('assignedTo', 'fullName email')
+    .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,

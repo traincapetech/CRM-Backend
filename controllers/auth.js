@@ -17,6 +17,28 @@ exports.register = async (req, res) => {
       });
     }
 
+    // TEMPORARILY DISABLED FOR INITIAL SETUP
+    // Uncomment this code after creating the first admin user
+    /*
+    // Prevent creating Admin users through public registration
+    // Only allow Admin role if request comes from an existing Admin via the AdminUsersPage
+    if (role === 'Admin') {
+      // Check if this is from an authenticated admin user
+      // The request might have auth info if it's from the admin user page
+      const isAuthenticatedRequest = req.headers.authorization && 
+                                    req.headers.authorization.startsWith('Bearer');
+      
+      if (!isAuthenticatedRequest) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: Cannot create admin user from public registration'
+        });
+      }
+      
+      // Further validation will be handled by middleware for admin endpoints
+    }
+    */
+
     // Create user
     const user = await User.create({
       fullName,

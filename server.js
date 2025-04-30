@@ -3,13 +3,16 @@ const dotenv = require('dotenv');
 const morgan = require('morgan');
 const cors = require('cors');
 const connectDB = require('./config/db');
-
+// const ipFilter = require('./middleware/ipFilter');
 // Load env vars
 dotenv.config();
 
 // Connect to database
 console.log('Connecting to CRM database...');
 connectDB();
+
+// Use the IP filter middleware
+// app.use(ipFilter);
 
 // Route files
 const authRoutes = require('./routes/auth');
@@ -28,7 +31,7 @@ if (process.env.NODE_ENV === 'development') {
 
 // Enable CORS with configuration
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'https://traincapecrm.traincapetech.in/',
+  origin: process.env.CORS_ORIGIN || 'https://traincapecrm.traincapetech.in',
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   credentials: true,
   optionsSuccessStatus: 204

@@ -6,6 +6,14 @@ const Lead = require('../models/Lead');
 // @access  Private
 exports.getSales = async (req, res) => {
   try {
+    console.log('============= GET SALES REQUEST =============');
+    console.log('User making request:', {
+      id: req.user._id,
+      role: req.user.role,
+      name: req.user.fullName,
+      email: req.user.email
+    });
+    
     // Add query parameters for filtering if needed
     const filter = {};
     
@@ -15,8 +23,34 @@ exports.getSales = async (req, res) => {
     }
     
     const sales = await Sale.find(filter)
-      .populate('leadId', 'name email company')
-      .populate('salesPerson', 'fullName email');
+      .populate({
+        path: 'leadId',
+        select: 'name email company phone countryCode country leadPerson assignedTo createdBy',
+        populate: [
+          { path: 'leadPerson', select: 'fullName email' },
+          { path: 'assignedTo', select: 'fullName email' },
+          { path: 'createdBy', select: 'fullName email' }
+        ]
+      })
+      .populate('salesPerson', 'fullName email')
+      .sort({ createdAt: -1 });
+    
+    // Log some details about the results
+    console.log(`Found ${sales.length} sales records`);
+    
+    // Check for potentially problematic records
+    const problematicSales = sales.filter(sale => 
+      !sale.leadId || !sale.leadId.name || !sale.leadId.phone || !sale.leadId.country
+    );
+    
+    if (problematicSales.length > 0) {
+      console.warn(`Found ${problematicSales.length} sales with incomplete lead data:`);
+      problematicSales.forEach(sale => {
+        console.warn(`  - Sale ID: ${sale._id}, Product: ${sale.product}, leadId: ${sale.leadId ? sale.leadId._id : 'missing'}`);
+      });
+    }
+    
+    console.log('==============================================');
     
     res.status(200).json({
       success: true,
@@ -24,6 +58,7 @@ exports.getSales = async (req, res) => {
       data: sales
     });
   } catch (err) {
+    console.error('Error fetching sales:', err);
     res.status(400).json({
       success: false,
       message: err.message
@@ -37,7 +72,15 @@ exports.getSales = async (req, res) => {
 exports.getSale = async (req, res) => {
   try {
     const sale = await Sale.findById(req.params.id)
-      .populate('leadId', 'name email company')
+      .populate({
+        path: 'leadId',
+        select: 'name email company phone countryCode country leadPerson assignedTo createdBy',
+        populate: [
+          { path: 'leadPerson', select: 'fullName email' },
+          { path: 'assignedTo', select: 'fullName email' },
+          { path: 'createdBy', select: 'fullName email' }
+        ]
+      })
       .populate('salesPerson', 'fullName email');
     
     if (!sale) {
@@ -76,18 +119,51 @@ exports.getSale = async (req, res) => {
 // @access  Private
 exports.createSale = async (req, res) => {
   try {
+    console.log('============= CREATE SALE REQUEST =============');
+    console.log('Sale data submitted:', req.body);
+    console.log('User creating sale:', {
+      id: req.user._id,
+      role: req.user.role,
+      name: req.user.fullName,
+      email: req.user.email
+    });
+    
     // Add user to req.body as salesPerson
     req.body.salesPerson = req.user._id;
     
     // Check if lead exists
-    const lead = await Lead.findById(req.body.leadId);
+    const lead = await Lead.findById(req.body.leadId)
+      .populate('leadPerson', 'fullName email')
+      .populate('createdBy', 'fullName email')
+      .populate('assignedTo', 'fullName email');
     
     if (!lead) {
+      console.log(`No lead found with id: ${req.body.leadId}`);
       return res.status(404).json({
         success: false,
         message: `No lead found with id of ${req.body.leadId}`
       });
     }
+    
+    console.log('Found lead:', {
+      id: lead._id,
+      name: lead.name,
+      phone: lead.phone,
+      countryCode: lead.countryCode,
+      country: lead.country,
+      leadPerson: lead.leadPerson ? {
+        id: lead.leadPerson._id,
+        name: lead.leadPerson.fullName
+      } : 'None',
+      createdBy: lead.createdBy ? {
+        id: lead.createdBy._id,
+        name: lead.createdBy.fullName
+      } : 'None',
+      assignedTo: lead.assignedTo ? {
+        id: lead.assignedTo._id,
+        name: lead.assignedTo.fullName
+      } : 'None'
+    });
     
     // Update lead status to Converted if sale is closed
     if (req.body.status === 'Closed') {
@@ -96,12 +172,37 @@ exports.createSale = async (req, res) => {
     }
     
     const sale = await Sale.create(req.body);
+    console.log('Created new sale with ID:', sale._id);
+    
+    // Return populated sale data
+    const populatedSale = await Sale.findById(sale._id)
+      .populate({
+        path: 'leadId',
+        select: 'name email company phone countryCode country leadPerson assignedTo createdBy',
+        populate: [
+          { path: 'leadPerson', select: 'fullName email' },
+          { path: 'assignedTo', select: 'fullName email' },
+          { path: 'createdBy', select: 'fullName email' }
+        ]
+      })
+      .populate('salesPerson', 'fullName email');
+    
+    console.log('Populated sale data:', {
+      id: populatedSale._id,
+      leadId: populatedSale.leadId ? populatedSale.leadId._id : 'None',
+      leadName: populatedSale.leadId ? populatedSale.leadId.name : 'None',
+      product: populatedSale.product,
+      salesPerson: populatedSale.salesPerson ? populatedSale.salesPerson.fullName : 'None'
+    });
+    
+    console.log('==============================================');
     
     res.status(201).json({
       success: true,
-      data: sale
+      data: populatedSale
     });
   } catch (err) {
+    console.error("Error creating sale:", err);
     res.status(400).json({
       success: false,
       message: err.message
@@ -154,9 +255,22 @@ exports.updateSale = async (req, res) => {
       runValidators: true
     });
     
+    // Return populated sale data
+    const populatedSale = await Sale.findById(sale._id)
+      .populate({
+        path: 'leadId',
+        select: 'name email company phone countryCode country leadPerson assignedTo createdBy',
+        populate: [
+          { path: 'leadPerson', select: 'fullName email' },
+          { path: 'assignedTo', select: 'fullName email' },
+          { path: 'createdBy', select: 'fullName email' }
+        ]
+      })
+      .populate('salesPerson', 'fullName email');
+    
     res.status(200).json({
       success: true,
-      data: sale
+      data: populatedSale
     });
   } catch (err) {
     res.status(400).json({
@@ -244,9 +358,22 @@ exports.updateToken = async (req, res) => {
     
     await sale.save();
     
+    // Return populated sale data
+    const populatedSale = await Sale.findById(sale._id)
+      .populate({
+        path: 'leadId',
+        select: 'name email company phone countryCode country leadPerson assignedTo createdBy',
+        populate: [
+          { path: 'leadPerson', select: 'fullName email' },
+          { path: 'assignedTo', select: 'fullName email' },
+          { path: 'createdBy', select: 'fullName email' }
+        ]
+      })
+      .populate('salesPerson', 'fullName email');
+    
     res.status(200).json({
       success: true,
-      data: sale
+      data: populatedSale
     });
   } catch (err) {
     res.status(400).json({
@@ -298,9 +425,22 @@ exports.updatePending = async (req, res) => {
     
     await sale.save();
     
+    // Return populated sale data
+    const populatedSale = await Sale.findById(sale._id)
+      .populate({
+        path: 'leadId',
+        select: 'name email company phone countryCode country leadPerson assignedTo createdBy',
+        populate: [
+          { path: 'leadPerson', select: 'fullName email' },
+          { path: 'assignedTo', select: 'fullName email' },
+          { path: 'createdBy', select: 'fullName email' }
+        ]
+      })
+      .populate('salesPerson', 'fullName email');
+    
     res.status(200).json({
       success: true,
-      data: sale
+      data: populatedSale
     });
   } catch (err) {
     res.status(400).json({

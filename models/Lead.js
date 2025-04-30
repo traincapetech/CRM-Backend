@@ -49,8 +49,8 @@ const LeadSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['New', 'Contacted', 'Qualified', 'Lost', 'Converted'],
-    default: 'New'
+    enum: ['New', 'Contacted', 'Qualified', 'Lost', 'Converted', 'Introduction', 'Acknowledgement', 'Question', 'Future Promise', 'Payment', 'Analysis'],
+    default: 'Introduction'
   },
   source: {
     type: String,
@@ -65,6 +65,10 @@ const LeadSchema = new mongoose.Schema({
     ref: 'User'
   },
   leadPerson: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
