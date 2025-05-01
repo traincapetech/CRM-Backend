@@ -5,11 +5,8 @@ const User = require('../models/User');
 exports.protect = async (req, res, next) => {
   let token;
   
-  // Only log in development environment
-  if (process.env.NODE_ENV === 'development') {
-    console.log('Auth middleware triggered');
-    console.log('Headers:', req.headers);
-  }
+  // Log all incoming requests with their paths and method
+  console.log(`Auth middleware: ${req.method} ${req.originalUrl}`);
 
   if (
     req.headers.authorization &&
@@ -17,71 +14,74 @@ exports.protect = async (req, res, next) => {
   ) {
     // Set token from Bearer token in header
     token = req.headers.authorization.split(' ')[1];
-    
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Token extracted:', token ? 'Found' : 'Not found');
-    }
+    console.log('Bearer token found in request');
   }
 
   // Make sure token exists
   if (!token) {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('No token found in request');
-    }
+    console.log('No token found in request, rejecting with 401');
     return res.status(401).json({
       success: false,
-      message: 'Not authorized to access this route'
+      message: 'Not authorized to access this route (no token provided)'
     });
   }
 
   try {
     // Verify token
     if (!process.env.JWT_SECRET) {
+      console.error('JWT_SECRET environment variable is not defined');
       throw new Error('JWT_SECRET environment variable is not defined');
     }
     
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Token decoded:', decoded);
-    }
+    console.log(`Token verified for user ID: ${decoded.id}`);
 
     const user = await User.findById(decoded.id);
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log('User found:', user ? 'Yes' : 'No');
-    }
-    
     if (!user) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('No user found with the ID in the token');
-      }
+      console.log(`User not found with ID: ${decoded.id} from token`);
       return res.status(401).json({
         success: false,
-        message: 'User not found'
+        message: 'User not found or has been deleted'
       });
     }
     
+    console.log(`User authenticated: ${user.fullName} (${user.role})`);
     req.user = user;
     next();
   } catch (err) {
     console.error('Token verification error:', err.message);
-    return res.status(401).json({
-      success: false,
-      message: 'Not authorized to access this route'
-    });
+    if (err.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token'
+      });
+    } else if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Token expired, please log in again'
+      });
+    } else {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication error: ' + err.message
+      });
+    }
   }
 };
 
 // Grant access to specific roles
 exports.authorize = (...roles) => {
   return (req, res, next) => {
+    console.log(`Role authorization check: User ${req.user.fullName} has role ${req.user.role}, required roles: ${roles.join(', ')}`);
     if (!roles.includes(req.user.role)) {
+      console.log(`Access denied: ${req.user.role} not in [${roles.join(', ')}]`);
       return res.status(403).json({
         success: false,
-        message: `User role ${req.user.role} is not authorized to access this route`
+        message: `Access denied: ${req.user.role} role is not authorized to perform this action`
       });
     }
+    console.log('Role authorization successful');
     next();
   };
 }; 

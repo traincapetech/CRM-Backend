@@ -141,6 +141,107 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
+// @desc    Update user
+// @route   PUT /api/auth/users/:id
+// @access  Private (Admin only)
+exports.updateUser = async (req, res) => {
+  try {
+    console.log(`Attempting to update user with ID: ${req.params.id}`);
+    const { fullName, email, role } = req.body;
+    
+    // Check if user exists
+    let user = await User.findById(req.params.id);
+    
+    if (!user) {
+      console.log(`User not found with ID: ${req.params.id}`);
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    // Update basic user data
+    user.fullName = fullName || user.fullName;
+    user.email = email || user.email;
+    user.role = role || user.role;
+    
+    // If password is provided, update it
+    if (req.body.password && req.body.password.trim() !== '') {
+      user.password = req.body.password;
+      // The password will be hashed via the pre-save middleware
+    }
+    
+    // Save the user - this will trigger the pre-save hook for password hashing
+    await user.save();
+    
+    // Make sure we don't return the password
+    user = await User.findById(user._id);
+    
+    console.log(`User updated successfully: ${user._id}`);
+    res.status(200).json({
+      success: true,
+      data: user
+    });
+  } catch (err) {
+    console.error(`Error updating user: ${err.message}`);
+    res.status(400).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+// @desc    Delete user
+// @route   DELETE /api/auth/users/:id
+// @access  Private (Admin only)
+exports.deleteUser = async (req, res) => {
+  try {
+    console.log(`Attempting to delete user with ID: ${req.params.id}`);
+    
+    // Check if user exists
+    const user = await User.findById(req.params.id);
+    
+    if (!user) {
+      console.log(`User not found with ID: ${req.params.id}`);
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    // Prevent admin from deleting themselves
+    if (user._id.toString() === req.user.id) {
+      console.log('User attempted to delete their own account');
+      return res.status(400).json({
+        success: false,
+        message: 'You cannot delete your own account'
+      });
+    }
+    
+    // Delete user with the findByIdAndDelete method
+    const result = await User.findByIdAndDelete(req.params.id);
+    
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        message: 'Failed to delete user'
+      });
+    }
+    
+    console.log(`User deleted successfully: ${req.params.id}`);
+    res.status(200).json({
+      success: true,
+      data: {}
+    });
+  } catch (err) {
+    console.error(`Error deleting user: ${err.message}`);
+    res.status(400).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
 // Get token from model, create cookie and send response
 const sendTokenResponse = (user, statusCode, res) => {
   // Create token

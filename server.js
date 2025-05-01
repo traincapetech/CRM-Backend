@@ -18,6 +18,7 @@ connectDB();
 const authRoutes = require('./routes/auth');
 const leadRoutes = require('./routes/leads');
 const saleRoutes = require('./routes/sales');
+const currencyRoutes = require('./routes/currency');
 
 const app = express();
 
@@ -42,6 +43,7 @@ app.use(cors(corsOptions));
 app.use('/api/auth', authRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/sales', saleRoutes);
+app.use('/api/currency', currencyRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
