@@ -399,4 +399,78 @@ exports.updateFeedback = async (req, res) => {
       message: err.message
     });
   }
+};
+
+// @desc    Import leads from CSV (Google Sheets)
+// @route   POST /api/leads/import
+// @access  Private (Admin only)
+exports.importLeads = async (req, res) => {
+  try {
+    const { leads } = req.body;
+    
+    if (!leads || !Array.isArray(leads) || leads.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No leads data provided or invalid format'
+      });
+    }
+    
+    console.log(`Importing ${leads.length} leads from CSV...`);
+    
+    // Map Google Sheets column names to our database fields
+    const mappedLeads = leads.map(lead => {
+      // This is an example mapping - adjust based on your actual CSV columns
+      return {
+        name: lead.Name || lead.name || '',
+        email: lead.Email || lead.email || '',
+        course: lead.Course || lead.course || '',
+        countryCode: lead.CountryCode || lead['Country Code'] || lead.countryCode || '+1',
+        phone: lead.Phone || lead.phone || '',
+        country: lead.Country || lead.country || '',
+        pseudoId: lead.PseudoId || lead.pseudoId || lead.ID || lead.id || '',
+        company: lead.Company || lead.company || '',
+        client: lead.Client || lead.client || '',
+        status: lead.Status || lead.status || 'New',
+        source: lead.Source || lead.source || '',
+        sourceLink: lead.SourceLink || lead['Source Link'] || lead.sourceLink || '',
+        remarks: lead.Remarks || lead.remarks || '',
+        feedback: lead.Feedback || lead.feedback || '',
+        // Set created by to the current user (admin)
+        createdBy: req.user.id
+      };
+    });
+    
+    // Validate the mapped data
+    const validLeads = mappedLeads.filter(lead => 
+      lead.name && lead.email && lead.phone && lead.course && lead.country
+    );
+    
+    if (validLeads.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid leads found in the imported data'
+      });
+    }
+    
+    console.log(`Found ${validLeads.length} valid leads out of ${leads.length}`);
+    
+    // Insert the leads into the database
+    const results = await Lead.insertMany(validLeads, { 
+      ordered: false // Continue processing even if some documents have errors
+    });
+    
+    console.log(`Successfully imported ${results.length} leads`);
+    
+    res.status(201).json({
+      success: true,
+      count: results.length,
+      data: results
+    });
+  } catch (err) {
+    console.error('Lead import error:', err);
+    res.status(400).json({
+      success: false,
+      message: err.message
+    });
+  }
 }; 

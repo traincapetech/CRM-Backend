@@ -32,7 +32,11 @@ const UserSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
-  }
+  },
+  verifyOtp: { type: String, default: "" },
+  verifyOtpExpireAt: { type: Number, default: 0 },
+  resetOtp: { type: String, default: "" },
+  resetOtpExpireAt: { type: Number, default: 0 },
 }, {
   // Use the existing collection
   collection: 'users'

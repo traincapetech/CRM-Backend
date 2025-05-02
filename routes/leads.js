@@ -7,7 +7,8 @@ const {
   updateLead,
   deleteLead,
   updateFeedback,
-  getAssignedLeads
+  getAssignedLeads,
+  importLeads
 } = require('../controllers/leads');
 
 const { protect, authorize } = require('../middleware/auth');
@@ -19,6 +20,9 @@ router.use(protect);
 router.route('/')
   .get(authorize('Lead Person', 'Manager', 'Admin'), getLeads)
   .post(authorize('Lead Person', 'Manager', 'Admin'), createLead);
+
+// Import route (Admin only)
+router.post('/import', authorize('Admin'), importLeads);
 
 // The '/assigned' route must come BEFORE the '/:id' route
 router.get('/assigned', authorize('Sales Person'), getAssignedLeads);

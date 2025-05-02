@@ -448,4 +448,99 @@ exports.updatePending = async (req, res) => {
       message: err.message
     });
   }
+};
+
+// @desc    Import sales from CSV (Google Sheets)
+// @route   POST /api/sales/import
+// @access  Private (Admin only)
+exports.importSales = async (req, res) => {
+  try {
+    const { sales } = req.body;
+    
+    if (!sales || !Array.isArray(sales) || sales.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No sales data provided or invalid format'
+      });
+    }
+    
+    console.log(`Importing ${sales.length} sales from CSV...`);
+    
+    // Process sales one by one, since we need to look up lead information
+    const Lead = require('../models/Lead');
+    const results = [];
+    const errors = [];
+    
+    for (const sale of sales) {
+      try {
+        // Find the lead based on email or phone number
+        const leadIdentifier = sale.Email || sale.email || sale.Phone || sale.phone;
+        if (!leadIdentifier) {
+          errors.push({ sale, message: 'No lead identifier (email/phone) found' });
+          continue;
+        }
+        
+        // Try to find the lead
+        const lead = await Lead.findOne({
+          $or: [
+            { email: leadIdentifier },
+            { phone: leadIdentifier }
+          ]
+        });
+        
+        if (!lead) {
+          errors.push({ sale, message: `No lead found with identifier: ${leadIdentifier}` });
+          continue;
+        }
+        
+        // Map Google Sheets column names to our database fields
+        const newSale = {
+          leadId: lead._id,
+          amount: parseFloat(sale.Amount || sale.amount || 0),
+          token: parseFloat(sale.Token || sale.token || 0),
+          product: sale.Product || sale.product || '',
+          status: sale.Status || sale.status || 'Pending',
+          notes: sale.Notes || sale.notes || '',
+          // Set sales person to the current user (admin) if not specified
+          salesPerson: req.user.id
+        };
+        
+        // Calculate pending amount
+        newSale.pending = newSale.amount - newSale.token;
+        
+        // Set closed date if status is Closed
+        if (newSale.status === 'Closed') {
+          newSale.closedDate = new Date();
+        }
+        
+        // Validate sale data
+        if (!newSale.amount || !newSale.product) {
+          errors.push({ sale, message: 'Missing required fields (amount or product)' });
+          continue;
+        }
+        
+        // Create the sale
+        const createdSale = await Sale.create(newSale);
+        results.push(createdSale);
+      } catch (error) {
+        errors.push({ sale, message: error.message });
+      }
+    }
+    
+    console.log(`Successfully imported ${results.length} sales with ${errors.length} errors`);
+    
+    res.status(201).json({
+      success: true,
+      count: results.length,
+      errorCount: errors.length,
+      data: results,
+      errors: errors
+    });
+  } catch (err) {
+    console.error('Sale import error:', err);
+    res.status(400).json({
+      success: false,
+      message: err.message
+    });
+  }
 }; 

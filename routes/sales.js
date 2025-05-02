@@ -7,7 +7,8 @@ const {
   updateSale,
   deleteSale,
   updateToken,
-  updatePending
+  updatePending,
+  importSales
 } = require('../controllers/sales');
 
 const { protect, authorize } = require('../middleware/auth');
@@ -19,6 +20,9 @@ router.use(protect);
 router.route('/')
   .get(authorize('Sales Person', 'Manager', 'Admin'), getSales)
   .post(authorize('Sales Person', 'Manager', 'Admin'), createSale);
+
+// Import route (Admin only)
+router.post('/import', authorize('Admin'), importSales);
 
 router.route('/:id')
   .get(authorize('Sales Person', 'Manager', 'Admin'), getSale)
