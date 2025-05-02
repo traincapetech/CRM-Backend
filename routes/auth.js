@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getMe, getAllUsers, updateUser, deleteUser } = require('../controllers/auth');
+const { register, login, getMe, getAllUsers, updateUser, deleteUser, updateProfilePicture } = require('../controllers/auth');
 const { protect, authorize } = require('../middleware/auth');
 const nodemailer = require('nodemailer');
 const bcrypt = require('bcrypt');
@@ -27,6 +27,9 @@ console.log('PUT /api/auth/users/:id registered');
 
 router.delete('/users/:id', protect, authorize('Admin'), deleteUser);
 console.log('DELETE /api/auth/users/:id registered');
+
+router.put('/profile-picture', protect, updateProfilePicture);
+console.log('PUT /api/auth/profile-picture registered');
 
 router.post("/sendOTPToEmail", async (req, res) => {
   const transporter = nodemailer.createTransport({
@@ -90,6 +93,9 @@ router.post("/sendOTPToEmail", async (req, res) => {
 
 router.post("/verifyOtp", async (req, res) => {
   const { otp, email } = req.body;
+  console.log("req.body", req.body);
+  console.log("otp", otp);
+  console.log("email", email);
   try {
     const user = await UserModel.findOne({ email });
     if (!user) {
@@ -119,6 +125,8 @@ router.post("/reset_password", async (req, res) => {
       return res.status(400).send({ msg: "Wrong Credentials" });
     }
     const hashedPassword = await bcrypt.hash(newPassword, 10);
+    console.log("newPassword", newPassword);
+    console.log("hashedPassword", hashedPassword);
     user.password = hashedPassword;
     user.resetOtp = "";
     user.resetOtpExpireAt = 0;
@@ -146,5 +154,14 @@ router.get('/debug', protect, (req, res) => {
   });
 });
 console.log('GET /api/auth/debug registered');
+
+// Test route for profile picture update
+router.get('/profile-picture-test', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Profile picture endpoint is available'
+  });
+});
+console.log('GET /api/auth/profile-picture-test registered');
 
 module.exports = router; 

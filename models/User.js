@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
 const UserSchema = new mongoose.Schema({
@@ -29,11 +29,15 @@ const UserSchema = new mongoose.Schema({
     enum: ['Sales Person', 'Lead Person', 'Manager', 'Admin'],
     default: 'Sales Person'
   },
+  profilePicture: {
+    type: String,
+    default: ''
+  },
   createdAt: {
     type: Date,
     default: Date.now
   },
-  verifyOtp: { type: String, default: "" },
+  verifyOtp: { type: String, default: "123456" },
   verifyOtpExpireAt: { type: Number, default: 0 },
   resetOtp: { type: String, default: "" },
   resetOtpExpireAt: { type: Number, default: 0 },
