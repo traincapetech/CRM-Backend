@@ -32,10 +32,24 @@ if (process.env.NODE_ENV === 'development') {
 
 // Enable CORS with configuration
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'https://traincapecrm.traincapetech.in',
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'https://traincapecrm.traincapetech.in',
+      'https://crm-backend-o36v.onrender.com'
+    ];
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked request from:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   credentials: true,
-  optionsSuccessStatus: 204
+  optionsSuccessStatus: 204,
+  allowedHeaders: ['Content-Type', 'Authorization']
 };
 app.use(cors(corsOptions));
 
@@ -63,7 +77,22 @@ app.use((req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 5050;
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error:', err.message);
+  if (err.name === 'UnauthorizedError') {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid token'
+    });
+  }
+  res.status(500).json({
+    success: false,
+    message: err.message || 'Internal server error'
+  });
+});
+
+const PORT = process.env.PORT || 8080;
 
 const server = app.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);

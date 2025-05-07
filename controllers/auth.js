@@ -6,53 +6,72 @@ const bcrypt = require("bcrypt");
 // @access  Public
 exports.register = async (req, res) => {
   try {
+    console.log("Register attempt:", { 
+      email: req.body.email,
+      fullName: req.body.fullName,
+      role: req.body.role 
+    });
+    
     const { fullName, email, password, role } = req.body;
+    
+    // Basic validation
+    if (!fullName || !email || !password) {
+      console.log("Missing required registration fields");
+      return res.status(400).json({
+        success: false,
+        message: "Please provide name, email and password"
+      });
+    }
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
 
     if (existingUser) {
+      console.log(`User with email ${email} already exists`);
       return res.status(400).json({
         success: false,
         message: "Email already registered",
       });
     }
 
-    // TEMPORARILY DISABLED FOR INITIAL SETUP
-    // Uncomment this code after creating the first admin user
-    /*
-    // Prevent creating Admin users through public registration
-    // Only allow Admin role if request comes from an existing Admin via the AdminUsersPage
-    if (role === 'Admin') {
-      // Check if this is from an authenticated admin user
-      // The request might have auth info if it's from the admin user page
-      const isAuthenticatedRequest = req.headers.authorization && 
-                                    req.headers.authorization.startsWith('Bearer');
-      
-      if (!isAuthenticatedRequest) {
-        return res.status(403).json({
-          success: false,
-          message: 'Unauthorized: Cannot create admin user from public registration'
-        });
-      }
-      
-      // Further validation will be handled by middleware for admin endpoints
-    }
-    */
-
+    console.log("Creating new user...");
     // Create user
     const user = await User.create({
       fullName,
       email,
       password,
-      role,
+      role: role || 'Sales Person', // Default role if not specified
     });
 
+    console.log(`User created successfully with ID: ${user._id}`);
     sendTokenResponse(user, 201, res);
   } catch (err) {
-    res.status(400).json({
-      success: false,
+    console.error("Registration error details:", {
+      name: err.name,
       message: err.message,
+      stack: err.stack,
+      code: err.code
+    });
+    
+    // Provide more specific error messages for common issues
+    if (err.name === 'ValidationError') {
+      const messages = Object.values(err.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(', ')
+      });
+    }
+    
+    if (err.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email already registered'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: err.message || 'Internal server error during registration'
     });
   }
 };
@@ -62,50 +81,53 @@ exports.register = async (req, res) => {
 // @access  Public
 exports.login = async (req, res) => {
   try {
+    console.log("Login attempt:", { email: req.body.email });
     const { email, password } = req.body;
 
     // Validate email & password
     if (!email || !password) {
+      console.log("Missing credentials - email or password not provided");
       return res.status(400).json({
         success: false,
         message: "Please provide an email and password",
       });
     }
 
-    // Check for user
-    const user = await User.findOne({ email }).select("+password");
+    // Check for user and explicitly select password field
+    const user = await User.findOne({ email }).select('+password');
 
     if (!user) {
+      console.log(`User not found with email: ${email}`);
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
       });
     }
-    console.log(password);
-    console.log(user.password);
-    // Check if password matchesß
-    // const isMatch = await user.matchPassword(password);
-  
-    // if (!isMatch) {
-    //   console.log("Password is not matching");
-    //   return res.status(401).json({
-    //     success: false,
-    //     message: "Invalid credentials",
-    //   });
-    // }
-
-    bcrypt.compare(password, user.password, (err, result) => {
-      if (err || !result) {
-        return res
-          .status(401)
-          .send({ success: false, message: "Wrong Credentials" });
-      }})
-
+    
+    console.log(`User found: ${user._id}, comparing passwords`);
+    
+    // Use the matchPassword method from the User model
+    const isMatch = await user.matchPassword(password);
+    
+    if (!isMatch) {
+      console.log("Password does not match");
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
+    
+    console.log("Login successful, sending token response");
     sendTokenResponse(user, 200, res);
   } catch (err) {
-    res.status(400).json({
-      success: false,
+    console.error("Login error:", {
+      name: err.name,
       message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({
+      success: false,
+      message: "An error occurred during login. Please try again.",
     });
   }
 };
