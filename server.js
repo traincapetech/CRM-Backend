@@ -37,8 +37,14 @@ const corsOptions = {
       'http://localhost:5173',
       'http://127.0.0.1:5173',
       'https://traincapecrm.traincapetech.in',
+      'http://traincapecrm.traincapetech.in',
       'https://crm-backend-o36v.onrender.com'
     ];
+    
+    // For debugging - log all origins
+    console.log('Request origin:', origin);
+    
+    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
