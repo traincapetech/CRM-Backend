@@ -163,7 +163,23 @@ exports.createLead = async (req, res) => {
       name: req.user.fullName
     });
     
-    const leadData = { ...req.body };
+    // Map the new field names to the database model field names
+    const leadData = {
+      name: req.body.NAME,
+      email: req.body['E-MAIL'],
+      course: req.body.COURSE,
+      countryCode: req.body.CODE,
+      phone: req.body.NUMBER,
+      country: req.body.COUNTRY,
+      pseudoId: req.body['PSUDO ID'],
+      client: req.body['CLIENT REMARK'],
+      status: req.body.status || 'Introduction',
+      source: req.body.SOURSE,
+      assignedTo: req.body['SALE PERSON'],
+      leadPerson: req.body['LEAD PERSON'],
+      feedback: req.body.FEEDBACK,
+      createdAt: req.body.DATE ? new Date(req.body.DATE) : Date.now()
+    };
     
     // Set createdBy to the current user
     leadData.createdBy = req.user._id;
@@ -184,7 +200,6 @@ exports.createLead = async (req, res) => {
     }
     
     // Make sure creation timestamp is set
-    leadData.createdAt = Date.now();
     leadData.updatedAt = Date.now();
     
     console.log('Final lead data before creation:', leadData);
@@ -246,10 +261,34 @@ exports.updateLead = async (req, res) => {
       });
     }
     
-    // Update the updatedAt field
-    req.body.updatedAt = Date.now();
+    // Map the new field names to the database model field names
+    const updatedData = {
+      name: req.body.NAME,
+      email: req.body['E-MAIL'],
+      course: req.body.COURSE,
+      countryCode: req.body.CODE,
+      phone: req.body.NUMBER,
+      country: req.body.COUNTRY,
+      pseudoId: req.body['PSUDO ID'],
+      client: req.body['CLIENT REMARK'],
+      status: req.body.status || lead.status,
+      source: req.body.SOURSE,
+      assignedTo: req.body['SALE PERSON'],
+      leadPerson: req.body['LEAD PERSON'],
+      feedback: req.body.FEEDBACK,
+      createdAt: req.body.DATE ? new Date(req.body.DATE) : lead.createdAt,
+      updatedAt: Date.now()
+    };
     
-    lead = await Lead.findByIdAndUpdate(req.params.id, req.body, {
+    // Only include fields that are actually provided in the request
+    const finalUpdateData = {};
+    for (const [key, value] of Object.entries(updatedData)) {
+      if (value !== undefined) {
+        finalUpdateData[key] = value;
+      }
+    }
+    
+    lead = await Lead.findByIdAndUpdate(req.params.id, finalUpdateData, {
       new: true,
       runValidators: true
     });
@@ -259,6 +298,7 @@ exports.updateLead = async (req, res) => {
       data: lead
     });
   } catch (err) {
+    console.error('Error updating lead:', err);
     res.status(400).json({
       success: false,
       message: err.message

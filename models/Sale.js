@@ -1,53 +1,111 @@
 const mongoose = require('mongoose');
 
 const SaleSchema = new mongoose.Schema({
-  leadId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Lead',
+  date: {
+    type: Date,
+    default: Date.now,
     required: true
   },
-  amount: {
-    type: Number,
-    required: [true, 'Please add a sale amount']
-  },
-  token: {
-    type: Number,
-    default: 0
-  },
-  pending: {
-    type: Number,
-    default: function() {
-      return this.amount - this.token;
-    }
-  },
-  status: {
+  customerName: {
     type: String,
-    enum: ['Pending', 'Closed', 'Cancelled'],
-    default: 'Pending'
+    required: [true, 'Please add a customer name'],
+    trim: true,
+    maxlength: [100, 'Name cannot be more than 100 characters']
   },
-  closedDate: {
-    type: Date
-  },
-  product: {
+  country: {
     type: String,
-    required: [true, 'Please specify the product/service sold']
+    required: [true, 'Please add a country'],
+    trim: true
+  },
+  course: {
+    type: String,
+    required: [true, 'Please add a course name'],
+    trim: true
+  },
+  countryCode: {
+    type: String,
+    trim: true
+  },
+  contactNumber: {
+    type: String,
+    required: [true, 'Please add a contact number'],
+    trim: true
+  },
+  email: {
+    type: String,
+    trim: true,
+    match: [
+      /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+      'Please add a valid email'
+    ]
+  },
+  pseudoId: {
+    type: String,
+    trim: true
   },
   salesPerson: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: [true, 'Please assign a sales person']
+  },
+  leadPerson: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Please assign a lead person']
+  },
+  source: {
+    type: String,
+    trim: true
+  },
+  clientRemark: {
+    type: String,
+    trim: true
+  },
+  feedback: {
+    type: String,
+    trim: true
+  },
+  totalCost: {
+    type: Number,
+    default: 0
+  },
+  totalCostCurrency: {
+    type: String,
+    default: 'USD',
+    trim: true
+  },
+  tokenAmount: {
+    type: Number,
+    default: 0
+  },
+  tokenAmountCurrency: {
+    type: String,
+    default: 'USD',
+    trim: true
+  },
+  pending: {
+    type: Boolean,
+    default: true
+  },
+  status: {
+    type: String,
+    enum: ['Completed', 'Pending', 'Cancelled'],
+    default: 'Pending'
   },
   notes: {
-    type: String
+    type: String,
+    trim: true
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }
+}, {
+  timestamps: true
 });
 
 module.exports = mongoose.model('Sale', SaleSchema); 
