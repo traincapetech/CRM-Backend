@@ -166,7 +166,7 @@ exports.createLead = async (req, res) => {
     // Map the new field names to the database model field names
     const leadData = {
       name: req.body.NAME,
-      email: req.body['E-MAIL'],
+      email: req.body['E-MAIL'] || '',
       course: req.body.COURSE,
       countryCode: req.body.CODE,
       phone: req.body.NUMBER,
@@ -264,7 +264,7 @@ exports.updateLead = async (req, res) => {
     // Map the new field names to the database model field names
     const updatedData = {
       name: req.body.NAME,
-      email: req.body['E-MAIL'],
+      email: req.body['E-MAIL'] || '',
       course: req.body.COURSE,
       countryCode: req.body.CODE,
       phone: req.body.NUMBER,
