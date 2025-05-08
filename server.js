@@ -19,7 +19,11 @@ const authRoutes = require('./routes/auth');
 const leadRoutes = require('./routes/leads');
 const saleRoutes = require('./routes/sales');
 const currencyRoutes = require('./routes/currency');
+const taskRoutes = require('./routes/taskRoutes');
 const app = express();
+
+// Reminder service
+const { processExamReminders } = require('./utils/reminderService');
 
 // Body parser
 app.use(express.json({ limit: '50mb' }));
@@ -64,6 +68,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/currency', currencyRoutes);
+app.use('/api/tasks', taskRoutes);
 
 
 // Basic route for testing
@@ -103,6 +108,17 @@ const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
 });
+
+// Set up the reminder scheduler - run every hour
+const REMINDER_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
+setInterval(() => {
+  console.log('Running exam reminder scheduler...');
+  processExamReminders();
+}, REMINDER_INTERVAL);
+
+// Also run once at startup
+console.log('Initial run of exam reminder scheduler...');
+processExamReminders();
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err, promise) => {

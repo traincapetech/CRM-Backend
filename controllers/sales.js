@@ -273,17 +273,24 @@ exports.deleteSale = async (req, res) => {
     }
 
     // Make sure user is authorized to delete this sale
-    if (
-      req.user.role === 'Sales Person' || 
-      req.user.role === 'Lead Person'
-    ) {
+    // Sales Person can only delete their own sales
+    if (req.user.role === 'Sales Person' && sale.salesPerson.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: `User ${req.user.id} is not authorized to delete this sale`
+      });
+    }
+    
+    // Lead Person cannot delete sales
+    if (req.user.role === 'Lead Person') {
       return res.status(403).json({
         success: false,
         message: `User with role ${req.user.role} is not authorized to delete sales`
       });
     }
 
-    await sale.remove();
+    // Use findByIdAndDelete instead of remove (which is deprecated)
+    await Sale.findByIdAndDelete(req.params.id);
 
     res.status(200).json({
       success: true,
