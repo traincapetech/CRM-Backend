@@ -3,9 +3,15 @@ const dotenv = require('dotenv');
 const morgan = require('morgan');
 const cors = require('cors');
 const connectDB = require('./config/db');
+const { corsMiddleware, ensureCorsHeaders, handleOptions } = require('./middleware/cors');
 // const ipFilter = require('./middleware/ipFilter');
 // Load env vars
 dotenv.config();
+
+// Set DEBUG_CORS in development for testing
+if (process.env.NODE_ENV === 'development') {
+  process.env.DEBUG_CORS = 'true';
+}
 
 // Connect to database
 console.log('Connecting to CRM database...');
@@ -36,34 +42,17 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
 
-// Enable CORS with configuration
-const corsOptions = {
-  origin: function (origin, callback) {
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'https://traincapecrm.traincapetech.in',
-      'http://traincapecrm.traincapetech.in',
-      'https://crm-backend-o36v.onrender.com'
-    ];
-    
-    // For debugging - log all origins
-    console.log('Request origin:', origin);
-    
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log('CORS blocked request from:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  credentials: true,
-  optionsSuccessStatus: 204,
-  allowedHeaders: ['Content-Type', 'Authorization']
-};
-app.use(cors(corsOptions));
+// Enable CORS with our custom middleware
+app.use(corsMiddleware);
+
+// Add a pre-flight route handler for OPTIONS requests
+app.options('*', handleOptions);
+
+// Add second layer of CORS protection to ensure headers are set
+app.use(ensureCorsHeaders);
+
+// Add a specific route for CORS preflight that always succeeds
+app.options('/api/*', handleOptions);
 
 // Mount routers
 app.use('/api/auth', authRoutes);
