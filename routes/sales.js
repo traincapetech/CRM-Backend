@@ -55,7 +55,9 @@ router.get('/lead-sheet', authorize('Lead Person', 'Manager', 'Admin'), async (r
     const { startDate, endDate, leadPerson, salesPerson } = req.query;
     
     // Build filter object
-    const filter = {};
+    const filter = {
+      isLeadPersonSale: true  // Always filter for lead person sales
+    };
     
     // Date range filter
     if (startDate || endDate) {

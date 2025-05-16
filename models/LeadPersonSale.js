@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const SaleSchema = new mongoose.Schema({
+const LeadPersonSaleSchema = new mongoose.Schema({
   date: {
     type: Date,
     default: Date.now,
@@ -53,29 +53,9 @@ const SaleSchema = new mongoose.Schema({
     ref: 'User',
     required: [true, 'Please assign a lead person']
   },
-  leadBy: {
-    type: String,
-    trim: true
-  },
-  loginId: {
-    type: String,
-    trim: true
-  },
-  password: {
-    type: String,
-    trim: true
-  },
   source: {
     type: String,
     trim: true
-  },
-  isReference: {
-    type: Boolean,
-    default: false
-  },
-  isLeadPersonSale: {
-    type: Boolean,
-    default: false
   },
   clientRemark: {
     type: String,
@@ -103,10 +83,6 @@ const SaleSchema = new mongoose.Schema({
     default: 'USD',
     trim: true
   },
-  pending: {
-    type: Boolean,
-    default: true
-  },
   status: {
     type: String,
     enum: ['Completed', 'Pending', 'Cancelled'],
@@ -128,4 +104,4 @@ const SaleSchema = new mongoose.Schema({
   timestamps: true
 });
 
-module.exports = mongoose.model('Sale', SaleSchema); 
+module.exports = mongoose.model('LeadPersonSale', LeadPersonSaleSchema); 

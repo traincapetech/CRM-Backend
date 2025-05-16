@@ -25,7 +25,11 @@ exports.getSales = async (req, res) => {
 
     // If user is a sales person, only show their sales
     if (req.user.role === 'Sales Person') {
-      query = Sale.find({ salesPerson: req.user.id, ...JSON.parse(queryStr) });
+      query = Sale.find({ 
+        salesPerson: req.user.id, 
+        isLeadPersonSale: { $ne: true }, // Exclude lead person sales
+        ...JSON.parse(queryStr) 
+      });
     } 
     // If user is a lead person, only show sales with them as lead
     else if (req.user.role === 'Lead Person') {
@@ -163,6 +167,7 @@ exports.createSale = async (req, res) => {
     // If user is lead person, set them as the lead person
     if (req.user.role === 'Lead Person') {
       req.body.leadPerson = req.user.id;
+      req.body.isLeadPersonSale = true; // Mark as lead person sale
     }
     
     // Allow creating sale from reference (not in leads)

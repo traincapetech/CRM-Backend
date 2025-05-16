@@ -20,8 +20,8 @@ router.get('/', authorize('Lead Person', 'Manager', 'Admin'), async (req, res) =
       name: req.user.fullName
     });
     
-    // Simple approach - get all sales data first
-    const allSales = await Sale.find({})
+    // Get only lead person sales 
+    const allSales = await Sale.find({ isLeadPersonSale: true })
       .select('date customerName country course countryCode contactNumber email pseudoId salesPerson leadPerson source clientRemark feedback totalCost totalCostCurrency tokenAmount tokenAmountCurrency')
       .populate('salesPerson', 'fullName')
       .populate('leadPerson', 'fullName')
