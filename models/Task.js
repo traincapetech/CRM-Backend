@@ -18,7 +18,31 @@ const TaskSchema = new mongoose.Schema({
   customer: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Lead',
-    required: [true, 'Please select a customer']
+    required: function() {
+      return !this.manualCustomer; // Required only if manualCustomer is not provided
+    }
+  },
+  manualCustomer: {
+    name: {
+      type: String,
+      trim: true
+    },
+    email: {
+      type: String,
+      trim: true,
+      match: [
+        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+        'Please add a valid email'
+      ]
+    },
+    contactNumber: {
+      type: String,
+      trim: true
+    },
+    course: {
+      type: String,
+      trim: true
+    }
   },
   examDate: {
     type: Date,
