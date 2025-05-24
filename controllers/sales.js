@@ -159,6 +159,13 @@ exports.createSale = async (req, res) => {
       body: req.body
     });
 
+    // Add more detailed logging for currency field
+    console.log('Currency data in request:', {
+      currency: req.body.currency,
+      totalCost: req.body.totalCost,
+      tokenAmount: req.body.tokenAmount
+    });
+
     // If user is sales person, set them as the sales person
     if (req.user.role === 'Sales Person') {
       req.body.salesPerson = req.user.id;

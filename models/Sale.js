@@ -103,6 +103,12 @@ const SaleSchema = new mongoose.Schema({
     default: 'USD',
     trim: true
   },
+  currency: {
+    type: String,
+    default: 'USD',
+    enum: ['USD', 'EUR', 'GBP', 'INR', 'CAD', 'AUD', 'JPY', 'CNY'],
+    trim: true
+  },
   pending: {
     type: Boolean,
     default: true
