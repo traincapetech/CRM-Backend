@@ -8,17 +8,25 @@ exports.getSales = async (req, res) => {
   try {
     let query;
 
+    console.log('=== SALES API REQUEST DEBUG ===');
+    console.log('Original req.query:', req.query);
+    console.log('User role:', req.user.role);
+    console.log('User ID:', req.user.id);
+
     // Copy req.query
     const reqQuery = { ...req.query };
 
     // Fields to exclude
-    const removeFields = ['select', 'sort', 'page', 'limit'];
+    const removeFields = ['select', 'sort', 'page', 'limit', 'full', 'nocache'];
 
     // Loop over removeFields and delete them from reqQuery
     removeFields.forEach(param => delete reqQuery[param]);
 
+    console.log('reqQuery after removing fields:', reqQuery);
+
     // Create query string
     let queryStr = JSON.stringify(reqQuery);
+    console.log('Query string:', queryStr);
 
     // Create operators ($gt, $gte, etc)
     queryStr = queryStr.replace(/\b(gt|gte|lt|lte|in)\b/g, match => `$${match}`);
@@ -27,7 +35,6 @@ exports.getSales = async (req, res) => {
     if (req.user.role === 'Sales Person') {
       query = Sale.find({ 
         salesPerson: req.user.id, 
-        isLeadPersonSale: { $ne: true }, // Exclude lead person sales
         ...JSON.parse(queryStr) 
       });
     } 
@@ -62,7 +69,39 @@ exports.getSales = async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 25;
     const startIndex = (page - 1) * limit;
     const endIndex = page * limit;
-    const total = await Sale.countDocuments();
+    
+    // Count documents with the same filter as the query
+    let countQuery = {};
+    if (req.user.role === 'Sales Person') {
+      countQuery = { 
+        salesPerson: req.user.id, 
+        ...JSON.parse(queryStr) 
+      };
+    } else if (req.user.role === 'Lead Person') {
+      countQuery = { leadPerson: req.user.id, ...JSON.parse(queryStr) };
+    } else {
+      countQuery = JSON.parse(queryStr);
+    }
+    
+    const total = await Sale.countDocuments(countQuery);
+
+    // If full=true is in the query params, skip pagination and return all records
+    if (req.query.full === 'true') {
+      console.log('Returning all sales without pagination');
+      console.log('User role:', req.user.role);
+      console.log('User ID:', req.user.id);
+      console.log('Query string:', queryStr);
+      console.log('Parsed query:', JSON.parse(queryStr));
+      
+      const allSales = await query;
+      console.log('Found sales count:', allSales.length);
+      
+      return res.status(200).json({
+        success: true,
+        count: allSales.length,
+        data: allSales
+      });
+    }
 
     query = query.skip(startIndex).limit(limit);
 
@@ -523,6 +562,44 @@ exports.importSales = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server Error while importing sales data'
+    });
+  }
+};
+
+// @desc    Get sales count
+// @route   GET /api/sales/count
+// @access  Private
+exports.getSalesCount = async (req, res) => {
+  try {
+    let count;
+    
+    // If user is a sales person, only count their sales
+    if (req.user.role === 'Sales Person') {
+      count = await Sale.countDocuments({ 
+        salesPerson: req.user.id, 
+        isLeadPersonSale: { $ne: true } // Exclude lead person sales
+      });
+    } 
+    // If user is a lead person, only count sales with them as lead
+    else if (req.user.role === 'Lead Person') {
+      count = await Sale.countDocuments({ leadPerson: req.user.id });
+    }
+    // Admin and Manager can see all
+    else {
+      count = await Sale.countDocuments();
+    }
+    
+    console.log(`Returning sales count: ${count}`);
+    
+    res.status(200).json({
+      success: true,
+      count
+    });
+  } catch (err) {
+    console.error('Error getting sales count:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
     });
   }
 }; 
