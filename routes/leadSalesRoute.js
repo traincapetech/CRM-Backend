@@ -20,38 +20,42 @@ router.get('/', authorize('Lead Person', 'Manager', 'Admin'), async (req, res) =
       name: req.user.fullName
     });
     
-    // Get only lead person sales 
-    const allSales = await Sale.find({ isLeadPersonSale: true })
-      .select('date customerName country course countryCode contactNumber email pseudoId salesPerson leadPerson source clientRemark feedback totalCost totalCostCurrency tokenAmount tokenAmountCurrency')
+    let salesQuery = {};
+    
+    if (req.user.role === 'Lead Person') {
+      const leadPersonId = req.user._id.toString();
+      console.log('Filtering for lead person ID:', leadPersonId);
+      
+      // Find both lead person sales AND regular sales where this person is assigned as lead
+      salesQuery = {
+        $or: [
+          { isLeadPersonSale: true, leadPerson: new mongoose.Types.ObjectId(leadPersonId) },
+          { leadPerson: new mongoose.Types.ObjectId(leadPersonId) }
+        ]
+      };
+    } else {
+      // For Manager and Admin, show all lead-related sales
+      salesQuery = {
+        $or: [
+          { isLeadPersonSale: true },
+          { leadPerson: { $exists: true, $ne: null } }
+        ]
+      };
+    }
+    
+    console.log('Sales query:', JSON.stringify(salesQuery));
+    
+    // Get sales based on the query
+    const allSales = await Sale.find(salesQuery)
+      .select('date customerName country course countryCode contactNumber email pseudoId salesPerson leadPerson source clientRemark feedback totalCost totalCostCurrency tokenAmount tokenAmountCurrency isLeadPersonSale')
       .populate('salesPerson', 'fullName')
       .populate('leadPerson', 'fullName')
       .sort({ date: -1 });
     
     console.log(`Found ${allSales.length} total sales records`);
     
-    // Filter in memory if the user is a Lead Person
-    let filteredSales = allSales;
-    
-    if (req.user.role === 'Lead Person') {
-      const leadPersonId = req.user._id.toString();
-      console.log('Filtering for lead person:', leadPersonId);
-      
-      filteredSales = allSales.filter(sale => {
-        // Check if leadPerson exists and matches user ID
-        if (!sale.leadPerson) return false;
-        
-        const saleLeadPersonId = sale.leadPerson._id ? 
-          sale.leadPerson._id.toString() : 
-          (typeof sale.leadPerson === 'string' ? sale.leadPerson : null);
-        
-        return saleLeadPersonId === leadPersonId;
-      });
-      
-      console.log(`Filtered to ${filteredSales.length} sales for this lead person`);
-    }
-    
     // Process the sales data
-    const processedSales = filteredSales.map(sale => {
+    const processedSales = allSales.map(sale => {
       const saleObj = sale.toObject();
       
       // Set default currency values if not present
@@ -61,6 +65,9 @@ router.get('/', authorize('Lead Person', 'Manager', 'Admin'), async (req, res) =
       if (!saleObj.tokenAmountCurrency) {
         saleObj.tokenAmountCurrency = 'USD';
       }
+      
+      // Add a type field to distinguish between lead person sales and regular sales
+      saleObj.saleType = saleObj.isLeadPersonSale ? 'Lead Person Sale' : 'Sales Person Sale';
       
       return saleObj;
     });

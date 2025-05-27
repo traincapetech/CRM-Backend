@@ -28,6 +28,7 @@ const leadSalesRoutes = require('./routes/leadSalesRoute');
 const leadPersonSalesRoutes = require('./routes/leadPersonSales');
 const currencyRoutes = require('./routes/currency');
 const taskRoutes = require('./routes/taskRoutes');
+const geminiRoutes = require('./routes/gemini');
 const app = express();
 
 // Reminder service
@@ -62,6 +63,7 @@ app.use('/api/lead-sales', leadSalesRoutes);
 app.use('/api/lead-person-sales', leadPersonSalesRoutes);
 app.use('/api/currency', currencyRoutes);
 app.use('/api/tasks', taskRoutes);
+app.use('/api/gemini', geminiRoutes);
 
 
 // Basic route for testing
