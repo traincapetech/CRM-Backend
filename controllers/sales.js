@@ -8,11 +8,6 @@ exports.getSales = async (req, res) => {
   try {
     let query;
 
-    console.log('=== SALES API REQUEST DEBUG ===');
-    console.log('Original req.query:', req.query);
-    console.log('User role:', req.user.role);
-    console.log('User ID:', req.user.id);
-
     // Copy req.query
     const reqQuery = { ...req.query };
 
@@ -22,11 +17,8 @@ exports.getSales = async (req, res) => {
     // Loop over removeFields and delete them from reqQuery
     removeFields.forEach(param => delete reqQuery[param]);
 
-    console.log('reqQuery after removing fields:', reqQuery);
-
     // Create query string
     let queryStr = JSON.stringify(reqQuery);
-    console.log('Query string:', queryStr);
 
     // Create operators ($gt, $gte, etc)
     queryStr = queryStr.replace(/\b(gt|gte|lt|lte|in)\b/g, match => `$${match}`);
@@ -69,39 +61,7 @@ exports.getSales = async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 25;
     const startIndex = (page - 1) * limit;
     const endIndex = page * limit;
-    
-    // Count documents with the same filter as the query
-    let countQuery = {};
-    if (req.user.role === 'Sales Person') {
-      countQuery = { 
-        salesPerson: req.user.id, 
-        ...JSON.parse(queryStr) 
-      };
-    } else if (req.user.role === 'Lead Person') {
-      countQuery = { leadPerson: req.user.id, ...JSON.parse(queryStr) };
-    } else {
-      countQuery = JSON.parse(queryStr);
-    }
-    
-    const total = await Sale.countDocuments(countQuery);
-
-    // If full=true is in the query params, skip pagination and return all records
-    if (req.query.full === 'true') {
-      console.log('Returning all sales without pagination');
-      console.log('User role:', req.user.role);
-      console.log('User ID:', req.user.id);
-      console.log('Query string:', queryStr);
-      console.log('Parsed query:', JSON.parse(queryStr));
-      
-      const allSales = await query;
-      console.log('Found sales count:', allSales.length);
-      
-      return res.status(200).json({
-        success: true,
-        count: allSales.length,
-        data: allSales
-      });
-    }
+    const total = await Sale.countDocuments();
 
     query = query.skip(startIndex).limit(limit);
 
@@ -125,6 +85,43 @@ exports.getSales = async (req, res) => {
       };
     }
 
+    // Check if this is a request for all sales without pagination
+    if (req.query.full === 'true') {
+      // Apply the same role-based filtering for full results
+      let fullQuery;
+      
+      if (req.user.role === 'Sales Person') {
+        fullQuery = Sale.find({ 
+          salesPerson: req.user.id, 
+          ...JSON.parse(queryStr) 
+        });
+      } 
+      else if (req.user.role === 'Lead Person') {
+        fullQuery = Sale.find({ leadPerson: req.user.id, ...JSON.parse(queryStr) });
+      }
+      // Only Admin and Manager can see all sales
+      else if (req.user.role === 'Admin' || req.user.role === 'Manager') {
+        fullQuery = Sale.find(JSON.parse(queryStr));
+      }
+      else {
+        // For any other role, return empty results
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to access sales data'
+        });
+      }
+      
+      const allSales = await fullQuery
+        .populate('salesPerson leadPerson', 'fullName email')
+        .sort('-date');
+      
+      return res.status(200).json({
+        success: true,
+        count: allSales.length,
+        data: allSales
+      });
+    }
+
     res.status(200).json({
       success: true,
       count: sales.length,
@@ -132,7 +129,6 @@ exports.getSales = async (req, res) => {
       data: sales
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({
       success: false,
       message: 'Server Error'
@@ -145,29 +141,27 @@ exports.getSales = async (req, res) => {
 // @access  Private
 exports.getSale = async (req, res) => {
   try {
-    const sale = await Sale.findById(req.params.id)
-      .populate({
-        path: 'salesPerson leadPerson',
-        select: 'fullName email'
-      });
+    const sale = await Sale.findById(req.params.id).populate('salesPerson leadPerson', 'fullName email');
 
     if (!sale) {
       return res.status(404).json({
         success: false,
-        message: `No sale found with id of ${req.params.id}`
+        message: 'Sale not found'
       });
     }
 
-    // Make sure user can access this sale
-    if (
-      req.user.role === 'Sales Person' && 
-      sale.salesPerson._id.toString() !== req.user.id &&
-      req.user.role === 'Lead Person' && 
-      sale.leadPerson._id.toString() !== req.user.id
-    ) {
+    // Check if user can access this sale
+    if (req.user.role === 'Sales Person' && sale.salesPerson.toString() !== req.user.id) {
       return res.status(403).json({
         success: false,
-        message: `User ${req.user.id} is not authorized to access this sale`
+        message: 'Not authorized to access this sale'
+      });
+    }
+
+    if (req.user.role === 'Lead Person' && sale.leadPerson.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to access this sale'
       });
     }
 
@@ -176,7 +170,6 @@ exports.getSale = async (req, res) => {
       data: sale
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({
       success: false,
       message: 'Server Error'
@@ -189,80 +182,38 @@ exports.getSale = async (req, res) => {
 // @access  Private
 exports.createSale = async (req, res) => {
   try {
-    // Add user to req.body as creator
+    // Add user to req.body
     req.body.createdBy = req.user.id;
     
-    console.log('Create sale request from user:', {
-      id: req.user.id,
-      role: req.user.role,
-      body: req.body
-    });
-
-    // Add more detailed logging for currency field
-    console.log('Currency data in request:', {
-      currency: req.body.currency,
-      totalCost: req.body.totalCost,
-      tokenAmount: req.body.tokenAmount
-    });
-
-    // If user is sales person, set them as the sales person
-    if (req.user.role === 'Sales Person') {
+    // If no salesPerson is specified, use the current user
+    if (!req.body.salesPerson) {
       req.body.salesPerson = req.user.id;
     }
-    
-    // If user is lead person, set them as the lead person
-    if (req.user.role === 'Lead Person') {
-      req.body.leadPerson = req.user.id;
-      req.body.isLeadPersonSale = true; // Mark as lead person sale
-    }
-    
-    // Allow creating sale from reference (not in leads)
-    // For Sales Persons, allow creating sales with a reference source
-    if (req.user.role === 'Sales Person' && req.body.source === 'Reference' && !req.body.leadPerson) {
-      console.log('Creating sale from reference by sales person');
-      
-      // Find an admin or manager to set as the lead person
-      const leadPerson = await User.findOne({ role: { $in: ['Admin', 'Manager'] } });
-      
-      if (!leadPerson) {
-        return res.status(400).json({
-          success: false,
-          message: 'No admin or manager found to set as lead person for reference sale'
-        });
+
+    // Handle reference sales for Sales Person role
+    if (req.user.role === 'Sales Person' && req.body.isReference) {
+      // For reference sales, if no lead person is specified, find a default one
+      if (!req.body.leadPerson) {
+        const leadPerson = await User.findOne({ role: 'Lead Person' });
+        if (leadPerson) {
+          req.body.leadPerson = leadPerson._id;
+        }
       }
-      
-      console.log(`Setting default lead person to ${leadPerson.fullName} (${leadPerson._id})`);
-      req.body.leadPerson = leadPerson._id;
-      req.body.isReference = true; // Mark as reference sale
     }
-    
-    // Make sure leadPerson is set regardless of what's in the request body
-    if (!req.body.leadPerson) {
-      return res.status(400).json({
-        success: false,
-        message: 'Lead person is required. Please provide a lead person ID or select "Reference" as the source.'
-      });
-    }
-    
-    console.log('Creating sale with data:', req.body);
 
     // Create sale
     const sale = await Sale.create(req.body);
-    
-    console.log('Sale created successfully:', sale._id);
 
     res.status(201).json({
       success: true,
       data: sale
     });
   } catch (err) {
-    console.error('Error creating sale:', err);
-    
     if (err.name === 'ValidationError') {
-      const messages = Object.values(err.errors).map(val => val.message);
+      const message = Object.values(err.errors).map(val => val.message);
       return res.status(400).json({
         success: false,
-        message: messages.join(', ')
+        message: message
       });
     }
     
@@ -283,62 +234,48 @@ exports.updateSale = async (req, res) => {
     if (!sale) {
       return res.status(404).json({
         success: false,
-        message: `No sale found with id of ${req.params.id}`
+        message: 'Sale not found'
       });
     }
 
-    // Make sure user is authorized to update this sale
-    if (
-      req.user.role === 'Sales Person' && 
-      sale.salesPerson.toString() !== req.user.id
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: `User ${req.user.id} is not authorized to update this sale`
-      });
-    }
-    
-    // For Sales Persons, only allow updating the status
+    // Check permissions
     if (req.user.role === 'Sales Person') {
-      console.log('Sales Person updating sale:', req.body);
-      
-      // Allow Sales Persons to update all fields of their own sales
-      // Add user to req.body as updater
-      req.body.updatedBy = req.user.id;
-      
-      // Update sale with all fields
-      sale = await Sale.findByIdAndUpdate(req.params.id, req.body, {
-        new: true,
-        runValidators: true
-      });
-      
-      return res.status(200).json({
-        success: true,
-        data: sale
-      });
+      // Sales person can only update their own sales
+      if (sale.salesPerson.toString() !== req.user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to update this sale'
+        });
+      }
+    } else if (req.user.role === 'Lead Person') {
+      // Lead person can only update sales where they are the lead person
+      if (sale.leadPerson.toString() !== req.user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to update this sale'
+        });
+      }
     }
 
-    // Add user to req.body as updater for other roles
+    // Add updatedBy field
     req.body.updatedBy = req.user.id;
+    req.body.updatedAt = new Date();
 
-    // Update sale (full update for non-Sales Person roles)
     sale = await Sale.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true
-    });
+    }).populate('salesPerson leadPerson', 'fullName email');
 
     res.status(200).json({
       success: true,
       data: sale
     });
   } catch (err) {
-    console.error(err);
-    
     if (err.name === 'ValidationError') {
-      const messages = Object.values(err.errors).map(val => val.message);
+      const message = Object.values(err.errors).map(val => val.message);
       return res.status(400).json({
         success: false,
-        message: messages.join(', ')
+        message: message
       });
     }
     
@@ -359,209 +296,36 @@ exports.deleteSale = async (req, res) => {
     if (!sale) {
       return res.status(404).json({
         success: false,
-        message: `No sale found with id of ${req.params.id}`
+        message: 'Sale not found'
       });
     }
 
-    // Make sure user is authorized to delete this sale
-    // Sales Person can only delete their own sales
-    if (req.user.role === 'Sales Person' && sale.salesPerson.toString() !== req.user.id.toString()) {
+    // Check permissions - only sales person who created it, manager, or admin can delete
+    if (req.user.role === 'Sales Person') {
+      if (sale.salesPerson.toString() !== req.user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to delete this sale'
+        });
+      }
+    } else if (req.user.role === 'Lead Person') {
+      // Lead persons cannot delete sales
       return res.status(403).json({
         success: false,
-        message: `User ${req.user.id} is not authorized to delete this sale`
-      });
-    }
-    
-    // Lead Person cannot delete sales
-    if (req.user.role === 'Lead Person') {
-      return res.status(403).json({
-        success: false,
-        message: `User with role ${req.user.role} is not authorized to delete sales`
+        message: 'Lead persons cannot delete sales'
       });
     }
 
-    // Use findByIdAndDelete instead of remove (which is deprecated)
-    await Sale.findByIdAndDelete(req.params.id);
+    await sale.deleteOne();
 
     res.status(200).json({
       success: true,
       data: {}
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({
       success: false,
       message: 'Server Error'
-    });
-  }
-};
-
-// @desc    Update token amount
-// @route   PUT /api/sales/:id/token
-// @access  Private
-exports.updateToken = async (req, res) => {
-  try {
-    const { token } = req.body;
-    
-    if (token === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide token amount'
-      });
-    }
-
-    let sale = await Sale.findById(req.params.id);
-
-    if (!sale) {
-      return res.status(404).json({
-        success: false,
-        message: `No sale found with id of ${req.params.id}`
-      });
-    }
-
-    // Sales Person can only update their own sales
-    if (
-      req.user.role === 'Sales Person' && 
-      sale.salesPerson.toString() !== req.user.id
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: `User ${req.user.id} is not authorized to update this sale`
-      });
-    }
-
-    // Update the token amount and the updatedBy field
-    sale = await Sale.findByIdAndUpdate(
-      req.params.id, 
-      { 
-        tokenAmount: token,
-        updatedBy: req.user.id
-      }, 
-      {
-        new: true,
-        runValidators: true
-      }
-    );
-
-    res.status(200).json({
-      success: true,
-      data: sale
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error'
-    });
-  }
-};
-
-// @desc    Update pending status
-// @route   PUT /api/sales/:id/pending
-// @access  Private
-exports.updatePending = async (req, res) => {
-  try {
-    const { pending } = req.body;
-    
-    if (pending === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide pending status'
-      });
-    }
-
-    let sale = await Sale.findById(req.params.id);
-
-    if (!sale) {
-      return res.status(404).json({
-        success: false,
-        message: `No sale found with id of ${req.params.id}`
-      });
-    }
-
-    // Update the pending status and the updatedBy field
-    sale = await Sale.findByIdAndUpdate(
-      req.params.id, 
-      { 
-        pending,
-        status: pending ? 'Pending' : 'Completed',
-        updatedBy: req.user.id
-      }, 
-      {
-        new: true,
-        runValidators: true
-      }
-    );
-
-    res.status(200).json({
-      success: true,
-      data: sale
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error'
-    });
-  }
-};
-
-// @desc    Import sales data
-// @route   POST /api/sales/import
-// @access  Private (Admin only)
-exports.importSales = async (req, res) => {
-  try {
-    if (!req.body || !req.body.sales || !Array.isArray(req.body.sales)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide sales data in the correct format'
-      });
-    }
-
-    const { sales } = req.body;
-    
-    // Add user ID to each sale
-    const salesWithUser = sales.map(sale => ({
-      ...sale,
-      createdBy: req.user.id,
-      updatedBy: req.user.id
-    }));
-    
-    // Insert sales
-    const result = await Sale.insertMany(salesWithUser, { 
-      ordered: false,
-      rawResult: true
-    });
-    
-    res.status(201).json({
-      success: true,
-      message: `Successfully imported ${result.insertedCount} sales`,
-      data: {
-        insertedCount: result.insertedCount,
-        errors: result.writeErrors ? result.writeErrors.length : 0
-      }
-    });
-  } catch (err) {
-    console.error('Error importing sales data:', err);
-    
-    if (err.name === 'ValidationError') {
-      const messages = Object.values(err.errors).map(val => val.message);
-      return res.status(400).json({
-        success: false,
-        message: messages.join(', ')
-      });
-    }
-    
-    if (err.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Duplicate entries found. Please check your data.'
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Server Error while importing sales data'
     });
   }
 };
@@ -589,14 +353,11 @@ exports.getSalesCount = async (req, res) => {
       count = await Sale.countDocuments();
     }
     
-    console.log(`Returning sales count: ${count}`);
-    
     res.status(200).json({
       success: true,
       count
     });
   } catch (err) {
-    console.error('Error getting sales count:', err);
     res.status(500).json({
       success: false,
       message: 'Server Error'

@@ -6,9 +6,6 @@ const {
   createSale,
   updateSale,
   deleteSale,
-  updateToken,
-  updatePending,
-  importSales,
   getSalesCount
 } = require('../controllers/sales');
 
@@ -23,8 +20,8 @@ router.route('/')
   .get(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSales)
   .post(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), createSale);
 
-// Import route (Admin only)
-router.post('/import', authorize('Admin'), importSales);
+// Import route (Admin only) - TODO: Implement importSales function
+// router.post('/import', authorize('Admin'), importSales);
 
 // Count route
 router.get('/count', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSalesCount);
@@ -34,26 +31,18 @@ router.route('/:id')
   .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), updateSale)
   .delete(authorize('Sales Person','Manager', 'Admin'), deleteSale);
 
-// Routes for token and pending amount updates
-router.route('/:id/token')
-  .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), updateToken);
+// Routes for token and pending amount updates - TODO: Implement these functions
+// router.route('/:id/token')
+//   .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), updateToken);
 
-router.route('/:id/pending')
-  .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), updatePending);
+// router.route('/:id/pending')
+//   .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), updatePending);
 
 // @route   GET /api/sales/lead-sheet
 // @desc    Get sales sheet data for lead persons
 // @access  Private (Lead Person, Manager, Admin)
 router.get('/lead-sheet', authorize('Lead Person', 'Manager', 'Admin'), async (req, res) => {
   try {
-    console.log('============= LEAD SHEET REQUEST =============');
-    console.log('User making request:', {
-      id: req.user.id,
-      _id: req.user._id,
-      idString: req.user._id ? req.user._id.toString() : 'undefined',
-      role: req.user.role,
-      name: req.user.fullName
-    });
     
     // Get query parameters for filtering
     const { startDate, endDate, leadPerson, salesPerson } = req.query;
@@ -75,7 +64,6 @@ router.get('/lead-sheet', authorize('Lead Person', 'Manager', 'Admin'), async (r
     if (req.user.role === 'Lead Person') {
       // Convert to string ID for comparison
       const userId = req.user._id.toString();
-      console.log('Filtering by lead person ID (string):', userId);
       
       // Use mongoose ObjectId for the query
       const mongoose = require('mongoose');
@@ -83,9 +71,7 @@ router.get('/lead-sheet', authorize('Lead Person', 'Manager', 'Admin'), async (r
       
       try {
         filter.leadPerson = new ObjectId(userId);
-        console.log('Converted to ObjectId:', filter.leadPerson);
       } catch (err) {
-        console.error('Error converting ID to ObjectId:', err);
         // Fallback to string ID
         filter.leadPerson = userId;
       }
@@ -98,8 +84,6 @@ router.get('/lead-sheet', authorize('Lead Person', 'Manager', 'Admin'), async (r
       filter.salesPerson = salesPerson;
     }
     
-    console.log('Applying filters:', JSON.stringify(filter));
-    
     // Get sales data with all fields
     // Populate both leadPerson and salesPerson fields
     const sales = await Sale.find(filter)
@@ -107,8 +91,6 @@ router.get('/lead-sheet', authorize('Lead Person', 'Manager', 'Admin'), async (r
       .populate('salesPerson', 'fullName')
       .populate('leadPerson', 'fullName')
       .sort({ date: -1 });
-    
-    console.log(`Found ${sales.length} sales records for lead sheet`);
     
     // Post-process results to ensure currency fields exist
     const processedSales = sales.map(sale => {
@@ -125,17 +107,12 @@ router.get('/lead-sheet', authorize('Lead Person', 'Manager', 'Admin'), async (r
       return saleObj;
     });
     
-    console.log('============= LEAD SHEET RESPONSE =============');
-    console.log(`Returning ${processedSales.length} sales records`);
-    
     res.status(200).json({
       success: true,
       count: processedSales.length,
       data: processedSales
     });
   } catch (err) {
-    console.error('Error fetching lead sheet data:', err);
-    console.error('Error stack:', err.stack);
     res.status(500).json({
       success: false,
       message: 'Server error while fetching sales data',
