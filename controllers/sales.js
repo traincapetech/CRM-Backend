@@ -17,26 +17,42 @@ exports.getSales = async (req, res) => {
     // Loop over removeFields and delete them from reqQuery
     removeFields.forEach(param => delete reqQuery[param]);
 
+    // If full=true is requested, ignore any date filters to ensure all sales are returned
+    if (req.query.full === 'true') {
+      // Remove any potential date filters
+      delete reqQuery.date;
+      delete reqQuery.createdAt;
+      delete reqQuery.updatedAt;
+      // Remove any date range operators
+      Object.keys(reqQuery).forEach(key => {
+        if (key.includes('date') || key.includes('Date') || key.includes('created') || key.includes('updated')) {
+          delete reqQuery[key];
+        }
+      });
+    }
+
     // Create query string
     let queryStr = JSON.stringify(reqQuery);
 
     // Create operators ($gt, $gte, etc)
     queryStr = queryStr.replace(/\b(gt|gte|lt|lte|in)\b/g, match => `$${match}`);
+    
+    const parsedQuery = JSON.parse(queryStr);
 
     // If user is a sales person, only show their sales
     if (req.user.role === 'Sales Person') {
       query = Sale.find({ 
         salesPerson: req.user.id, 
-        ...JSON.parse(queryStr) 
+        ...parsedQuery 
       });
     } 
     // If user is a lead person, only show sales with them as lead
     else if (req.user.role === 'Lead Person') {
-      query = Sale.find({ leadPerson: req.user.id, ...JSON.parse(queryStr) });
+      query = Sale.find({ leadPerson: req.user.id, ...parsedQuery });
     }
     // Admin and Manager can see all
     else {
-      query = Sale.find(JSON.parse(queryStr));
+      query = Sale.find(parsedQuery);
     }
 
     // Select Fields
@@ -67,7 +83,7 @@ exports.getSales = async (req, res) => {
 
     // Executing query
     const sales = await query;
-
+    
     // Pagination result
     const pagination = {};
 
@@ -87,21 +103,20 @@ exports.getSales = async (req, res) => {
 
     // Check if this is a request for all sales without pagination
     if (req.query.full === 'true') {
-      // Apply the same role-based filtering for full results
+      // Apply the same role-based filtering for full results, but ignore all query parameters
       let fullQuery;
       
       if (req.user.role === 'Sales Person') {
         fullQuery = Sale.find({ 
-          salesPerson: req.user.id, 
-          ...JSON.parse(queryStr) 
+          salesPerson: req.user.id
         });
       } 
       else if (req.user.role === 'Lead Person') {
-        fullQuery = Sale.find({ leadPerson: req.user.id, ...JSON.parse(queryStr) });
+        fullQuery = Sale.find({ leadPerson: req.user.id });
       }
       // Only Admin and Manager can see all sales
       else if (req.user.role === 'Admin' || req.user.role === 'Manager') {
-        fullQuery = Sale.find(JSON.parse(queryStr));
+        fullQuery = Sale.find({});
       }
       else {
         // For any other role, return empty results
