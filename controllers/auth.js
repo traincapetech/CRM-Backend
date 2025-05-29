@@ -175,7 +175,7 @@ exports.getAllUsers = async (req, res) => {
 
 // @desc    Update user
 // @route   PUT /api/auth/users/:id
-// @access  Private (Admin only)
+// @access  Private (Admin and Manager, but Manager cannot modify Admin accounts)
 exports.updateUser = async (req, res) => {
   try {
     console.log(`Attempting to update user with ID: ${req.params.id}`);
@@ -189,6 +189,22 @@ exports.updateUser = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "User not found",
+      });
+    }
+
+    // Prevent Managers from modifying Admin accounts
+    if (req.user.role === 'Manager' && user.role === 'Admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot modify Admin accounts",
+      });
+    }
+
+    // Prevent Managers from creating new Admin accounts
+    if (req.user.role === 'Manager' && role === 'Admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot create Admin accounts",
       });
     }
 
@@ -225,7 +241,7 @@ exports.updateUser = async (req, res) => {
 
 // @desc    Delete user
 // @route   DELETE /api/auth/users/:id
-// @access  Private (Admin only)
+// @access  Private (Admin and Manager, but Manager cannot delete Admin accounts)
 exports.deleteUser = async (req, res) => {
   try {
     console.log(`Attempting to delete user with ID: ${req.params.id}`);
@@ -241,12 +257,20 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
-    // Prevent admin from deleting themselves
+    // Prevent user from deleting themselves
     if (user._id.toString() === req.user.id) {
       console.log("User attempted to delete their own account");
       return res.status(400).json({
         success: false,
         message: "You cannot delete your own account",
+      });
+    }
+
+    // Prevent Managers from deleting Admin accounts
+    if (req.user.role === 'Manager' && user.role === 'Admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot delete Admin accounts",
       });
     }
 
@@ -327,6 +351,91 @@ exports.updateProfilePicture = async (req, res) => {
     res.status(400).json({
       success: false, 
       message: err.message
+    });
+  }
+};
+
+// @desc    Create new user (for Admin and Manager)
+// @route   POST /api/auth/users
+// @access  Private (Admin and Manager, but Manager cannot create Admin accounts)
+exports.createUser = async (req, res) => {
+  try {
+    console.log("Create user attempt by:", req.user.role, "for:", req.body);
+    const { fullName, email, password, role } = req.body;
+    
+    // Basic validation
+    if (!fullName || !email || !password) {
+      console.log("Missing required fields for user creation");
+      return res.status(400).json({
+        success: false,
+        message: "Please provide name, email and password"
+      });
+    }
+
+    // Prevent Managers from creating Admin accounts
+    if (req.user.role === 'Manager' && role === 'Admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot create Admin accounts",
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      console.log(`User with email ${email} already exists`);
+      return res.status(400).json({
+        success: false,
+        message: "Email already registered",
+      });
+    }
+
+    console.log("Creating new user...");
+    // Create user
+    const user = await User.create({
+      fullName,
+      email,
+      password,
+      role: role || 'Sales Person', // Default role if not specified
+    });
+
+    console.log(`User created successfully with ID: ${user._id}`);
+    
+    // Return user data without password
+    const userData = await User.findById(user._id);
+    
+    res.status(201).json({
+      success: true,
+      data: userData,
+    });
+  } catch (err) {
+    console.error("User creation error details:", {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+      code: err.code
+    });
+    
+    // Provide more specific error messages for common issues
+    if (err.name === 'ValidationError') {
+      const messages = Object.values(err.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(', ')
+      });
+    }
+    
+    if (err.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email already registered'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: err.message || 'Internal server error during user creation'
     });
   }
 };

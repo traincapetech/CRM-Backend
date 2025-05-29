@@ -3,9 +3,9 @@ const nodemailer = require('nodemailer');
 
 // Configure nodemailer with environment variables
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-  port: process.env.EMAIL_PORT || 587,
-  secure: process.env.EMAIL_SECURE === 'true',
+  host: "smtp.hostinger.com",
+  port: 465,
+  secure: true,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS
@@ -19,6 +19,21 @@ const transporter = nodemailer.createTransport({
  */
 const sendEmailNotification = async (task, reminderType = 'exam-time') => {
   try {
+    // Check if email configuration is available
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      console.error('Email configuration missing for exam reminders');
+      return;
+    }
+
+    // Verify transporter configuration
+    try {
+      await transporter.verify();
+      console.log('Email transporter verified for exam reminders');
+    } catch (error) {
+      console.error('Email transporter verification failed for exam reminders:', error);
+      return;
+    }
+
     // Get customer and sales person details
     await task.populate([
       { path: 'customer', select: 'name NAME email E-MAIL contactNumber phone MOBILE' },

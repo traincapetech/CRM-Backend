@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getMe, getAllUsers, updateUser, deleteUser, updateProfilePicture } = require('../controllers/auth');
+const { register, login, getMe, getAllUsers, updateUser, deleteUser, updateProfilePicture, createUser } = require('../controllers/auth');
 const { protect, authorize } = require('../middleware/auth');
 const nodemailer = require('nodemailer');
 const bcrypt = require('bcrypt');
@@ -22,10 +22,13 @@ console.log('GET /api/auth/me registered');
 router.get('/users', protect, getAllUsers);
 console.log('GET /api/auth/users registered');
 
-router.put('/users/:id', protect, authorize('Admin'), updateUser);
+router.post('/users', protect, authorize('Admin', 'Manager'), createUser);
+console.log('POST /api/auth/users registered');
+
+router.put('/users/:id', protect, authorize('Admin', 'Manager'), updateUser);
 console.log('PUT /api/auth/users/:id registered');
 
-router.delete('/users/:id', protect, authorize('Admin'), deleteUser);
+router.delete('/users/:id', protect, authorize('Admin', 'Manager'), deleteUser);
 console.log('DELETE /api/auth/users/:id registered');
 
 router.put('/profile-picture', protect, updateProfilePicture);
