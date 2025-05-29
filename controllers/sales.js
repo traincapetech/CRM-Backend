@@ -385,7 +385,16 @@ exports.getSalesCount = async (req, res) => {
 // @access  Private (Admin only)
 exports.importSales = async (req, res) => {
   try {
-    const { sales } = req.body;
+    console.log('=== IMPORT SALES REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('User:', req.user.fullName, req.user.role);
+    
+    // Handle both direct sales array and nested data structure
+    let sales = req.body.sales;
+    if (!sales && req.body.data && req.body.data.sales) {
+      sales = req.body.data.sales;
+      console.log('Found sales in nested data structure');
+    }
     
     if (!sales || !Array.isArray(sales) || sales.length === 0) {
       return res.status(400).json({

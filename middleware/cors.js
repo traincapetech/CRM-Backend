@@ -44,7 +44,7 @@ const corsMiddleware = cors({
     console.log('CORS blocked request from:', origin);
     return callback(new Error('Not allowed by CORS'));
   },
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   credentials: true,
   optionsSuccessStatus: 204,
   allowedHeaders: [
@@ -52,21 +52,29 @@ const corsMiddleware = cors({
     'Authorization', 
     'Origin', 
     'X-Requested-With', 
-    'Accept'
+    'Accept',
+    'Access-Control-Allow-Origin',
+    'Access-Control-Allow-Headers',
+    'Access-Control-Allow-Methods'
   ],
   exposedHeaders: ['Content-Length', 'X-Content-Type-Options']
 });
 
 // Secondary middleware to ensure headers are always set
 const ensureCorsHeaders = (req, res, next) => {
-  // Always set these headers
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept');
+  const origin = req.headers.origin;
+  
+  // Always set these headers for allowed origins or in development
+  if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development' || process.env.DEBUG_CORS === 'true') {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept');
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
   
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
-    console.log('Handling OPTIONS preflight request');
+    console.log('Handling OPTIONS preflight request for:', req.url);
     return res.status(204).send();
   }
   
@@ -77,7 +85,16 @@ module.exports = {
   corsMiddleware,
   ensureCorsHeaders,
   handleOptions: (req, res) => {
-    console.log('Explicit OPTIONS handler called');
+    console.log('Explicit OPTIONS handler called for:', req.url);
+    const origin = req.headers.origin;
+    
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development' || process.env.DEBUG_CORS === 'true') {
+      res.header('Access-Control-Allow-Origin', origin || '*');
+      res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept');
+      res.header('Access-Control-Allow-Credentials', 'true');
+    }
+    
     res.status(204).send();
   }
 }; 

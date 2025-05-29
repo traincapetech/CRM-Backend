@@ -624,34 +624,63 @@ exports.updateFeedback = async (req, res) => {
 // @access  Private (Admin, Manager, Lead Person)
 exports.importLeads = async (req, res) => {
   try {
-    const { leads } = req.body;
+    console.log('=== IMPORT LEADS REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('User:', req.user.fullName, req.user.role);
     
-    if (!leads || !Array.isArray(leads) || leads.length === 0) {
+    // Handle both direct leads array and nested data structure
+    let leads = req.body.leads;
+    if (!leads && req.body.data && req.body.data.leads) {
+      leads = req.body.data.leads;
+      console.log('Found leads in nested data structure');
+    }
+    
+    if (!leads) {
+      console.log('No leads field found in request body');
       return res.status(400).json({
         success: false,
-        message: 'No leads data provided or invalid format'
+        message: 'No leads field provided in request body'
+      });
+    }
+    
+    if (!Array.isArray(leads)) {
+      console.log('Leads is not an array:', typeof leads);
+      return res.status(400).json({
+        success: false,
+        message: 'Leads must be an array'
+      });
+    }
+    
+    if (leads.length === 0) {
+      console.log('Leads array is empty');
+      return res.status(400).json({
+        success: false,
+        message: 'Leads array is empty'
       });
     }
     
     console.log(`Importing ${leads.length} leads from CSV by ${req.user.fullName} (${req.user.role})...`);
+    console.log('First lead sample:', JSON.stringify(leads[0], null, 2));
     
     // Map Google Sheets column names to our database fields
-    const mappedLeads = leads.map(lead => {
+    const mappedLeads = leads.map((lead, index) => {
+      console.log(`Processing lead ${index + 1}:`, lead);
+      
       const leadData = {
-        name: lead.Name || lead.name || '',
-        email: lead.Email || lead.email || '',
-        course: lead.Course || lead.course || '',
-        countryCode: lead.CountryCode || lead['Country Code'] || lead.countryCode || '+1',
-        phone: lead.Phone || lead.phone || '',
-        country: lead.Country || lead.country || '',
-        pseudoId: lead.PseudoId || lead.pseudoId || lead.ID || lead.id || '',
-        company: lead.Company || lead.company || '',
-        client: lead.Client || lead.client || '',
-        status: lead.Status || lead.status || 'Introduction', // Default to Introduction stage
-        source: lead.Source || lead.source || '',
-        sourceLink: lead.SourceLink || lead['Source Link'] || lead.sourceLink || '',
-        remarks: lead.Remarks || lead.remarks || '',
-        feedback: lead.Feedback || lead.feedback || '',
+        name: lead.Name || lead.name || lead.NAME || '',
+        email: lead.Email || lead.email || lead.EMAIL || '',
+        course: lead.Course || lead.course || lead.COURSE || '',
+        countryCode: lead.CountryCode || lead['Country Code'] || lead.countryCode || lead.COUNTRYCODE || '+1',
+        phone: lead.Phone || lead.phone || lead.PHONE || lead.Number || lead.number || lead.NUMBER || '',
+        country: lead.Country || lead.country || lead.COUNTRY || '',
+        pseudoId: lead.PseudoId || lead.pseudoId || lead.ID || lead.id || lead.PSEUDOID || '',
+        company: lead.Company || lead.company || lead.COMPANY || '',
+        client: lead.Client || lead.client || lead.CLIENT || '',
+        status: lead.Status || lead.status || lead.STATUS || 'Introduction', // Default to Introduction stage
+        source: lead.Source || lead.source || lead.SOURCE || '',
+        sourceLink: lead.SourceLink || lead['Source Link'] || lead.sourceLink || lead.SOURCELINK || '',
+        remarks: lead.Remarks || lead.remarks || lead.REMARKS || '',
+        feedback: lead.Feedback || lead.feedback || lead.FEEDBACK || '',
         createdBy: req.user.id
       };
       
@@ -659,39 +688,62 @@ exports.importLeads = async (req, res) => {
       if (req.user.role === 'Lead Person') {
         // If a Lead Person is importing, set them as the leadPerson
         leadData.leadPerson = req.user.id;
+        console.log(`Setting leadPerson to current user: ${req.user.id}`);
+        
         // If there's a specific sales person mentioned in the CSV, use it, otherwise leave unassigned
         if (lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo) {
           // Try to find the sales person by name (this would require a lookup, for now just store the name)
           leadData.assignedToName = lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo;
+          console.log(`Found sales person name: ${leadData.assignedToName}`);
         }
       } else if (req.user.role === 'Admin' || req.user.role === 'Manager') {
         // Admin/Manager can specify both leadPerson and assignedTo from CSV
         if (lead.LeadPerson || lead['Lead Person'] || lead.leadPerson) {
           leadData.leadPersonName = lead.LeadPerson || lead['Lead Person'] || lead.leadPerson;
+          console.log(`Found lead person name: ${leadData.leadPersonName}`);
         }
         if (lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo) {
           leadData.assignedToName = lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo;
+          console.log(`Found sales person name: ${leadData.assignedToName}`);
         }
       }
       
+      console.log(`Mapped lead data:`, leadData);
       return leadData;
     });
     
-    // Validate the mapped data
-    const validLeads = mappedLeads.filter(lead => 
-      lead.name && lead.phone && lead.course && lead.country
-    );
+    console.log(`Mapped ${mappedLeads.length} leads`);
+    
+    // Validate the mapped data - make validation more flexible
+    const validLeads = mappedLeads.filter((lead, index) => {
+      const isValid = lead.name && (lead.phone || lead.email) && lead.course;
+      if (!isValid) {
+        console.log(`Lead ${index + 1} is invalid:`, {
+          name: lead.name,
+          phone: lead.phone,
+          email: lead.email,
+          course: lead.course,
+          hasName: !!lead.name,
+          hasContact: !!(lead.phone || lead.email),
+          hasCourse: !!lead.course
+        });
+      }
+      return isValid;
+    });
+    
+    console.log(`Found ${validLeads.length} valid leads out of ${mappedLeads.length}`);
     
     if (validLeads.length === 0) {
+      console.log('No valid leads found');
       return res.status(400).json({
         success: false,
-        message: 'No valid leads found in the imported data. Required fields: Name, Phone, Course, Country'
+        message: 'No valid leads found in the imported data. Required fields: Name, Phone/Email, Course',
+        details: 'Make sure your CSV has columns for Name, Phone (or Email), and Course'
       });
     }
     
-    console.log(`Found ${validLeads.length} valid leads out of ${leads.length}`);
-    
     // Insert the leads into the database
+    console.log('Attempting to insert leads into database...');
     const results = await Lead.insertMany(validLeads, { 
       ordered: false // Continue processing even if some documents have errors
     });
@@ -707,13 +759,16 @@ exports.importLeads = async (req, res) => {
       success: true,
       count: results.length,
       data: results,
-      message: `Successfully imported ${results.length} leads. ${req.user.role === 'Lead Person' ? 'All leads assigned to you as Lead Person.' : ''}`
+      message: `Successfully imported ${results.length} leads. ${req.user.role === 'Lead Person' ? 'All leads assigned to you as Lead Person.' : ''}`,
+      skipped: mappedLeads.length - results.length
     });
   } catch (err) {
     console.error('Lead import error:', err);
+    console.error('Error stack:', err.stack);
     res.status(400).json({
       success: false,
-      message: err.message
+      message: err.message || 'Import failed',
+      error: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 };
