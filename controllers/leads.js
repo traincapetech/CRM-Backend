@@ -621,7 +621,7 @@ exports.updateFeedback = async (req, res) => {
 
 // @desc    Import leads from CSV (Google Sheets)
 // @route   POST /api/leads/import
-// @access  Private (Admin only)
+// @access  Private (Admin, Manager, Lead Person)
 exports.importLeads = async (req, res) => {
   try {
     const { leads } = req.body;
@@ -633,12 +633,11 @@ exports.importLeads = async (req, res) => {
       });
     }
     
-    console.log(`Importing ${leads.length} leads from CSV...`);
+    console.log(`Importing ${leads.length} leads from CSV by ${req.user.fullName} (${req.user.role})...`);
     
     // Map Google Sheets column names to our database fields
     const mappedLeads = leads.map(lead => {
-      // This is an example mapping - adjust based on your actual CSV columns
-      return {
+      const leadData = {
         name: lead.Name || lead.name || '',
         email: lead.Email || lead.email || '',
         course: lead.Course || lead.course || '',
@@ -648,25 +647,45 @@ exports.importLeads = async (req, res) => {
         pseudoId: lead.PseudoId || lead.pseudoId || lead.ID || lead.id || '',
         company: lead.Company || lead.company || '',
         client: lead.Client || lead.client || '',
-        status: lead.Status || lead.status || 'New',
+        status: lead.Status || lead.status || 'Introduction', // Default to Introduction stage
         source: lead.Source || lead.source || '',
         sourceLink: lead.SourceLink || lead['Source Link'] || lead.sourceLink || '',
         remarks: lead.Remarks || lead.remarks || '',
         feedback: lead.Feedback || lead.feedback || '',
-        // Set created by to the current user (admin)
         createdBy: req.user.id
       };
+      
+      // Role-based assignment logic
+      if (req.user.role === 'Lead Person') {
+        // If a Lead Person is importing, set them as the leadPerson
+        leadData.leadPerson = req.user.id;
+        // If there's a specific sales person mentioned in the CSV, use it, otherwise leave unassigned
+        if (lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo) {
+          // Try to find the sales person by name (this would require a lookup, for now just store the name)
+          leadData.assignedToName = lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo;
+        }
+      } else if (req.user.role === 'Admin' || req.user.role === 'Manager') {
+        // Admin/Manager can specify both leadPerson and assignedTo from CSV
+        if (lead.LeadPerson || lead['Lead Person'] || lead.leadPerson) {
+          leadData.leadPersonName = lead.LeadPerson || lead['Lead Person'] || lead.leadPerson;
+        }
+        if (lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo) {
+          leadData.assignedToName = lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo;
+        }
+      }
+      
+      return leadData;
     });
     
     // Validate the mapped data
     const validLeads = mappedLeads.filter(lead => 
-      lead.name && lead.email && lead.phone && lead.course && lead.country
+      lead.name && lead.phone && lead.course && lead.country
     );
     
     if (validLeads.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'No valid leads found in the imported data'
+        message: 'No valid leads found in the imported data. Required fields: Name, Phone, Course, Country'
       });
     }
     
@@ -679,10 +698,16 @@ exports.importLeads = async (req, res) => {
     
     console.log(`Successfully imported ${results.length} leads`);
     
+    // Log assignment info for debugging
+    if (req.user.role === 'Lead Person') {
+      console.log(`All imported leads assigned to Lead Person: ${req.user.fullName}`);
+    }
+    
     res.status(201).json({
       success: true,
       count: results.length,
-      data: results
+      data: results,
+      message: `Successfully imported ${results.length} leads. ${req.user.role === 'Lead Person' ? 'All leads assigned to you as Lead Person.' : ''}`
     });
   } catch (err) {
     console.error('Lead import error:', err);

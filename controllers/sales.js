@@ -83,7 +83,7 @@ exports.getSales = async (req, res) => {
 
     // Executing query
     const sales = await query;
-    
+
     // Pagination result
     const pagination = {};
 
@@ -204,7 +204,7 @@ exports.createSale = async (req, res) => {
     if (!req.body.salesPerson) {
       req.body.salesPerson = req.user.id;
     }
-
+    
     // Handle reference sales for Sales Person role
     if (req.user.role === 'Sales Person' && req.body.isReference) {
       // For reference sales, if no lead person is specified, find a default one
@@ -318,11 +318,11 @@ exports.deleteSale = async (req, res) => {
     // Check permissions - only sales person who created it, manager, or admin can delete
     if (req.user.role === 'Sales Person') {
       if (sale.salesPerson.toString() !== req.user.id) {
-        return res.status(403).json({
-          success: false,
+      return res.status(403).json({
+        success: false,
           message: 'Not authorized to delete this sale'
-        });
-      }
+      });
+    }
     } else if (req.user.role === 'Lead Person') {
       // Lead persons cannot delete sales
       return res.status(403).json({
@@ -367,7 +367,7 @@ exports.getSalesCount = async (req, res) => {
     else {
       count = await Sale.countDocuments();
     }
-    
+
     res.status(200).json({
       success: true,
       count
@@ -376,6 +376,79 @@ exports.getSalesCount = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Import sales from CSV
+// @route   POST /api/sales/import
+// @access  Private (Admin only)
+exports.importSales = async (req, res) => {
+  try {
+    const { sales } = req.body;
+    
+    if (!sales || !Array.isArray(sales) || sales.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No sales data provided or invalid format'
+      });
+    }
+    
+    console.log(`Importing ${sales.length} sales from CSV...`);
+    
+    // Map CSV column names to our database fields
+    const mappedSales = sales.map(sale => {
+      return {
+        customerName: sale.CustomerName || sale['Customer Name'] || sale.customerName || '',
+        email: sale.Email || sale.email || '',
+        contactNumber: sale.ContactNumber || sale['Contact Number'] || sale.contactNumber || sale.Phone || sale.phone || '',
+        countryCode: sale.CountryCode || sale['Country Code'] || sale.countryCode || '+1',
+        country: sale.Country || sale.country || '',
+        course: sale.Course || sale.course || sale.Product || sale.product || '',
+        amount: parseFloat(sale.Amount || sale.amount || sale.Price || sale.price || 0),
+        currency: sale.Currency || sale.currency || 'USD',
+        status: sale.Status || sale.status || 'Pending',
+        paymentMethod: sale.PaymentMethod || sale['Payment Method'] || sale.paymentMethod || 'Unknown',
+        date: sale.Date || sale.date ? new Date(sale.Date || sale.date) : new Date(),
+        remarks: sale.Remarks || sale.remarks || '',
+        // Set created by to the current user (admin)
+        createdBy: req.user.id,
+        salesPerson: req.user.id // Default to current user, can be updated later
+      };
+    });
+    
+    // Validate the mapped data
+    const validSales = mappedSales.filter(sale => 
+      sale.customerName && sale.contactNumber && sale.course && sale.amount > 0
+    );
+    
+    if (validSales.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid sales found in the imported data'
+      });
+    }
+    
+    console.log(`Found ${validSales.length} valid sales out of ${sales.length}`);
+    
+    // Insert the sales into the database
+    const results = await Sale.insertMany(validSales, { 
+      ordered: false // Continue processing even if some documents have errors
+    });
+    
+    console.log(`Successfully imported ${results.length} sales`);
+    
+    res.status(201).json({
+      success: true,
+      count: results.length,
+      data: results,
+      errorCount: sales.length - results.length
+    });
+  } catch (err) {
+    console.error('Sales import error:', err);
+    res.status(400).json({
+      success: false,
+      message: err.message
     });
   }
 }; 

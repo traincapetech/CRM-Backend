@@ -23,8 +23,8 @@ router.route('/')
   .get(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin'), getLeads)
   .post(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin'), createLead);
 
-// Import route (Admin only)
-router.post('/import', authorize('Admin', 'Manager'), importLeads);
+// Import route (Admin, Manager, Lead Person)
+router.post('/import', authorize('Admin', 'Manager', 'Lead Person'), importLeads);
 
 // Repeat customers route (Admin/Manager only)
 router.get('/repeat-customers', authorize('Admin', 'Manager'), getRepeatCustomers);

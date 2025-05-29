@@ -6,7 +6,8 @@ const {
   createSale,
   updateSale,
   deleteSale,
-  getSalesCount
+  getSalesCount,
+  importSales
 } = require('../controllers/sales');
 
 const { protect, authorize } = require('../middleware/auth');
@@ -20,8 +21,8 @@ router.route('/')
   .get(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSales)
   .post(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), createSale);
 
-// Import route (Admin only) - TODO: Implement importSales function
-// router.post('/import', authorize('Admin'), importSales);
+// Import route (Admin only)
+router.post('/import', authorize('Admin'), importSales);
 
 // Count route
 router.get('/count', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSalesCount);
