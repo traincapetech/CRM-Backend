@@ -5,6 +5,8 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const { corsMiddleware, ensureCorsHeaders, handleOptions } = require('./middleware/cors');
 // const ipFilter = require('./middleware/ipFilter');
+const http = require('http');
+const socketIo = require('socket.io');
 // Load env vars
 dotenv.config();
 
@@ -29,10 +31,44 @@ const leadPersonSalesRoutes = require('./routes/leadPersonSales');
 const currencyRoutes = require('./routes/currency');
 const taskRoutes = require('./routes/taskRoutes');
 const geminiRoutes = require('./routes/gemini');
+const testExamRoutes = require('./routes/testExamNotifications');
 const app = express();
+const server = http.createServer(app);
+
+// Socket.IO setup with CORS
+const io = socketIo(server, {
+  cors: {
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "https://traincapecrm.traincapetech.in"
+    ],
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
+
+// Make io available to other modules
+app.set('io', io);
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+  
+  // Join user to their personal room for targeted notifications
+  socket.on('join-user-room', (userId) => {
+    socket.join(`user-${userId}`);
+    console.log(`User ${userId} joined their room`);
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+  });
+});
 
 // Reminder service
 const { processExamReminders } = require('./utils/reminderService');
+const { startExamNotificationScheduler } = require('./utils/examNotificationService');
 
 // Body parser
 app.use(express.json({ limit: '50mb' }));
@@ -64,6 +100,7 @@ app.use('/api/lead-person-sales', leadPersonSalesRoutes);
 app.use('/api/currency', currencyRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/gemini', geminiRoutes);
+app.use('/api/test-exam', testExamRoutes);
 
 
 // Basic route for testing
@@ -100,20 +137,23 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 8080;
 
-const server = app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+  
+  // Start the exam notification scheduler
+  startExamNotificationScheduler(io);
 });
 
 // Set up the reminder scheduler - run every 10 minutes
 const REMINDER_INTERVAL = 10 * 60 * 1000; // 10 minutes in milliseconds
 setInterval(() => {
   console.log('Running exam reminder scheduler...');
-  processExamReminders();
+  processExamReminders(io);
 }, REMINDER_INTERVAL);
 
 // Also run once at startup
 console.log('Initial run of exam reminder scheduler...');
-processExamReminders();
+processExamReminders(io);
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err, promise) => {

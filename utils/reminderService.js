@@ -16,8 +16,9 @@ const transporter = nodemailer.createTransport({
  * Sends an email notification
  * @param {Object} task - The task object
  * @param {string} reminderType - Type of reminder (30-minute-before, exam-time, 10-minute-after)
+ * @param {Object} io - Socket.IO instance for WebSocket notifications
  */
-const sendEmailNotification = async (task, reminderType = 'exam-time') => {
+const sendEmailNotification = async (task, reminderType = 'exam-time', io = null) => {
   try {
     // Check if email configuration is available
     if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
@@ -213,16 +214,128 @@ const sendEmailNotification = async (task, reminderType = 'exam-time') => {
       reminderType: reminderType
     });
     await task.save();
+
+    // Send WebSocket notification
+    if (io) {
+      const notification = {
+        type: 'exam-reminder',
+        userId: task.salesPerson._id,
+        title: salesPersonSubject,
+        message: salesPersonContent,
+        examDetails: {
+          course: task.description || 'Exam',
+          customerName: customerName,
+          date: new Date(task.examDate).toLocaleDateString(),
+          time: examTime,
+          location: 'As scheduled',
+          taskId: task._id
+        },
+        sound: reminderType === 'exam-time' || reminderType === '30-minute-before', // Sound for urgent reminders
+        priority: 'medium',
+        reminderType: reminderType,
+        timestamp: new Date().toISOString()
+      };
+
+      // Send to sales person's personal room
+      io.to(`user-${task.salesPerson._id}`).emit('exam-reminder', notification);
+      console.log(`🔔 WebSocket notification sent to sales person ${task.salesPerson._id} for ${reminderType}`);
+    }
   } catch (error) {
     console.error('Error sending email notification:', error);
   }
 };
 
 /**
+ * Sends a WebSocket notification to the sales person
+ * @param {Object} task - The task object
+ * @param {string} reminderType - Type of reminder
+ * @param {Object} io - Socket.IO instance
+ */
+const sendWebSocketNotification = (task, reminderType, io) => {
+  try {
+    if (!io) {
+      console.log('Socket.IO not available for WebSocket notifications');
+      return;
+    }
+
+    // Get customer data
+    let customerData = null;
+    if (task.customer) {
+      customerData = task.customer;
+    } else if (task.manualCustomer && task.manualCustomer.name) {
+      customerData = task.manualCustomer;
+    }
+
+    if (!customerData || !task.salesPerson) {
+      console.log('Missing customer or sales person data for WebSocket notification');
+      return;
+    }
+
+    const customerName = customerData?.name || customerData?.NAME || 'Customer';
+    const examTime = new Date(task.examDate).toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+
+    // Create notification based on reminder type
+    let title, message, priority;
+    
+    switch (reminderType) {
+      case '30-minute-before':
+        title = '⏰ Exam in 30 Minutes';
+        message = `${customerName}'s exam starts in 30 minutes at ${examTime}`;
+        priority = 'medium';
+        break;
+      case 'exam-time':
+        title = '🚨 Exam Starting Now!';
+        message = `${customerName}'s exam is starting right now at ${examTime}`;
+        priority = 'high';
+        break;
+      case '10-minute-after':
+        title = '📋 Exam Follow-up';
+        message = `${customerName}'s exam started 10 minutes ago - please check progress`;
+        priority = 'medium';
+        break;
+      default:
+        title = '📅 Exam Reminder';
+        message = `${customerName}'s exam is scheduled for ${examTime}`;
+        priority = 'low';
+    }
+
+    const notification = {
+      type: 'exam-reminder',
+      userId: task.salesPerson._id,
+      title: title,
+      message: message,
+      examDetails: {
+        course: task.description || 'Exam',
+        customerName: customerName,
+        date: new Date(task.examDate).toLocaleDateString(),
+        time: examTime,
+        location: 'As scheduled',
+        taskId: task._id
+      },
+      sound: reminderType === 'exam-time' || reminderType === '30-minute-before', // Sound for urgent reminders
+      priority: priority,
+      reminderType: reminderType,
+      timestamp: new Date().toISOString()
+    };
+
+    // Send to sales person's personal room
+    io.to(`user-${task.salesPerson._id}`).emit('exam-reminder', notification);
+    console.log(`🔔 WebSocket notification sent to sales person ${task.salesPerson._id} for ${reminderType}`);
+    
+  } catch (error) {
+    console.error('Error sending WebSocket notification:', error);
+  }
+};
+
+/**
  * Checks for exams scheduled today and sends reminders
  * This function is called every 10 minutes
+ * @param {Object} io - Socket.IO instance for WebSocket notifications
  */
-exports.processExamReminders = async () => {
+exports.processExamReminders = async (io = null) => {
   try {
     const now = new Date();
     const startOfDay = new Date(now);
@@ -308,7 +421,7 @@ exports.processExamReminders = async () => {
         
         if (!alreadySent) {
           console.log(`Sending ${reminderType} reminder for task ${task._id}, exam time: ${examTime}`);
-          await sendEmailNotification(task, reminderType);
+          await sendEmailNotification(task, reminderType, io);
         }
       }
     }

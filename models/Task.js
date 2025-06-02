@@ -15,6 +15,22 @@ const TaskSchema = new mongoose.Schema({
     enum: ['Exam', 'Follow-up', 'Other'],
     default: 'Exam'
   },
+  course: {
+    type: String,
+    trim: true,
+    required: function() {
+      return this.taskType === 'Exam';
+    }
+  },
+  location: {
+    type: String,
+    trim: true,
+    default: 'Online'
+  },
+  examLink: {
+    type: String,
+    trim: true
+  },
   customer: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Lead',
@@ -48,6 +64,19 @@ const TaskSchema = new mongoose.Schema({
     type: Date,
     required: [true, 'Please specify the exam date and time']
   },
+  examDateTime: {
+    type: Date,
+    required: [true, 'Please specify the exam date and time']
+  },
+  assignedTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Please assign a user to this task']
+  },
+  reminderSent: {
+    type: Boolean,
+    default: false
+  },
   remindersSent: [{
     sentAt: {
       type: Date,
@@ -55,7 +84,7 @@ const TaskSchema = new mongoose.Schema({
     },
     reminderType: {
       type: String,
-      enum: ['30-minute-before', 'exam-time', '10-minute-after', 'other'],
+      enum: ['30-minute-before', '10-minute-before', 'exam-time', '10-minute-after', 'other'],
       default: 'other'
     }
   }],
@@ -78,6 +107,16 @@ const TaskSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true
+});
+
+// Pre-save middleware to sync examDate and examDateTime
+TaskSchema.pre('save', function(next) {
+  if (this.examDate && !this.examDateTime) {
+    this.examDateTime = this.examDate;
+  } else if (this.examDateTime && !this.examDate) {
+    this.examDate = this.examDateTime;
+  }
+  next();
 });
 
 module.exports = mongoose.model('Task', TaskSchema); 
