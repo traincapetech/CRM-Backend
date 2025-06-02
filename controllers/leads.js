@@ -780,8 +780,30 @@ exports.importLeads = async (req, res) => {
             const dateStr = lead.DATE || lead.Date || lead.date;
             console.log(`Processing date: "${dateStr}"`);
             
-            // Try to parse the date directly first
-            let parsedDate = new Date(dateStr);
+            // Function to parse DD-MM-YYYY format
+            const parseDDMMYYYY = (str) => {
+              const ddmmyyyyPattern = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/;
+              const match = str.match(ddmmyyyyPattern);
+              if (match) {
+                const [, day, month, year] = match;
+                // Create date in YYYY-MM-DD format for proper parsing
+                const isoFormat = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+                console.log(`Detected DD-MM-YYYY format: "${str}" -> "${isoFormat}"`);
+                return new Date(isoFormat);
+              }
+              return null;
+            };
+            
+            // Try DD-MM-YYYY format first
+            let parsedDate = parseDDMMYYYY(dateStr);
+            
+            if (parsedDate && !isNaN(parsedDate.getTime())) {
+              console.log(`Successfully parsed DD-MM-YYYY format: ${parsedDate.toISOString()}`);
+              return parsedDate;
+            }
+            
+            // Try to parse the date directly (for YYYY-MM-DD and other standard formats)
+            parsedDate = new Date(dateStr);
             
             // If the date is invalid, try different formats
             if (isNaN(parsedDate.getTime())) {
