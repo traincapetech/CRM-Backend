@@ -818,31 +818,25 @@ exports.importLeads = async (req, res) => {
         updatedAt: new Date()
       };
       
-      // Role-based assignment logic
-      if (req.user.role === 'Lead Person') {
-        // If a Lead Person is importing, set them as the leadPerson
-        leadData.leadPerson = req.user._id;
-        leadData.assignedTo = req.user._id; // Default assignment to Lead Person
-        console.log(`Setting leadPerson to current user: ${req.user._id}`);
-        
-        // If there's a specific sales person mentioned in the CSV, try to find and assign them
-        if (lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo) {
-          const salesPersonName = lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo;
-          console.log(`Looking for sales person: ${salesPersonName}`);
-          
-          // Store the name for later lookup
-          leadData.assignedToName = salesPersonName;
+      // FIXED: Look for Lead Person in CSV data FIRST, regardless of who is importing
+      if (lead.LeadPerson || lead['Lead Person'] || lead.leadPerson || lead.LEADPERSON || lead['LEAD PERSON']) {
+        const leadPersonName = lead.LeadPerson || lead['Lead Person'] || lead.leadPerson || lead.LEADPERSON || lead['LEAD PERSON'];
+        leadData.leadPersonName = leadPersonName;
+        console.log(`Found Lead Person in CSV: "${leadPersonName}"`);
+      } else {
+        // If no Lead Person specified in CSV, default to the importing user (only if they are a Lead Person)
+        if (req.user.role === 'Lead Person') {
+          leadData.leadPerson = req.user._id;
+          leadData.assignedTo = req.user._id; // Default assignment to Lead Person
+          console.log(`No Lead Person in CSV, defaulting to importing user: ${req.user.fullName}`);
         }
-      } else if (req.user.role === 'Admin' || req.user.role === 'Manager') {
-        // Admin/Manager can specify both leadPerson and assignedTo from CSV
-        if (lead.LeadPerson || lead['Lead Person'] || lead.leadPerson) {
-          leadData.leadPersonName = lead.LeadPerson || lead['Lead Person'] || lead.leadPerson;
-          console.log(`Found lead person name: ${leadData.leadPersonName}`);
-        }
-        if (lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo) {
-          leadData.assignedToName = lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo;
-          console.log(`Found sales person name: ${leadData.assignedToName}`);
-        }
+      }
+      
+      // Look for Sales Person assignment
+      if (lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo || lead.SALESPERSON || lead['SALES PERSON']) {
+        const salesPersonName = lead.SalesPerson || lead['Sales Person'] || lead.salesPerson || lead.assignedTo || lead.SALESPERSON || lead['SALES PERSON'];
+        leadData.assignedToName = salesPersonName;
+        console.log(`Found Sales Person in CSV: "${salesPersonName}"`);
       }
       
       console.log(`Mapped lead data:`, leadData);
@@ -851,57 +845,107 @@ exports.importLeads = async (req, res) => {
     
     console.log(`Mapped ${mappedLeads.length} leads`);
     
-    // Look up and assign sales persons by name for Lead Person imports
-    if (req.user.role === 'Lead Person') {
-      console.log('Looking up sales persons for automatic assignment...');
-      
-      // Get all users who could be sales persons
-      const User = require('../models/User');
-      const allUsers = await User.find({ 
-        role: { $in: ['Sales Person', 'Admin', 'Manager'] } 
-      }).select('_id fullName email role');
-      
-      console.log(`Found ${allUsers.length} potential assignees:`, allUsers.map(u => `${u.fullName} (${u.role})`));
-      
-      // Process each mapped lead to assign sales persons
-      for (let leadData of mappedLeads) {
-        if (leadData.assignedToName) {
-          console.log(`\nLooking for sales person: "${leadData.assignedToName}"`);
+    // FIXED: Look up and assign Lead Persons and Sales Persons by name for ALL imports
+    console.log('Looking up users for automatic assignment...');
+    
+    // Get all users who could be Lead Persons or Sales Persons
+    const User = require('../models/User');
+    const allUsers = await User.find({ 
+      role: { $in: ['Lead Person', 'Sales Person', 'Admin', 'Manager'] } 
+    }).select('_id fullName email role');
+    
+    console.log(`Found ${allUsers.length} potential assignees:`, allUsers.map(u => `${u.fullName} (${u.role})`));
+    
+    // Process each mapped lead to assign Lead Persons and Sales Persons
+    for (let leadData of mappedLeads) {
+      // Assign Lead Person if specified in CSV
+      if (leadData.leadPersonName) {
+        console.log(`\nLooking for Lead Person: "${leadData.leadPersonName}"`);
+        
+        // Try to find a matching Lead Person by name
+        const matchingLeadPerson = allUsers.find(user => {
+          if (user.role !== 'Lead Person') return false;
           
-          // Try to find a matching user by name (case-insensitive, partial match)
-          const matchingUser = allUsers.find(user => {
-            const userName = user.fullName.toLowerCase();
-            const searchName = leadData.assignedToName.toLowerCase();
-            
-            // Try exact match first
-            if (userName === searchName) return true;
-            
-            // Try partial match (contains)
-            if (userName.includes(searchName) || searchName.includes(userName)) return true;
-            
-            // Try first name match
-            const userFirstName = userName.split(' ')[0];
-            const searchFirstName = searchName.split(' ')[0];
-            if (userFirstName === searchFirstName) return true;
-            
-            return false;
-          });
+          const userName = user.fullName.toLowerCase();
+          const searchName = leadData.leadPersonName.toLowerCase();
           
-          if (matchingUser) {
-            leadData.assignedTo = matchingUser._id;
-            console.log(`✅ Assigned to: ${matchingUser.fullName} (${matchingUser.role})`);
-            
-            // Remove the temporary name field
-            delete leadData.assignedToName;
-          } else {
-            console.log(`❌ No matching user found for "${leadData.assignedToName}"`);
-            console.log('Available users:', allUsers.map(u => u.fullName).join(', '));
-            
-            // Keep assigned to Lead Person if no match found
-            console.log(`Keeping assigned to Lead Person: ${req.user.fullName}`);
-            delete leadData.assignedToName;
+          // Try exact match first
+          if (userName === searchName) return true;
+          
+          // Try partial match (contains)
+          if (userName.includes(searchName) || searchName.includes(userName)) return true;
+          
+          // Try first name match
+          const userFirstName = userName.split(' ')[0];
+          const searchFirstName = searchName.split(' ')[0];
+          if (userFirstName === searchFirstName) return true;
+          
+          return false;
+        });
+        
+        if (matchingLeadPerson) {
+          leadData.leadPerson = matchingLeadPerson._id;
+          console.log(`✅ Lead Person assigned to: ${matchingLeadPerson.fullName}`);
+          
+          // If no sales person specified, default assign to the Lead Person
+          if (!leadData.assignedToName) {
+            leadData.assignedTo = matchingLeadPerson._id;
+            console.log(`✅ Also assigned to Lead Person as default assignee`);
+          }
+        } else {
+          console.log(`❌ No matching Lead Person found for "${leadData.leadPersonName}"`);
+          console.log('Available Lead Persons:', allUsers.filter(u => u.role === 'Lead Person').map(u => u.fullName).join(', '));
+          
+          // Fallback to importing user if they are a Lead Person
+          if (req.user.role === 'Lead Person') {
+            leadData.leadPerson = req.user._id;
+            leadData.assignedTo = req.user._id;
+            console.log(`Fallback: Assigned to importing Lead Person: ${req.user.fullName}`);
           }
         }
+        
+        // Remove the temporary name field
+        delete leadData.leadPersonName;
+      }
+      
+      // Assign Sales Person if specified in CSV
+      if (leadData.assignedToName) {
+        console.log(`\nLooking for Sales Person: "${leadData.assignedToName}"`);
+        
+        // Try to find a matching user by name (Sales Person, Admin, or Manager)
+        const matchingSalesPerson = allUsers.find(user => {
+          if (!['Sales Person', 'Admin', 'Manager'].includes(user.role)) return false;
+          
+          const userName = user.fullName.toLowerCase();
+          const searchName = leadData.assignedToName.toLowerCase();
+          
+          // Try exact match first
+          if (userName === searchName) return true;
+          
+          // Try partial match (contains)
+          if (userName.includes(searchName) || searchName.includes(userName)) return true;
+          
+          // Try first name match
+          const userFirstName = userName.split(' ')[0];
+          const searchFirstName = searchName.split(' ')[0];
+          if (userFirstName === searchFirstName) return true;
+          
+          return false;
+        });
+        
+        if (matchingSalesPerson) {
+          leadData.assignedTo = matchingSalesPerson._id;
+          console.log(`✅ Sales Person assigned to: ${matchingSalesPerson.fullName} (${matchingSalesPerson.role})`);
+        } else {
+          console.log(`❌ No matching Sales Person found for "${leadData.assignedToName}"`);
+          console.log('Available Sales Persons:', allUsers.filter(u => ['Sales Person', 'Admin', 'Manager'].includes(u.role)).map(u => u.fullName).join(', '));
+          
+          // Keep existing assignment (Lead Person or importing user)
+          console.log(`Keeping existing assignment`);
+        }
+        
+        // Remove the temporary name field
+        delete leadData.assignedToName;
       }
     }
     
