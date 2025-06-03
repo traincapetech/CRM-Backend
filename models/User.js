@@ -26,12 +26,22 @@ const UserSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['Sales Person', 'Lead Person', 'Manager', 'Admin'],
+    enum: ['Sales Person', 'Lead Person', 'Manager', 'Admin', 'Customer'],
     default: 'Sales Person'
   },
   profilePicture: {
     type: String,
     default: ''
+  },
+  // Chat-related fields
+  chatStatus: {
+    type: String,
+    enum: ['ONLINE', 'OFFLINE', 'AWAY'],
+    default: 'OFFLINE'
+  },
+  lastSeen: {
+    type: Date,
+    default: Date.now
   },
   createdAt: {
     type: Date,

@@ -32,6 +32,7 @@ const currencyRoutes = require('./routes/currency');
 const taskRoutes = require('./routes/taskRoutes');
 const geminiRoutes = require('./routes/gemini');
 const testExamRoutes = require('./routes/testExamNotifications');
+const chatRoutes = require('./routes/chat');
 const app = express();
 const server = http.createServer(app);
 
@@ -51,18 +52,192 @@ const io = socketIo(server, {
 // Make io available to other modules
 app.set('io', io);
 
+// Chat service for Socket.IO
+const ChatService = require('./services/chatService');
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
   
-  // Join user to their personal room for targeted notifications
-  socket.on('join-user-room', (userId) => {
-    socket.join(`user-${userId}`);
-    console.log(`User ${userId} joined their room`);
-  });
+  // Check if this is a guest connection
+  const isGuest = socket.handshake.query.isGuest === 'true';
+  const guestId = socket.handshake.query.guestId;
+  
+  if (isGuest) {
+    console.log('Guest connected:', guestId);
+    
+    // Handle guest joining their room
+    socket.on('join-guest-room', (guestId) => {
+      socket.join(`guest-${guestId}`);
+      console.log(`Guest ${guestId} joined their room`);
+    });
+    
+    // Handle guest requesting support team
+    socket.on('get-support-team', async () => {
+      try {
+        const User = require('./models/User');
+        const supportTeam = await User.find({ 
+          role: { $in: ['Admin', 'Manager', 'Sales Person', 'Lead Person'] },
+          chatStatus: 'ONLINE'
+        }).select('fullName role chatStatus');
+        
+        socket.emit('support-team-list', supportTeam);
+      } catch (error) {
+        console.error('Error getting support team:', error);
+      }
+    });
+    
+    // Handle guest messages
+    socket.on('guest-message', async (data) => {
+      try {
+        const { guestId, guestInfo, recipientId, content, timestamp } = data;
+        
+        // Create a guest message object
+        const guestMessage = {
+          id: Date.now(),
+          guestId,
+          guestInfo,
+          content,
+          timestamp,
+          sender: 'guest'
+        };
+        
+        // Send to support team member
+        if (recipientId !== 'offline') {
+          io.to(`user-${recipientId}`).emit('guest-message-received', {
+            ...guestMessage,
+            sender: 'guest',
+            senderName: guestInfo.name,
+            senderEmail: guestInfo.email
+          });
+          
+          // Send notification
+          io.to(`user-${recipientId}`).emit('messageNotification', {
+            senderId: guestId,
+            senderName: `${guestInfo.name} (Guest)`,
+            content: content,
+            timestamp: timestamp,
+            isGuest: true
+          });
+        }
+        
+        // Confirm message received
+        socket.emit('guest-message-sent', guestMessage);
+        
+      } catch (error) {
+        console.error('Error handling guest message:', error);
+        socket.emit('guest-message-error', { error: error.message });
+      }
+    });
+    
+    // Handle support team responding to guest
+    socket.on('respond-to-guest', (data) => {
+      const { guestId, content, senderName, timestamp } = data;
+      
+      io.to(`guest-${guestId}`).emit('guest-message-received', {
+        id: Date.now(),
+        content,
+        sender: 'support',
+        senderName,
+        timestamp: new Date(timestamp)
+      });
+    });
+    
+  } else {
+    // Regular user connection handling
+    
+    // Join user to their personal room for targeted notifications
+    socket.on('join-user-room', (userId) => {
+      socket.join(`user-${userId}`);
+      console.log(`User ${userId} joined their room`);
+      
+      // Update user status to online
+      ChatService.updateUserStatus(userId, 'ONLINE').catch(console.error);
+      
+      // Broadcast user status update
+      socket.broadcast.emit('userStatusUpdate', {
+        userId,
+        status: 'ONLINE',
+        lastSeen: new Date()
+      });
+    });
+
+    // Handle chat message sending via Socket.IO
+    socket.on('sendMessage', async (data) => {
+      try {
+        const { senderId, recipientId, content, messageType = 'text' } = data;
+        
+        const message = await ChatService.saveMessage({
+          senderId,
+          recipientId,
+          content,
+          messageType
+        });
+
+        // Send to recipient
+        io.to(`user-${recipientId}`).emit('newMessage', {
+          _id: message._id,
+          chatId: message.chatId,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: message.content,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          isRead: message.isRead
+        });
+
+        // Send confirmation to sender
+        socket.emit('messageDelivered', {
+          _id: message._id,
+          timestamp: message.timestamp
+        });
+
+        // Send notification to recipient
+        io.to(`user-${recipientId}`).emit('messageNotification', {
+          senderId: message.senderId,
+          senderName: message.senderId.fullName,
+          content: message.content,
+          timestamp: message.timestamp
+        });
+      } catch (error) {
+        console.error('Error sending message via socket:', error);
+        socket.emit('messageError', { error: error.message });
+      }
+    });
+
+    // Handle typing indicators
+    socket.on('typing', (data) => {
+      const { recipientId, isTyping } = data;
+      io.to(`user-${recipientId}`).emit('userTyping', {
+        senderId: data.senderId,
+        isTyping
+      });
+    });
+
+    // Handle user status updates
+    socket.on('updateStatus', async (data) => {
+      try {
+        const { userId, status } = data;
+        await ChatService.updateUserStatus(userId, status);
+        
+        // Broadcast status update to all users
+        io.emit('userStatusUpdate', {
+          userId,
+          status,
+          lastSeen: new Date()
+        });
+      } catch (error) {
+        console.error('Error updating user status:', error);
+      }
+    });
+  }
   
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
+    
+    // Note: We can't easily get userId from socket on disconnect
+    // This would need to be handled by storing userId in socket data
+    // For now, we'll rely on the frontend to send status updates
   });
 });
 
@@ -101,7 +276,7 @@ app.use('/api/currency', currencyRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/gemini', geminiRoutes);
 app.use('/api/test-exam', testExamRoutes);
-
+app.use('/api/chat', chatRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
