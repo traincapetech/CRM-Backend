@@ -25,7 +25,7 @@ connectDB();
 // Route files
 const authRoutes = require('./routes/auth');
 const leadRoutes = require('./routes/leads');
-const saleRoutes = require('./routes/sales');
+const salesRoutes = require('./routes/sales');
 const leadSalesRoutes = require('./routes/leadSalesRoute');
 const leadPersonSalesRoutes = require('./routes/leadPersonSales');
 const currencyRoutes = require('./routes/currency');
@@ -33,6 +33,7 @@ const taskRoutes = require('./routes/taskRoutes');
 const geminiRoutes = require('./routes/gemini');
 const testExamRoutes = require('./routes/testExamNotifications');
 const chatRoutes = require('./routes/chat');
+const prospectRoutes = require('./routes/prospects');
 const app = express();
 const server = http.createServer(app);
 
@@ -269,7 +270,7 @@ app.options('/api/*', handleOptions);
 // Mount routers
 app.use('/api/auth', authRoutes);
 app.use('/api/leads', leadRoutes);
-app.use('/api/sales', saleRoutes);
+app.use('/api/sales', salesRoutes);
 app.use('/api/lead-sales', leadSalesRoutes);
 app.use('/api/lead-person-sales', leadPersonSalesRoutes);
 app.use('/api/currency', currencyRoutes);
@@ -277,6 +278,7 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/gemini', geminiRoutes);
 app.use('/api/test-exam', testExamRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/prospects', prospectRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
