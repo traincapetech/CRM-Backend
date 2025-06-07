@@ -34,6 +34,7 @@ const geminiRoutes = require('./routes/gemini');
 const testExamRoutes = require('./routes/testExamNotifications');
 const chatRoutes = require('./routes/chat');
 const prospectRoutes = require('./routes/prospects');
+const activityRoutes = require('./routes/activity');
 const app = express();
 const server = http.createServer(app);
 
@@ -279,6 +280,7 @@ app.use('/api/gemini', geminiRoutes);
 app.use('/api/test-exam', testExamRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/prospects', prospectRoutes);
+app.use('/api/activity', activityRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
