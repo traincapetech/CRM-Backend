@@ -88,21 +88,27 @@ router.get('/lead-sheet', authorize('Lead Person', 'Manager', 'Admin'), async (r
     // Get sales data with all fields
     // Populate both leadPerson and salesPerson fields
     const sales = await Sale.find(filter)
-      .select('date customerName country course countryCode contactNumber email pseudoId salesPerson leadPerson source clientRemark feedback totalCost totalCostCurrency tokenAmount tokenAmountCurrency')
+      .select('date customerName country course countryCode contactNumber email pseudoId salesPerson leadPerson source clientRemark feedback totalCost totalCostCurrency tokenAmount tokenAmountCurrency currency')
       .populate('salesPerson', 'fullName')
       .populate('leadPerson', 'fullName')
       .sort({ date: -1 });
     
-    // Post-process results to ensure currency fields exist
+    // Post-process results to ensure currency fields exist and are consistent
     const processedSales = sales.map(sale => {
       const saleObj = sale.toObject();
       
-      // Set default currency values if not present
+      // Ensure currency fields are properly set
+      // Priority: specific currency fields > general currency field > default USD
       if (!saleObj.totalCostCurrency) {
-        saleObj.totalCostCurrency = 'USD';
+        saleObj.totalCostCurrency = saleObj.currency || 'USD';
       }
       if (!saleObj.tokenAmountCurrency) {
-        saleObj.tokenAmountCurrency = 'USD';
+        saleObj.tokenAmountCurrency = saleObj.currency || 'USD';
+      }
+      
+      // Also ensure the general currency field is set for consistency
+      if (!saleObj.currency) {
+        saleObj.currency = saleObj.totalCostCurrency || 'USD';
       }
       
       return saleObj;

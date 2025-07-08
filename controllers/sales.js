@@ -1,5 +1,6 @@
 const Sale = require('../models/Sale');
 const User = require('../models/User');
+const { sendPaymentConfirmationEmail, sendServiceDeliveryEmail } = require('../services/emailService');
 
 // @desc    Get all sales
 // @route   GET /api/sales
@@ -84,6 +85,24 @@ exports.getSales = async (req, res) => {
     // Executing query
     const sales = await query;
 
+    // Ensure currency fields are consistent for paginated sales
+    const processedSales = sales.map(sale => {
+      const saleObj = sale.toObject();
+      
+      // Ensure currency fields are properly set
+      if (!saleObj.totalCostCurrency) {
+        saleObj.totalCostCurrency = saleObj.currency || 'USD';
+      }
+      if (!saleObj.tokenAmountCurrency) {
+        saleObj.tokenAmountCurrency = saleObj.currency || 'USD';
+      }
+      if (!saleObj.currency) {
+        saleObj.currency = saleObj.totalCostCurrency || 'USD';
+      }
+      
+      return saleObj;
+    });
+
     // Pagination result
     const pagination = {};
 
@@ -130,18 +149,36 @@ exports.getSales = async (req, res) => {
         .populate('salesPerson leadPerson', 'fullName email')
         .sort('-date');
       
+      // Ensure currency fields are consistent for all sales
+      const processedSales = allSales.map(sale => {
+        const saleObj = sale.toObject();
+        
+        // Ensure currency fields are properly set
+        if (!saleObj.totalCostCurrency) {
+          saleObj.totalCostCurrency = saleObj.currency || 'USD';
+        }
+        if (!saleObj.tokenAmountCurrency) {
+          saleObj.tokenAmountCurrency = saleObj.currency || 'USD';
+        }
+        if (!saleObj.currency) {
+          saleObj.currency = saleObj.totalCostCurrency || 'USD';
+        }
+        
+        return saleObj;
+      });
+      
       return res.status(200).json({
         success: true,
-        count: allSales.length,
-        data: allSales
+        count: processedSales.length,
+        data: processedSales
       });
     }
 
     res.status(200).json({
       success: true,
-      count: sales.length,
+      count: processedSales.length,
       pagination,
-      data: sales
+      data: processedSales
     });
   } catch (err) {
     res.status(500).json({
@@ -244,7 +281,7 @@ exports.createSale = async (req, res) => {
 // @access  Private
 exports.updateSale = async (req, res) => {
   try {
-    let sale = await Sale.findById(req.params.id);
+    let sale = await Sale.findById(req.params.id).populate('salesPerson leadPerson', 'fullName email');
 
     if (!sale) {
       return res.status(404).json({
@@ -252,6 +289,11 @@ exports.updateSale = async (req, res) => {
         message: 'Sale not found'
       });
     }
+
+    // Store original values for comparison
+    const originalStatus = sale.status;
+    const originalTokenAmount = sale.tokenAmount;
+    const originalTotalCost = sale.totalCost;
 
     // Check permissions
     if (req.user.role === 'Sales Person') {
@@ -281,9 +323,65 @@ exports.updateSale = async (req, res) => {
       runValidators: true
     }).populate('salesPerson leadPerson', 'fullName email');
 
+    // Email logic - send emails when certain conditions are met
+    let emailResults = [];
+
+    // 1. Send payment confirmation email when token amount is updated (and customer has email)
+    if (req.body.tokenAmount && req.body.tokenAmount !== originalTokenAmount && req.body.tokenAmount > 0) {
+      if (sale.email) {
+        try {
+          const paymentResult = await sendPaymentConfirmationEmail(sale, sale.salesPerson?.email);
+          emailResults.push({
+            type: 'payment_confirmation',
+            success: paymentResult.success,
+            message: paymentResult.success ? 'Payment confirmation email sent' : paymentResult.message
+          });
+        } catch (emailError) {
+          emailResults.push({
+            type: 'payment_confirmation',
+            success: false,
+            message: 'Failed to send payment confirmation email'
+          });
+        }
+      } else {
+        emailResults.push({
+          type: 'payment_confirmation',
+          success: false,
+          message: 'Email unavailable - cannot send payment confirmation'
+        });
+      }
+    }
+
+    // 2. Send service delivery email when status changes to "Completed"
+    if (req.body.status === 'Completed' && originalStatus !== 'Completed') {
+      if (sale.email) {
+        try {
+          const deliveryResult = await sendServiceDeliveryEmail(sale, sale.salesPerson?.email);
+          emailResults.push({
+            type: 'service_delivery',
+            success: deliveryResult.success,
+            message: deliveryResult.success ? 'Service delivery email sent' : deliveryResult.message
+          });
+        } catch (emailError) {
+          emailResults.push({
+            type: 'service_delivery',
+            success: false,
+            message: 'Failed to send service delivery email'
+          });
+        }
+      } else {
+        emailResults.push({
+          type: 'service_delivery',
+          success: false,
+          message: 'Email unavailable - cannot send service delivery confirmation'
+        });
+      }
+    }
+
     res.status(200).json({
       success: true,
-      data: sale
+      data: sale,
+      emailNotifications: emailResults.length > 0 ? emailResults : undefined
     });
   } catch (err) {
     if (err.name === 'ValidationError') {

@@ -1,10 +1,94 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getMe, getAllUsers, updateUser, deleteUser, updateProfilePicture, createUser } = require('../controllers/auth');
+const { register, login, getMe, getAllUsers, updateUser, deleteUser, updateProfilePicture, createUser, createUserWithDocuments, updateUserWithDocuments } = require('../controllers/auth');
 const { protect, authorize } = require('../middleware/auth');
 const nodemailer = require('nodemailer');
 const bcrypt = require('bcrypt');
 const UserModel = require('../models/User.js');
+const multer = require('multer');
+const path = require('path');
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/documents/');
+  },
+  filename: function (req, file, cb) {
+    // Create unique filename
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  },
+  fileFilter: function (req, file, cb) {
+    // Check file type
+    if (file.fieldname === 'photograph') {
+      if (!file.mimetype.startsWith('image/')) {
+        return cb(new Error('Photograph must be an image file'), false);
+      }
+    } else {
+      const allowedTypes = [
+        'application/pdf',
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ];
+      if (!allowedTypes.includes(file.mimetype)) {
+        return cb(new Error('Invalid file type. Only PDF, JPG, PNG, DOC, and DOCX files are allowed'), false);
+      }
+    }
+    cb(null, true);
+  }
+});
+
+// Multer middleware for document uploads
+const uploadDocuments = upload.fields([
+  { name: 'photograph', maxCount: 1 },
+  { name: 'tenthMarksheet', maxCount: 1 },
+  { name: 'twelfthMarksheet', maxCount: 1 },
+  { name: 'bachelorDegree', maxCount: 1 },
+  { name: 'postgraduateDegree', maxCount: 1 },
+  { name: 'aadharCard', maxCount: 1 },
+  { name: 'panCard', maxCount: 1 },
+  { name: 'pcc', maxCount: 1 },
+  { name: 'resume', maxCount: 1 },
+  { name: 'offerLetter', maxCount: 1 }
+]);
+
+// Configure multer for profile picture uploads
+const profilePictureStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/profile-pictures/');
+  },
+  filename: function (req, file, cb) {
+    // Create unique filename
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'profile-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const uploadProfilePicture = multer({ 
+  storage: profilePictureStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit for profile pictures
+  },
+  fileFilter: function (req, file, cb) {
+    // Only allow image files for profile pictures
+    if (!file.mimetype.startsWith('image/')) {
+      return cb(new Error('Profile picture must be an image file'), false);
+    }
+    cb(null, true);
+  }
+}).fields([
+  { name: 'profilePicture', maxCount: 1 }
+]);
 
 
 // Register all routes
@@ -25,13 +109,19 @@ console.log('GET /api/auth/users registered');
 router.post('/users', protect, authorize('Admin', 'Manager'), createUser);
 console.log('POST /api/auth/users registered');
 
+router.post('/users/with-documents', protect, authorize('Admin', 'Manager'), uploadDocuments, createUserWithDocuments);
+console.log('POST /api/auth/users/with-documents registered');
+
 router.put('/users/:id', protect, authorize('Admin', 'Manager'), updateUser);
 console.log('PUT /api/auth/users/:id registered');
+
+router.put('/users/:id/with-documents', protect, authorize('Admin', 'Manager'), uploadDocuments, updateUserWithDocuments);
+console.log('PUT /api/auth/users/:id/with-documents registered');
 
 router.delete('/users/:id', protect, authorize('Admin', 'Manager'), deleteUser);
 console.log('DELETE /api/auth/users/:id registered');
 
-router.put('/profile-picture', protect, updateProfilePicture);
+router.put('/profile-picture', protect, uploadProfilePicture, updateProfilePicture);
 console.log('PUT /api/auth/profile-picture registered');
 
 router.post("/sendOTPToEmail", async (req, res) => {

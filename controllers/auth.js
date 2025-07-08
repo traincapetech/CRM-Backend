@@ -304,31 +304,29 @@ exports.deleteUser = async (req, res) => {
 exports.updateProfilePicture = async (req, res) => {
   try {
     console.log('Profile picture update requested by user:', req.user.id);
-    const { profilePicture } = req.body;
+    console.log('Request files:', req.files);
+    console.log('Request body:', req.body);
     
-    if (!profilePicture) {
-      console.log('No profile picture provided in request');
+    // Check if a file was uploaded
+    if (!req.files || !req.files.profilePicture) {
+      console.log('No profile picture file provided in request');
       return res.status(400).json({
         success: false,
-        message: 'Please provide a profile picture URL'
+        message: 'Please provide a profile picture file'
       });
     }
     
-    // Log the first 50 characters to avoid huge logs
-    console.log('Received profile picture data (first 50 chars):', profilePicture.substring(0, 50) + '...');
+    const profilePictureFile = req.files.profilePicture[0];
+    console.log('Received profile picture file:', profilePictureFile.filename);
     
-    // Check if the request is a data URL (base64)
-    if (profilePicture.startsWith('data:image')) {
-      console.log('Processing base64 image data');
-    } else {
-      console.log('Received URL or other format:', profilePicture.substring(0, 50));
-    }
+    // Store the file path in the database
+    const profilePicturePath = `/uploads/profile-pictures/${profilePictureFile.filename}`;
     
     // Update the user's profile picture
     console.log('Updating user profile picture in database');
     const user = await User.findByIdAndUpdate(
       req.user.id, 
-      { profilePicture },
+      { profilePicture: profilePicturePath },
       { new: true, runValidators: true }
     );
     
@@ -343,7 +341,8 @@ exports.updateProfilePicture = async (req, res) => {
     console.log('Profile picture updated successfully for user:', user._id);
     res.status(200).json({
       success: true,
-      data: user
+      data: user,
+      profilePicture: profilePicturePath
     });
   } catch (err) {
     console.error(`Error updating profile picture: ${err.message}`);
@@ -436,6 +435,247 @@ exports.createUser = async (req, res) => {
     res.status(500).json({
       success: false,
       message: err.message || 'Internal server error during user creation'
+    });
+  }
+};
+
+// @desc    Create new user with documents (for Admin and Manager)
+// @route   POST /api/auth/users/with-documents
+// @access  Private (Admin and Manager, but Manager cannot create Admin accounts)
+exports.createUserWithDocuments = async (req, res) => {
+  try {
+    console.log("Create user with documents attempt by:", req.user.role);
+    const { fullName, email, password, role } = req.body;
+    
+    // Basic validation
+    if (!fullName || !email || !password) {
+      console.log("Missing required fields for user creation");
+      return res.status(400).json({
+        success: false,
+        message: "Please provide name, email and password"
+      });
+    }
+
+    // Prevent Managers from creating Admin accounts
+    if (req.user.role === 'Manager' && role === 'Admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot create Admin accounts",
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      console.log(`User with email ${email} already exists`);
+      return res.status(400).json({
+        success: false,
+        message: "Email already registered",
+      });
+    }
+
+    console.log("Creating new user...");
+    // Create user
+    const user = await User.create({
+      fullName,
+      email,
+      password,
+      role: role || 'Sales Person', // Default role if not specified
+    });
+
+    console.log(`User created successfully with ID: ${user._id}`);
+    
+    // Handle employee creation for non-admin/non-hr roles
+    if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(role)) {
+      const Employee = require('../models/Employee');
+      
+      // Create employee record
+      const employeeData = {
+        fullName,
+        email,
+        userId: user._id,
+        role: { name: role },
+        department: { name: 'General' },
+        
+        // Handle document uploads
+        documents: {}
+      };
+      
+      // Process uploaded documents
+      if (req.files) {
+        const documentTypes = ['photograph', 'tenthMarksheet', 'twelfthMarksheet', 'bachelorDegree', 'postgraduateDegree', 'aadharCard', 'panCard', 'pcc', 'resume', 'offerLetter'];
+        
+        for (const docType of documentTypes) {
+          if (req.files[docType]) {
+            const file = req.files[docType][0];
+            employeeData.documents[docType] = {
+              filename: file.originalname,
+              path: file.path,
+              mimetype: file.mimetype,
+              size: file.size,
+              uploadedAt: new Date()
+            };
+          }
+        }
+      }
+      
+      const employee = await Employee.create(employeeData);
+      console.log(`Employee created successfully with ID: ${employee._id}`);
+    }
+    
+    // Return user data without password
+    const userData = await User.findById(user._id);
+    
+    res.status(201).json({
+      success: true,
+      data: userData,
+    });
+  } catch (err) {
+    console.error("User creation with documents error details:", {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+      code: err.code
+    });
+    
+    // Provide more specific error messages for common issues
+    if (err.name === 'ValidationError') {
+      const messages = Object.values(err.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(', ')
+      });
+    }
+    
+    if (err.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email already registered'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: err.message || 'Internal server error during user creation'
+    });
+  }
+};
+
+// @desc    Update user with documents
+// @route   PUT /api/auth/users/:id/with-documents
+// @access  Private (Admin and Manager, but Manager cannot modify Admin accounts)
+exports.updateUserWithDocuments = async (req, res) => {
+  try {
+    console.log(`Attempting to update user with documents, ID: ${req.params.id}`);
+    const { fullName, email, role } = req.body;
+
+    // Check if user exists
+    let user = await User.findById(req.params.id);
+
+    if (!user) {
+      console.log(`User not found with ID: ${req.params.id}`);
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Prevent Managers from modifying Admin accounts
+    if (req.user.role === 'Manager' && user.role === 'Admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot modify Admin accounts",
+      });
+    }
+
+    // Prevent Managers from making users Admin
+    if (req.user.role === 'Manager' && role === 'Admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot create Admin accounts",
+      });
+    }
+
+    // Update user fields
+    const updateData = {
+      fullName: fullName || user.fullName,
+      email: email || user.email,
+      role: role || user.role,
+    };
+
+    // Handle password update if provided
+    if (req.body.password && req.body.password.trim() !== '') {
+      updateData.password = req.body.password;
+    }
+
+    // Update user
+    user = await User.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+      runValidators: true,
+    });
+
+    console.log(`User updated successfully: ${user._id}`);
+    
+    // Handle employee update for non-admin/non-hr roles
+    if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(role || user.role)) {
+      const Employee = require('../models/Employee');
+      
+      // Find or create employee record
+      let employee = await Employee.findOne({ userId: user._id });
+      
+      if (!employee) {
+        // Create new employee if doesn't exist
+        employee = await Employee.create({
+          fullName: user.fullName,
+          email: user.email,
+          userId: user._id,
+          role: { name: user.role },
+          department: { name: 'General' },
+          documents: {}
+        });
+      }
+      
+      // Update employee basic info
+      employee.fullName = user.fullName;
+      employee.email = user.email;
+      employee.role = { name: user.role };
+      
+      // Process uploaded documents if any
+      if (req.files) {
+        if (!employee.documents) {
+          employee.documents = {};
+        }
+        
+        const documentTypes = ['photograph', 'tenthMarksheet', 'twelfthMarksheet', 'bachelorDegree', 'postgraduateDegree', 'aadharCard', 'panCard', 'pcc', 'resume', 'offerLetter'];
+        
+        for (const docType of documentTypes) {
+          if (req.files[docType]) {
+            const file = req.files[docType][0];
+            employee.documents[docType] = {
+              filename: file.originalname,
+              path: file.path,
+              mimetype: file.mimetype,
+              size: file.size,
+              uploadedAt: new Date()
+            };
+          }
+        }
+      }
+      
+      await employee.save();
+      console.log(`Employee updated successfully with ID: ${employee._id}`);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: user,
+    });
+  } catch (err) {
+    console.error(`Error updating user with documents: ${err.message}`);
+    res.status(400).json({
+      success: false,
+      message: err.message,
     });
   }
 };
