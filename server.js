@@ -36,6 +36,10 @@ const chatRoutes = require('./routes/chat');
 const prospectRoutes = require('./routes/prospects');
 const activityRoutes = require('./routes/activity');
 const employeeRoutes = require('./routes/employees');
+const leaveRoutes = require('./routes/leaves');
+const attendanceRoutes = require('./routes/attendance');
+const payrollRoutes = require('./routes/payroll');
+const incentivesRoutes = require('./routes/incentives');
 const app = express();
 const server = http.createServer(app);
 
@@ -286,6 +290,10 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/prospects', prospectRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/employees', employeeRoutes);
+app.use('/api/leaves', leaveRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/payroll', payrollRoutes);
+app.use('/api/incentives', incentivesRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {

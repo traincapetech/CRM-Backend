@@ -489,14 +489,47 @@ exports.createUserWithDocuments = async (req, res) => {
     // Handle employee creation for non-admin/non-hr roles
     if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(role)) {
       const Employee = require('../models/Employee');
+      const Department = require('../models/Department');
+      const Role = require('../models/EmployeeRole');
+      
+      // Find or create department
+      let department = await Department.findOne({ name: 'General' });
+      if (!department) {
+        department = await Department.create({
+          name: 'General',
+          description: 'General Department for all employees'
+        });
+      }
+      
+      // Find or create role
+      let employeeRole = await Role.findOne({ name: role });
+      if (!employeeRole) {
+        employeeRole = await Role.create({
+          name: role,
+          description: `Role for ${role}`
+        });
+      }
       
       // Create employee record
       const employeeData = {
         fullName,
         email,
         userId: user._id,
-        role: { name: role },
-        department: { name: 'General' },
+        role: employeeRole._id,
+        department: department._id,
+        
+        // Add all the new fields from the admin form
+        phoneNumber: req.body.phoneNumber || '',
+        whatsappNumber: req.body.whatsappNumber || '',
+        linkedInUrl: req.body.linkedInUrl || '',
+        currentAddress: req.body.currentAddress || '',
+        permanentAddress: req.body.permanentAddress || '',
+        dateOfBirth: req.body.dateOfBirth || null,
+        joiningDate: req.body.joiningDate || new Date(),
+        salary: req.body.salary ? parseFloat(req.body.salary) : 0,
+        status: req.body.status || 'ACTIVE',
+        collegeName: req.body.collegeName || '',
+        internshipDuration: req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null,
         
         // Handle document uploads
         documents: {}
@@ -510,7 +543,8 @@ exports.createUserWithDocuments = async (req, res) => {
           if (req.files[docType]) {
             const file = req.files[docType][0];
             employeeData.documents[docType] = {
-              filename: file.originalname,
+              filename: file.filename, // Use the generated filename, not originalname
+              originalName: file.originalname, // Store original name separately
               path: file.path,
               mimetype: file.mimetype,
               size: file.size,
@@ -568,6 +602,9 @@ exports.createUserWithDocuments = async (req, res) => {
 exports.updateUserWithDocuments = async (req, res) => {
   try {
     console.log(`Attempting to update user with documents, ID: ${req.params.id}`);
+    console.log('Request body:', req.body);
+    console.log('Request files:', req.files ? Object.keys(req.files) : 'No files');
+    
     const { fullName, email, role } = req.body;
 
     // Check if user exists
@@ -597,49 +634,120 @@ exports.updateUserWithDocuments = async (req, res) => {
       });
     }
 
-    // Update user fields
-    const updateData = {
-      fullName: fullName || user.fullName,
-      email: email || user.email,
-      role: role || user.role,
-    };
+    // Update user fields - only update provided fields
+    const updateData = {};
+    if (fullName && fullName.trim() !== '') updateData.fullName = fullName;
+    if (email && email.trim() !== '') updateData.email = email;
+    if (role && role.trim() !== '') updateData.role = role;
 
     // Handle password update if provided
     if (req.body.password && req.body.password.trim() !== '') {
       updateData.password = req.body.password;
     }
+    
+    // Ensure we have at least some data to update
+    if (Object.keys(updateData).length === 0 && (!req.files || Object.keys(req.files).length === 0)) {
+      return res.status(400).json({
+        success: false,
+        message: "No data provided for update"
+      });
+    }
 
-    // Update user
-    user = await User.findByIdAndUpdate(req.params.id, updateData, {
-      new: true,
-      runValidators: true,
-    });
+    // Update user only if there's data to update
+    if (Object.keys(updateData).length > 0) {
+      user = await User.findByIdAndUpdate(req.params.id, updateData, {
+        new: true,
+        runValidators: true,
+      });
+    }
 
     console.log(`User updated successfully: ${user._id}`);
     
     // Handle employee update for non-admin/non-hr roles
-    if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(role || user.role)) {
+    const userRole = updateData.role || user.role;
+    if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(userRole)) {
       const Employee = require('../models/Employee');
+      const Department = require('../models/Department');
+      const Role = require('../models/EmployeeRole');
       
       // Find or create employee record
       let employee = await Employee.findOne({ userId: user._id });
       
       if (!employee) {
+        // Find or create department
+        let department = await Department.findOne({ name: 'General' });
+        if (!department) {
+          department = await Department.create({
+            name: 'General',
+            description: 'General Department for all employees'
+          });
+        }
+        
+        // Find or create role for the current user role
+        let employeeRole = await Role.findOne({ name: userRole });
+        if (!employeeRole) {
+          employeeRole = await Role.create({
+            name: userRole,
+            description: `Role for ${userRole}`
+          });
+        }
+        
         // Create new employee if doesn't exist
         employee = await Employee.create({
           fullName: user.fullName,
           email: user.email,
           userId: user._id,
-          role: { name: user.role },
-          department: { name: 'General' },
+          role: employeeRole._id,
+          department: department._id,
           documents: {}
         });
       }
       
-      // Update employee basic info
-      employee.fullName = user.fullName;
-      employee.email = user.email;
-      employee.role = { name: user.role };
+      // Update employee basic info with new values
+      if (updateData.fullName) employee.fullName = updateData.fullName;
+      if (updateData.email) employee.email = updateData.email;
+      
+      // Update employee role if user role changed
+      if (updateData.role) {
+        // Find or create role for the new role
+        let newEmployeeRole = await Role.findOne({ name: updateData.role });
+        if (!newEmployeeRole) {
+          newEmployeeRole = await Role.create({
+            name: updateData.role,
+            description: `Role for ${updateData.role}`
+          });
+        }
+        employee.role = newEmployeeRole._id;
+      }
+      
+      // Update all employee fields from form
+      if (req.body.phoneNumber !== undefined) employee.phoneNumber = req.body.phoneNumber;
+      if (req.body.whatsappNumber !== undefined) employee.whatsappNumber = req.body.whatsappNumber;
+      if (req.body.linkedInUrl !== undefined) employee.linkedInUrl = req.body.linkedInUrl;
+      if (req.body.currentAddress !== undefined) employee.currentAddress = req.body.currentAddress;
+      if (req.body.permanentAddress !== undefined) employee.permanentAddress = req.body.permanentAddress;
+      if (req.body.dateOfBirth !== undefined) employee.dateOfBirth = req.body.dateOfBirth ? new Date(req.body.dateOfBirth) : null;
+      if (req.body.joiningDate !== undefined) employee.joiningDate = req.body.joiningDate ? new Date(req.body.joiningDate) : null;
+      if (req.body.salary !== undefined) employee.salary = req.body.salary ? parseFloat(req.body.salary) : 0;
+      if (req.body.status !== undefined) employee.status = req.body.status;
+      if (req.body.collegeName !== undefined) employee.collegeName = req.body.collegeName;
+      if (req.body.internshipDuration !== undefined) employee.internshipDuration = req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null;
+      
+      // Update department if provided
+      if (req.body.department !== undefined && req.body.department !== '') {
+        const department = await Department.findById(req.body.department);
+        if (department) {
+          employee.department = department._id;
+        }
+      }
+      
+      // Update employee role if provided
+      if (req.body.employeeRole !== undefined && req.body.employeeRole !== '') {
+        const employeeRole = await Role.findById(req.body.employeeRole);
+        if (employeeRole) {
+          employee.role = employeeRole._id;
+        }
+      }
       
       // Process uploaded documents if any
       if (req.files) {
@@ -653,7 +761,8 @@ exports.updateUserWithDocuments = async (req, res) => {
           if (req.files[docType]) {
             const file = req.files[docType][0];
             employee.documents[docType] = {
-              filename: file.originalname,
+              filename: file.filename, // Use the generated filename, not originalname
+              originalName: file.originalname, // Store original name separately
               path: file.path,
               mimetype: file.mimetype,
               size: file.size,
@@ -665,6 +774,8 @@ exports.updateUserWithDocuments = async (req, res) => {
       
       await employee.save();
       console.log(`Employee updated successfully with ID: ${employee._id}`);
+    } else {
+      console.log(`User role ${userRole} does not require employee record`);
     }
 
     res.status(200).json({

@@ -203,18 +203,28 @@ exports.getSale = async (req, res) => {
     }
 
     // Check if user can access this sale
-    if (req.user.role === 'Sales Person' && sale.salesPerson.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to access this sale'
-      });
+    if (req.user.role === 'Sales Person') {
+      const salesPersonId = sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+      
+      if (salesPersonId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to access this sale'
+        });
+      }
     }
 
-    if (req.user.role === 'Lead Person' && sale.leadPerson.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to access this sale'
-      });
+    if (req.user.role === 'Lead Person') {
+      const leadPersonId = sale.leadPerson?._id?.toString() || sale.leadPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+      
+      if (leadPersonId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to access this sale'
+        });
+      }
     }
 
     res.status(200).json({
@@ -298,7 +308,10 @@ exports.updateSale = async (req, res) => {
     // Check permissions
     if (req.user.role === 'Sales Person') {
       // Sales person can only update their own sales
-      if (sale.salesPerson.toString() !== req.user.id) {
+      const salesPersonId = sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+      
+      if (salesPersonId !== userId) {
         return res.status(403).json({
           success: false,
           message: 'Not authorized to update this sale'
@@ -306,7 +319,10 @@ exports.updateSale = async (req, res) => {
       }
     } else if (req.user.role === 'Lead Person') {
       // Lead person can only update sales where they are the lead person
-      if (sale.leadPerson.toString() !== req.user.id) {
+      const leadPersonId = sale.leadPerson?._id?.toString() || sale.leadPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+      
+      if (leadPersonId !== userId) {
         return res.status(403).json({
           success: false,
           message: 'Not authorized to update this sale'
@@ -415,12 +431,15 @@ exports.deleteSale = async (req, res) => {
 
     // Check permissions - only sales person who created it, manager, or admin can delete
     if (req.user.role === 'Sales Person') {
-      if (sale.salesPerson.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
+      const salesPersonId = sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+      
+      if (salesPersonId !== userId) {
+        return res.status(403).json({
+          success: false,
           message: 'Not authorized to delete this sale'
-      });
-    }
+        });
+      }
     } else if (req.user.role === 'Lead Person') {
       // Lead persons cannot delete sales
       return res.status(403).json({

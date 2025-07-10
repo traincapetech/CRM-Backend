@@ -1,48 +1,50 @@
 const mongoose = require('mongoose');
 
 const leaveSchema = new mongoose.Schema({
-  employee: {
-    type: mongoose.Schema.ObjectId,
+  employeeId: {
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'Employee',
-    required: [true, 'Please specify the employee']
+    required: true
   },
-  hrId: {
-    type: mongoose.Schema.ObjectId,
-    ref: 'User'
-  },
-  fromDate: {
-    type: Date,
-    required: [true, 'Please specify the start date']
-  },
-  toDate: {
-    type: Date,
-    required: [true, 'Please specify the end date']
-  },
-  reason: {
-    type: String,
-    required: [true, 'Please provide a reason for leave'],
-    trim: true
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
   },
   leaveType: {
     type: String,
-    enum: ['SICK', 'CASUAL', 'ANNUAL', 'MATERNITY', 'PATERNITY', 'EMERGENCY', 'OTHER'],
-    default: 'CASUAL'
+    enum: ['sick', 'casual', 'annual', 'emergency', 'maternity', 'paternity', 'bereavement', 'personal'],
+    required: true
+  },
+  startDate: {
+    type: Date,
+    required: true
+  },
+  endDate: {
+    type: Date,
+    required: true
+  },
+  totalDays: {
+    type: Number,
+    required: true
+  },
+  reason: {
+    type: String,
+    required: true,
+    minlength: 10,
+    maxlength: 500
   },
   status: {
     type: String,
-    enum: ['PENDING', 'APPROVED', 'REJECTED', 'AUTO_REJECTED'],
-    default: 'PENDING'
+    enum: ['pending', 'approved', 'rejected', 'cancelled'],
+    default: 'pending'
   },
-  overrideAutoReject: {
-    type: Boolean,
-    default: false
-  },
-  requestDate: {
+  appliedDate: {
     type: Date,
     default: Date.now
   },
   approvedBy: {
-    type: mongoose.Schema.ObjectId,
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
   approvedDate: {
@@ -50,39 +52,59 @@ const leaveSchema = new mongoose.Schema({
   },
   rejectionReason: {
     type: String,
-    trim: true
+    maxlength: 300
   },
-  totalDays: {
-    type: Number
+  attachments: [{
+    filename: String,
+    path: String,
+    uploadedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  comments: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    comment: String,
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  isHalfDay: {
+    type: Boolean,
+    default: false
+  },
+  halfDaySession: {
+    type: String,
+    enum: ['morning', 'afternoon'],
+    required: function() {
+      return this.isHalfDay;
+    }
   }
 }, {
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
+  timestamps: true
 });
 
-// Calculate total days before saving
+// Calculate total days automatically
 leaveSchema.pre('save', function(next) {
-  if (this.fromDate && this.toDate) {
-    const timeDiff = this.toDate.getTime() - this.fromDate.getTime();
-    this.totalDays = Math.ceil(timeDiff / (1000 * 3600 * 24)) + 1; // +1 to include both start and end dates
+  if (this.isNew || this.isModified('startDate') || this.isModified('endDate') || this.isModified('isHalfDay')) {
+    if (this.isHalfDay) {
+      this.totalDays = 0.5;
+    } else {
+      const timeDiff = this.endDate.getTime() - this.startDate.getTime();
+      const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24)) + 1;
+      this.totalDays = daysDiff;
+    }
   }
   next();
 });
 
-// Populate employee and HR details
-leaveSchema.pre(/^find/, function(next) {
-  this.populate({
-    path: 'employee',
-    select: 'fullName email department role'
-  }).populate({
-    path: 'hrId',
-    select: 'fullName email'
-  }).populate({
-    path: 'approvedBy',
-    select: 'fullName email'
-  });
-  next();
-});
+// Index for better query performance
+leaveSchema.index({ employeeId: 1, status: 1 });
+leaveSchema.index({ startDate: 1, endDate: 1 });
+leaveSchema.index({ appliedDate: -1 });
 
 module.exports = mongoose.model('Leave', leaveSchema); 

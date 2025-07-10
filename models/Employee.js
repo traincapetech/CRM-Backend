@@ -71,36 +71,41 @@ const employeeSchema = new mongoose.Schema({
   internshipDuration: {
     type: Number // in months
   },
-  // Document Storage (as file paths or base64)
+  // Document Storage (supporting both simple strings and detailed objects)
   photograph: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
   },
   tenthMarksheet: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
   },
   twelfthMarksheet: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
   },
   bachelorDegree: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
   },
   postgraduateDegree: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
   },
   aadharCard: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
   },
   panCard: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
   },
   pcc: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
   },
   resume: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
   },
   offerLetter: {
-    type: String
+    type: mongoose.Schema.Types.Mixed
+  },
+  // General documents object for additional flexibility
+  documents: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
   },
   // User account reference
   userId: {

@@ -22,6 +22,18 @@ const EmployeeRole = require('../models/EmployeeRole');
 // Protect all routes
 router.use(protect);
 
+// Department routes - MUST come before /:id routes
+router
+  .route('/departments')
+  .get(getDepartments)
+  .post(createDepartment);
+
+// Role routes - MUST come before /:id routes
+router
+  .route('/roles')
+  .get(getRoles)
+  .post(createRole);
+
 // Employee routes
 router
   .route('/')
@@ -33,18 +45,6 @@ router
   .get(getEmployee)
   .put(uploadEmployeeFiles, updateEmployee)
   .delete(deleteEmployee);
-
-// Department routes
-router
-  .route('/departments')
-  .get(getDepartments)
-  .post(createDepartment);
-
-// Role routes
-router
-  .route('/roles')
-  .get(getRoles)
-  .post(createRole);
 
 // Convert existing users to employees
 router.post('/convert-users', async (req, res) => {

@@ -169,16 +169,28 @@ exports.getEmployee = async (req, res) => {
 // @access  Private
 exports.createEmployee = async (req, res) => {
   try {
-    // Check authorization - Only HR, Admin, and Manager can create employees
-    if (!['HR', 'Admin', 'Manager'].includes(req.user.role)) {
+    // Parse employee data from form
+    const employeeData = typeof req.body.employee === 'string' ? JSON.parse(req.body.employee) : req.body;
+    
+    // Check if user is trying to create their own profile
+    const isCreatingOwnProfile = employeeData.userId === req.user.id || 
+                                !employeeData.userId || 
+                                employeeData.email === req.user.email;
+    
+    // Allow users to create their own profiles, but restrict admin functions
+    if (!isCreatingOwnProfile && !['HR', 'Admin', 'Manager'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to create employees'
+        message: 'Not authorized to create employee profiles for other users'
       });
     }
-
-    // Parse employee data from form
-    const employeeData = JSON.parse(req.body.employee);
+    
+    // Set the user ID for the employee
+    if (isCreatingOwnProfile) {
+      employeeData.userId = req.user.id;
+      employeeData.fullName = employeeData.fullName || req.user.fullName;
+      employeeData.email = employeeData.email || req.user.email;
+    }
     
     // Add HR ID if user is HR
     if (req.user.role === 'HR') {
@@ -197,8 +209,8 @@ exports.createEmployee = async (req, res) => {
     // Create employee
     const employee = await Employee.create(employeeData);
 
-    // Create user account if username and password provided
-    if (req.body.username && req.body.password) {
+    // Create user account if username and password provided (admin function only)
+    if (req.body.username && req.body.password && ['HR', 'Admin', 'Manager'].includes(req.user.role)) {
       const userData = {
         fullName: employeeData.fullName,
         email: employeeData.email,
@@ -239,11 +251,11 @@ exports.updateEmployee = async (req, res) => {
       });
     }
 
-    // Check authorization - Allow HR, Admin, and Manager to update employees
+    // Check authorization - Allow only HR, Admin, and Manager to update employees
     if (!['HR', 'Admin', 'Manager'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to update employees'
+        message: 'Not authorized to update employee profiles'
       });
     }
 

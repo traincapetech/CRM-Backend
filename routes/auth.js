@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const { register, login, getMe, getAllUsers, updateUser, deleteUser, updateProfilePicture, createUser, createUserWithDocuments, updateUserWithDocuments } = require('../controllers/auth');
+const path = require('path');
+const fs = require('fs');
 const { protect, authorize } = require('../middleware/auth');
 const nodemailer = require('nodemailer');
 const bcrypt = require('bcrypt');
 const UserModel = require('../models/User.js');
 const multer = require('multer');
-const path = require('path');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -115,8 +116,92 @@ console.log('POST /api/auth/users/with-documents registered');
 router.put('/users/:id', protect, authorize('Admin', 'Manager'), updateUser);
 console.log('PUT /api/auth/users/:id registered');
 
-router.put('/users/:id/with-documents', protect, authorize('Admin', 'Manager'), uploadDocuments, updateUserWithDocuments);
+// Handle document uploads optionally for user updates
+router.put('/users/:id/with-documents', protect, authorize('Admin', 'Manager'), (req, res, next) => {
+  // Use uploadDocuments middleware but handle errors gracefully
+  uploadDocuments(req, res, (err) => {
+    if (err) {
+      console.log('File upload error (continuing without files):', err.message);
+      // Continue without files if upload fails
+      req.files = {};
+    }
+    next();
+  });
+}, updateUserWithDocuments);
 console.log('PUT /api/auth/users/:id/with-documents registered');
+
+// Serve documents with proper authentication
+router.get('/documents/:filename', protect, (req, res) => {
+  try {
+    const { filename } = req.params;
+    const filePath = path.join(__dirname, '../uploads/documents', filename);
+    
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        message: 'Document not found'
+      });
+    }
+    
+    // Get file stats
+    const stats = fs.statSync(filePath);
+    
+    // Set appropriate headers based on file extension
+    const ext = path.extname(filename).toLowerCase();
+    let contentType = 'application/octet-stream';
+    
+    switch (ext) {
+      case '.pdf':
+        contentType = 'application/pdf';
+        break;
+      case '.jpg':
+      case '.jpeg':
+        contentType = 'image/jpeg';
+        break;
+      case '.png':
+        contentType = 'image/png';
+        break;
+      case '.doc':
+        contentType = 'application/msword';
+        break;
+      case '.docx':
+        contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        break;
+      default:
+        contentType = 'application/octet-stream';
+    }
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', stats.size);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    
+    fileStream.on('error', (error) => {
+      console.error('File stream error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: 'Error reading file'
+        });
+      }
+    });
+    
+    fileStream.pipe(res);
+    
+  } catch (error) {
+    console.error('Error serving document:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: 'Error serving document'
+      });
+    }
+  }
+});
+console.log('GET /api/auth/documents/:filename registered');
 
 router.delete('/users/:id', protect, authorize('Admin', 'Manager'), deleteUser);
 console.log('DELETE /api/auth/users/:id registered');
