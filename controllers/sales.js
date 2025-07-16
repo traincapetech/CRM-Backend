@@ -330,10 +330,16 @@ exports.updateSale = async (req, res) => {
       }
     }
 
-    // Add updatedBy field
+    // Add updatedBy field and timestamp
     req.body.updatedBy = req.user.id;
     req.body.updatedAt = new Date();
 
+    // Ensure remarks is preserved if not provided in update
+    if (req.body.remarks === undefined) {
+      req.body.remarks = sale.remarks || '';
+    }
+
+    // Update the sale with all fields including remarks
     sale = await Sale.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true

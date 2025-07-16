@@ -122,6 +122,11 @@ const SaleSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  remarks: {
+    type: String,
+    trim: true,
+    default: '' // Set default value to empty string
+  },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
