@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const bcrypt = require("bcrypt");
+const fs = require('fs'); // Added for file cleanup
 
 // @desc    Register user
 // @route   POST /api/auth/register
@@ -445,6 +446,9 @@ exports.createUser = async (req, res) => {
 exports.createUserWithDocuments = async (req, res) => {
   try {
     console.log("Create user with documents attempt by:", req.user.role);
+    console.log("Request body:", req.body);
+    console.log("Request files:", req.files ? Object.keys(req.files) : 'No files');
+    
     const { fullName, email, password, role } = req.body;
     
     // Basic validation
@@ -475,87 +479,110 @@ exports.createUserWithDocuments = async (req, res) => {
       });
     }
 
-    console.log("Creating new user...");
     // Create user
-    const user = await User.create({
-      fullName,
-      email,
-      password,
-      role: role || 'Sales Person', // Default role if not specified
-    });
-
-    console.log(`User created successfully with ID: ${user._id}`);
+    let user;
+    try {
+      console.log("Creating new user...");
+      user = await User.create({
+        fullName,
+        email,
+        password,
+        role: role || 'Sales Person', // Default role if not specified
+      });
+      console.log(`User created successfully with ID: ${user._id}`);
+    } catch (userError) {
+      console.error("Error creating user:", userError);
+      throw userError;
+    }
     
     // Handle employee creation for non-admin/non-hr roles
     if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(role)) {
-      const Employee = require('../models/Employee');
-      const Department = require('../models/Department');
-      const Role = require('../models/EmployeeRole');
-      
-      // Find or create department
-      let department = await Department.findOne({ name: 'General' });
-      if (!department) {
-        department = await Department.create({
-          name: 'General',
-          description: 'General Department for all employees'
-        });
-      }
-      
-      // Find or create role
-      let employeeRole = await Role.findOne({ name: role });
-      if (!employeeRole) {
-        employeeRole = await Role.create({
-          name: role,
-          description: `Role for ${role}`
-        });
-      }
-      
-      // Create employee record
-      const employeeData = {
-        fullName,
-        email,
-        userId: user._id,
-        role: employeeRole._id,
-        department: department._id,
+      try {
+        const Employee = require('../models/Employee');
+        const Department = require('../models/Department');
+        const Role = require('../models/EmployeeRole');
         
-        // Add all the new fields from the admin form
-        phoneNumber: req.body.phoneNumber || '',
-        whatsappNumber: req.body.whatsappNumber || '',
-        linkedInUrl: req.body.linkedInUrl || '',
-        currentAddress: req.body.currentAddress || '',
-        permanentAddress: req.body.permanentAddress || '',
-        dateOfBirth: req.body.dateOfBirth || null,
-        joiningDate: req.body.joiningDate || new Date(),
-        salary: req.body.salary ? parseFloat(req.body.salary) : 0,
-        status: req.body.status || 'ACTIVE',
-        collegeName: req.body.collegeName || '',
-        internshipDuration: req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null,
+        // Find or create department
+        let department = await Department.findOne({ name: 'General' });
+        if (!department) {
+          department = await Department.create({
+            name: 'General',
+            description: 'General Department for all employees'
+          });
+        }
         
-        // Handle document uploads
-        documents: {}
-      };
-      
-      // Process uploaded documents
-      if (req.files) {
-        const documentTypes = ['photograph', 'tenthMarksheet', 'twelfthMarksheet', 'bachelorDegree', 'postgraduateDegree', 'aadharCard', 'panCard', 'pcc', 'resume', 'offerLetter'];
+        // Find or create role
+        let employeeRole = await Role.findOne({ name: role });
+        if (!employeeRole) {
+          employeeRole = await Role.create({
+            name: role,
+            description: `Role for ${role}`
+          });
+        }
         
-        for (const docType of documentTypes) {
-          if (req.files[docType]) {
-            const file = req.files[docType][0];
-            employeeData.documents[docType] = {
-              filename: file.filename, // Use the generated filename, not originalname
-              originalName: file.originalname, // Store original name separately
-              path: file.path,
-              mimetype: file.mimetype,
-              size: file.size,
-              uploadedAt: new Date()
-            };
+        // Create employee record
+        const employeeData = {
+          fullName,
+          email,
+          userId: user._id,
+          role: employeeRole._id,
+          department: department._id,
+          
+          // Add all the new fields from the admin form
+          phoneNumber: req.body.phoneNumber || '',
+          whatsappNumber: req.body.whatsappNumber || '',
+          linkedInUrl: req.body.linkedInUrl || '',
+          currentAddress: req.body.currentAddress || '',
+          permanentAddress: req.body.permanentAddress || '',
+          dateOfBirth: req.body.dateOfBirth || null,
+          joiningDate: req.body.joiningDate || new Date(),
+          salary: req.body.salary ? parseFloat(req.body.salary) : 0,
+          status: req.body.status || 'ACTIVE',
+          collegeName: req.body.collegeName || '',
+          internshipDuration: req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null,
+          
+          // Initialize documents object
+          documents: {}
+        };
+        
+        // Process uploaded documents
+        if (req.files) {
+          const documentTypes = ['photograph', 'tenthMarksheet', 'twelfthMarksheet', 'bachelorDegree', 'postgraduateDegree', 'aadharCard', 'panCard', 'pcc', 'resume', 'offerLetter'];
+          
+          for (const docType of documentTypes) {
+            if (req.files[docType] && req.files[docType][0]) {
+              const file = req.files[docType][0];
+              try {
+                // Ensure the file was saved successfully
+                if (!fs.existsSync(file.path)) {
+                  console.error(`File not saved: ${file.path}`);
+                  continue;
+                }
+                
+                employeeData.documents[docType] = {
+                  filename: file.filename,
+                  originalName: file.originalname,
+                  path: file.path,
+                  mimetype: file.mimetype,
+                  size: file.size,
+                  uploadedAt: new Date()
+                };
+              } catch (fileError) {
+                console.error(`Error processing file ${docType}:`, fileError);
+                // Continue with other files if one fails
+              }
+            }
           }
         }
+        
+        const employee = await Employee.create(employeeData);
+        console.log(`Employee created successfully with ID: ${employee._id}`);
+      } catch (employeeError) {
+        console.error("Error creating employee record:", employeeError);
+        // If employee creation fails, delete the user and throw error
+        await User.findByIdAndDelete(user._id);
+        throw new Error(`Failed to create employee record: ${employeeError.message}`);
       }
-      
-      const employee = await Employee.create(employeeData);
-      console.log(`Employee created successfully with ID: ${employee._id}`);
     }
     
     // Return user data without password
@@ -572,6 +599,22 @@ exports.createUserWithDocuments = async (req, res) => {
       stack: err.stack,
       code: err.code
     });
+    
+    // Clean up any uploaded files if there was an error
+    if (req.files) {
+      Object.values(req.files).forEach(fileArray => {
+        fileArray.forEach(file => {
+          try {
+            if (fs.existsSync(file.path)) {
+              fs.unlinkSync(file.path);
+              console.log(`Cleaned up file: ${file.path}`);
+            }
+          } catch (cleanupError) {
+            console.error(`Error cleaning up file ${file.path}:`, cleanupError);
+          }
+        });
+      });
+    }
     
     // Provide more specific error messages for common issues
     if (err.name === 'ValidationError') {

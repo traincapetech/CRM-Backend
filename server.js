@@ -40,6 +40,7 @@ const leaveRoutes = require('./routes/leaves');
 const attendanceRoutes = require('./routes/attendance');
 const payrollRoutes = require('./routes/payroll');
 const incentivesRoutes = require('./routes/incentives');
+const documentationRoutes = require('./routes/documentation');
 const app = express();
 const server = http.createServer(app);
 
@@ -294,6 +295,7 @@ app.use('/api/leaves', leaveRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/incentives', incentivesRoutes);
+app.use('/api/documentation', documentationRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {

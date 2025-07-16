@@ -24,9 +24,16 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 20 * 1024, // 20KB max
+    files: 10 // Maximum 10 files per request
   },
   fileFilter: function (req, file, cb) {
+    // Check minimum file size (10KB)
+    if (parseInt(req.headers['content-length']) < 10 * 1024) {
+      cb(new Error('File size too small. Minimum size is 10KB'), false);
+      return;
+    }
+    
     // Allow images and PDFs
     if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
       cb(null, true);

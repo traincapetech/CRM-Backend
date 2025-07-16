@@ -7,49 +7,9 @@ const { protect, authorize } = require('../middleware/auth');
 const nodemailer = require('nodemailer');
 const bcrypt = require('bcrypt');
 const UserModel = require('../models/User.js');
-const multer = require('multer');
+const { upload, storageType, getFileUrl, deleteFile } = require('../config/storage');
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/documents/');
-  },
-  filename: function (req, file, cb) {
-    // Create unique filename
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-const upload = multer({ 
-  storage: storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
-  },
-  fileFilter: function (req, file, cb) {
-    // Check file type
-    if (file.fieldname === 'photograph') {
-      if (!file.mimetype.startsWith('image/')) {
-        return cb(new Error('Photograph must be an image file'), false);
-      }
-    } else {
-      const allowedTypes = [
-        'application/pdf',
-        'image/jpeg',
-        'image/jpg',
-        'image/png',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      ];
-      if (!allowedTypes.includes(file.mimetype)) {
-        return cb(new Error('Invalid file type. Only PDF, JPG, PNG, DOC, and DOCX files are allowed'), false);
-      }
-    }
-    cb(null, true);
-  }
-});
-
-// Multer middleware for document uploads
+// Document upload middleware using centralized storage config
 const uploadDocuments = upload.fields([
   { name: 'photograph', maxCount: 1 },
   { name: 'tenthMarksheet', maxCount: 1 },
@@ -63,31 +23,8 @@ const uploadDocuments = upload.fields([
   { name: 'offerLetter', maxCount: 1 }
 ]);
 
-// Configure multer for profile picture uploads
-const profilePictureStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/profile-pictures/');
-  },
-  filename: function (req, file, cb) {
-    // Create unique filename
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'profile-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-const uploadProfilePicture = multer({ 
-  storage: profilePictureStorage,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit for profile pictures
-  },
-  fileFilter: function (req, file, cb) {
-    // Only allow image files for profile pictures
-    if (!file.mimetype.startsWith('image/')) {
-      return cb(new Error('Profile picture must be an image file'), false);
-    }
-    cb(null, true);
-  }
-}).fields([
+// Profile picture upload middleware using centralized storage config
+const uploadProfilePicture = upload.fields([
   { name: 'profilePicture', maxCount: 1 }
 ]);
 
@@ -130,66 +67,102 @@ router.put('/users/:id/with-documents', protect, authorize('Admin', 'Manager'), 
 }, updateUserWithDocuments);
 console.log('PUT /api/auth/users/:id/with-documents registered');
 
-// Serve documents with proper authentication
-router.get('/documents/:filename', protect, (req, res) => {
+// Serve documents with proper authentication and storage-agnostic support
+router.get('/documents/:filename', protect, async (req, res) => {
   try {
     const { filename } = req.params;
-    const filePath = path.join(__dirname, '../uploads/documents', filename);
     
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({
-        success: false,
-        message: 'Document not found'
+    if (storageType === 's3') {
+      // For S3 storage, generate signed URL for secure access
+      const AWS = require('aws-sdk');
+      const s3 = new AWS.S3({
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        region: process.env.AWS_REGION
       });
-    }
-    
-    // Get file stats
-    const stats = fs.statSync(filePath);
-    
-    // Set appropriate headers based on file extension
-    const ext = path.extname(filename).toLowerCase();
-    let contentType = 'application/octet-stream';
-    
-    switch (ext) {
-      case '.pdf':
-        contentType = 'application/pdf';
-        break;
-      case '.jpg':
-      case '.jpeg':
-        contentType = 'image/jpeg';
-        break;
-      case '.png':
-        contentType = 'image/png';
-        break;
-      case '.doc':
-        contentType = 'application/msword';
-        break;
-      case '.docx':
-        contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-        break;
-      default:
-        contentType = 'application/octet-stream';
-    }
-    
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Length', stats.size);
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-    
-    // Stream the file
-    const fileStream = fs.createReadStream(filePath);
-    
-    fileStream.on('error', (error) => {
-      console.error('File stream error:', error);
-      if (!res.headersSent) {
-        res.status(500).json({
+      
+      const params = {
+        Bucket: process.env.AWS_S3_BUCKET,
+        Key: `documents/${filename}`,
+        Expires: 3600 // 1 hour expiry
+      };
+      
+      try {
+        const signedUrl = s3.getSignedUrl('getObject', params);
+        return res.redirect(signedUrl);
+      } catch (s3Error) {
+        console.error('S3 signed URL error:', s3Error);
+        return res.status(404).json({
           success: false,
-          message: 'Error reading file'
+          message: 'Document not found'
         });
       }
-    });
-    
-    fileStream.pipe(res);
+    } else {
+      // For local storage, serve files directly
+      const { currentConfig } = require('../config/storage');
+      const filePath = path.join(currentConfig.destination, filename);
+      
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
+        });
+      }
+      
+      // Get file stats
+      const stats = fs.statSync(filePath);
+      
+      // Set appropriate headers based on file extension
+      const ext = path.extname(filename).toLowerCase();
+      let contentType = 'application/octet-stream';
+      
+      switch (ext) {
+        case '.pdf':
+          contentType = 'application/pdf';
+          break;
+        case '.jpg':
+        case '.jpeg':
+          contentType = 'image/jpeg';
+          break;
+        case '.png':
+          contentType = 'image/png';
+          break;
+        case '.gif':
+          contentType = 'image/gif';
+          break;
+        case '.doc':
+          contentType = 'application/msword';
+          break;
+        case '.docx':
+          contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+          break;
+        default:
+          contentType = 'application/octet-stream';
+      }
+      
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', stats.size);
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+      res.setHeader('Expires', '-1');
+      res.setHeader('Pragma', 'no-cache');
+      
+      // Stream the file
+      const fileStream = fs.createReadStream(filePath);
+      
+      fileStream.on('error', (error) => {
+        console.error('File stream error:', error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            success: false,
+            message: 'Error reading file'
+          });
+        }
+      });
+      
+      fileStream.pipe(res);
+    }
     
   } catch (error) {
     console.error('Error serving document:', error);

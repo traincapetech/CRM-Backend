@@ -3,6 +3,7 @@ const {
   generatePayroll,
   getPayroll,
   updatePayroll,
+  deletePayroll,
   generateSalarySlip,
   downloadSalarySlip,
   approvePayroll
@@ -18,6 +19,7 @@ router.use(protect);
 router.post('/generate', generatePayroll);
 router.get('/', getPayroll);
 router.put('/:id', updatePayroll);
+router.delete('/:id', deletePayroll);
 router.put('/:id/approve', approvePayroll);
 
 // Salary slip routes

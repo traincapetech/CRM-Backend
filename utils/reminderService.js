@@ -184,7 +184,7 @@ const sendEmailNotification = async (task, reminderType = 'exam-time', io = null
 
     // Email to sales person (always sent regardless of customer email)
     await transporter.sendMail({
-      from: process.env.EMAIL_FROM || 'noreply@traincapecrm.com',
+      from: process.env.EMAIL_FROM || 'shivam@traincapetech.in',
       to: salesPersonEmail,
       subject: salesPersonSubject,
       html: salesPersonContent
@@ -196,7 +196,7 @@ const sendEmailNotification = async (task, reminderType = 'exam-time', io = null
     if (customerEmail && customerSubject && customerContent) {
       // Email to customer
       await transporter.sendMail({
-        from: process.env.EMAIL_FROM || 'noreply@traincapecrm.com',
+        from: process.env.EMAIL_FROM || 'shivam@traincapetech.in',
         to: customerEmail,
         subject: customerSubject,
         html: customerContent

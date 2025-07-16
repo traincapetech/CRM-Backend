@@ -21,9 +21,19 @@ const payrollSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
-  basicSalary: {
+  baseSalary: {
     type: Number,
     required: true
+  },
+  daysPresent: {
+    type: Number,
+    required: true,
+    default: 0
+  },
+  calculatedSalary: {
+    type: Number,
+    required: true,
+    default: 0
   },
   workingDays: {
     type: Number,
@@ -52,7 +62,7 @@ const payrollSchema = new mongoose.Schema({
   // Salary Components
   basicAmount: {
     type: Number,
-    required: true
+    default: 0
   },
   hra: {
     type: Number,
@@ -122,15 +132,15 @@ const payrollSchema = new mongoose.Schema({
   // Calculated Fields
   grossSalary: {
     type: Number,
-    required: true
+    default: 0
   },
   totalDeductions: {
     type: Number,
-    required: true
+    default: 0
   },
   netSalary: {
     type: Number,
-    required: true
+    default: 0
   },
   
   // Status
@@ -182,62 +192,92 @@ payrollSchema.virtual('monthName').get(function() {
   return months[this.month - 1];
 });
 
-// Method to calculate salary based on attendance
+// Method to calculate salary based on manual input
 payrollSchema.methods.calculateSalary = function() {
-  // Calculate basic amount based on present days
-  const perDayBasic = this.basicSalary / this.workingDays;
+  console.log('🧮 Starting fully manual salary calculation for payroll:', this._id);
+  console.log('📊 All input values:', {
+    baseSalary: this.baseSalary,
+    daysPresent: this.daysPresent,
+    calculatedSalary: this.calculatedSalary,
+    // Manual Allowances
+    hra: this.hra,
+    da: this.da,
+    conveyanceAllowance: this.conveyanceAllowance,
+    medicalAllowance: this.medicalAllowance,
+    specialAllowance: this.specialAllowance,
+    overtimeAmount: this.overtimeAmount,
+    // Manual Bonuses
+    performanceBonus: this.performanceBonus,
+    projectBonus: this.projectBonus,
+    attendanceBonus: this.attendanceBonus,
+    festivalBonus: this.festivalBonus,
+    // Manual Deductions
+    pf: this.pf,
+    esi: this.esi,
+    tax: this.tax,
+    loan: this.loan,
+    other: this.other
+  });
+
+  // 1. Basic amount is the manually calculated salary
+  this.basicAmount = this.calculatedSalary || 0;
+  console.log('💰 Basic amount (calculated salary):', this.basicAmount);
   
-  // Handle half days (count as 0.5 day)
-  const effectivePresentDays = this.presentDays + (this.halfDays * 0.5);
+  // 2. Calculate gross salary = basic + ALL manual allowances + ALL manual bonuses
+  this.grossSalary = this.basicAmount + 
+                     (this.hra || 0) + 
+                     (this.da || 0) + 
+                     (this.conveyanceAllowance || 0) + 
+                     (this.medicalAllowance || 0) + 
+                     (this.specialAllowance || 0) + 
+                     (this.overtimeAmount || 0) + 
+                     (this.performanceBonus || 0) + 
+                     (this.projectBonus || 0) + 
+                     (this.attendanceBonus || 0) + 
+                     (this.festivalBonus || 0);
   
-  this.basicAmount = perDayBasic * effectivePresentDays;
+  console.log('💵 Gross salary calculated:', {
+    basicAmount: this.basicAmount,
+    totalAllowances: (this.hra || 0) + (this.da || 0) + (this.conveyanceAllowance || 0) + (this.medicalAllowance || 0) + (this.specialAllowance || 0) + (this.overtimeAmount || 0),
+    totalBonuses: (this.performanceBonus || 0) + (this.projectBonus || 0) + (this.attendanceBonus || 0) + (this.festivalBonus || 0),
+    grossSalary: this.grossSalary
+  });
   
-  // Calculate allowances (as percentage of basic salary)
-  this.hra = this.basicAmount * 0.40; // 40% of basic
-  this.da = this.basicAmount * 0.10; // 10% of basic
-  this.conveyanceAllowance = Math.min(1600, this.basicAmount * 0.05); // 5% or max 1600
-  this.medicalAllowance = Math.min(1250, this.basicAmount * 0.03); // 3% or max 1250
-  this.specialAllowance = this.basicAmount * 0.02; // 2% of basic
+  // 3. Calculate total deductions = ALL manual deductions
+  this.totalDeductions = (this.pf || 0) + 
+                         (this.esi || 0) + 
+                         (this.tax || 0) + 
+                         (this.loan || 0) + 
+                         (this.other || 0);
   
-  // Calculate overtime (1.5x hourly rate)
-  const hourlyRate = this.basicSalary / (this.workingDays * 8);
-  this.overtimeAmount = this.overtimeHours * hourlyRate * 1.5;
+  console.log('📉 Deductions calculated:', {
+    pf: this.pf || 0,
+    esi: this.esi || 0,
+    tax: this.tax || 0,
+    loan: this.loan || 0,
+    other: this.other || 0,
+    totalDeductions: this.totalDeductions
+  });
   
-  // Note: Attendance bonus removed - incentives are now manual only based on sales
-  
-  // Calculate gross salary
-  this.grossSalary = this.basicAmount + this.hra + this.da + 
-                     this.conveyanceAllowance + this.medicalAllowance + 
-                     this.specialAllowance + this.overtimeAmount + 
-                     this.performanceBonus + this.projectBonus + 
-                     this.attendanceBonus + this.festivalBonus;
-  
-  // Calculate deductions
-  this.pf = this.basicAmount * 0.12; // 12% of basic salary
-  this.esi = this.grossSalary * 0.0075; // 0.75% of gross salary
-  
-  // Professional Tax (varies by state, using Karnataka rates)
-  if (this.grossSalary > 15000) {
-    this.tax = 200;
-  } else if (this.grossSalary > 10000) {
-    this.tax = 150;
-  } else {
-    this.tax = 0;
-  }
-  
-  this.totalDeductions = this.pf + this.esi + this.tax + this.loan + this.other;
-  
-  // Calculate net salary
+  // 4. Calculate net salary = gross - total deductions
   this.netSalary = this.grossSalary - this.totalDeductions;
+  
+  console.log('🎯 Final manual calculation:', {
+    grossSalary: this.grossSalary,
+    totalDeductions: this.totalDeductions,
+    netSalary: this.netSalary
+  });
+  
+  console.log('✅ Formula: Basic + All Allowances + All Bonuses - All Deductions = Net Salary');
+  console.log(`✅ ${this.basicAmount} + ${(this.hra || 0) + (this.da || 0) + (this.conveyanceAllowance || 0) + (this.medicalAllowance || 0) + (this.specialAllowance || 0) + (this.overtimeAmount || 0)} + ${(this.performanceBonus || 0) + (this.projectBonus || 0) + (this.attendanceBonus || 0) + (this.festivalBonus || 0)} - ${this.totalDeductions} = ${this.netSalary}`);
   
   return this.netSalary;
 };
 
 // Pre-save middleware to calculate salary
 payrollSchema.pre('save', function(next) {
-  if (this.isNew || this.isModified('presentDays') || this.isModified('basicSalary')) {
-    this.calculateSalary();
-  }
+  // Always recalculate when saving
+  this.calculateSalary();
   next();
 });
 
