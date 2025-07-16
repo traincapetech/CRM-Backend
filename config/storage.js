@@ -2,16 +2,29 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
+// Detect if running on Render.com
+const isRender = process.env.RENDER === 'true';
+
+// Base upload paths based on environment
+const getBasePath = () => {
+  if (isRender) {
+    return '/tmp/crm-uploads'; // Use /tmp on Render
+  }
+  return process.env.NODE_ENV === 'production' 
+    ? '/var/www/crm/uploads'
+    : path.join(__dirname, '..', 'uploads');
+};
+
 // Storage configuration based on environment
 const storageConfig = {
   development: {
     type: 'local',
-    destination: './uploads/documents',
+    destination: path.join(getBasePath(), 'documents'),
     publicPath: '/uploads/documents'
   },
   production: {
-    type: process.env.STORAGE_TYPE || 'local', // 's3', 'gcs', 'azure', 'local'
-    destination: process.env.UPLOAD_PATH || '/var/www/crm/uploads/documents',
+    type: process.env.STORAGE_TYPE || 'local',
+    destination: process.env.UPLOAD_PATH || path.join(getBasePath(), 'documents'),
     publicPath: process.env.PUBLIC_PATH || '/uploads/documents',
     // Cloud storage configs
     aws: {
@@ -30,37 +43,48 @@ const storageConfig = {
 
 const currentConfig = storageConfig[process.env.NODE_ENV || 'development'];
 
-// Ensure upload directory exists for local storage
-if (currentConfig.type === 'local') {
-  if (!fs.existsSync(currentConfig.destination)) {
-    fs.mkdirSync(currentConfig.destination, { recursive: true });
-  }
-}
+// Define all required upload directories
+const uploadDirs = [
+  path.join(getBasePath(), 'documents'),
+  path.join(getBasePath(), 'employees'),
+  path.join(getBasePath(), 'incentives'),
+  path.join(getBasePath(), 'profile-pictures')
+];
 
 // Ensure upload directories exist
-const ensureUploadDirectories = () => {
-  const directories = [
-    currentConfig.destination,
-    './uploads/documents',
-    './uploads/profile-pictures',
-    './uploads/employees'
-  ];
-
-  directories.forEach(dir => {
-    if (!fs.existsSync(dir)) {
+uploadDirs.forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    try {
       fs.mkdirSync(dir, { recursive: true });
       console.log(`Created directory: ${dir}`);
+    } catch (err) {
+      console.error(`Failed to create directory ${dir}:`, err.message);
+      // Don't throw - let the application continue
     }
-  });
-};
+  }
+});
 
-// Call it on module load
-ensureUploadDirectories();
+// Export paths for other modules to use
+const UPLOAD_PATHS = {
+  DOCUMENTS: path.join(getBasePath(), 'documents'),
+  EMPLOYEES: path.join(getBasePath(), 'employees'),
+  INCENTIVES: path.join(getBasePath(), 'incentives'),
+  PROFILE_PICTURES: path.join(getBasePath(), 'profile-pictures')
+};
 
 // Local storage configuration
 const localStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, currentConfig.destination);
+    // Choose appropriate directory based on upload type
+    let uploadPath = UPLOAD_PATHS.DOCUMENTS; // default
+    if (file.fieldname.includes('employee')) {
+      uploadPath = UPLOAD_PATHS.EMPLOYEES;
+    } else if (file.fieldname.includes('incentive')) {
+      uploadPath = UPLOAD_PATHS.INCENTIVES;
+    } else if (file.fieldname.includes('profile')) {
+      uploadPath = UPLOAD_PATHS.PROFILE_PICTURES;
+    }
+    cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
     const fieldname = file.fieldname;
@@ -184,5 +208,6 @@ module.exports = {
   currentConfig,
   getFileUrl,
   deleteFile,
-  storageType: currentConfig.type
+  storageType: currentConfig.type,
+  UPLOAD_PATHS
 }; 

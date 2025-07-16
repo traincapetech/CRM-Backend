@@ -1,6 +1,8 @@
 const User = require("../models/User");
 const bcrypt = require("bcrypt");
 const fs = require('fs'); // Added for file cleanup
+const path = require('path'); // Added for path.join
+const { UPLOAD_PATHS } = require('../config/storage');
 
 // @desc    Register user
 // @route   POST /api/auth/register
@@ -320,8 +322,8 @@ exports.updateProfilePicture = async (req, res) => {
     const profilePictureFile = req.files.profilePicture[0];
     console.log('Received profile picture file:', profilePictureFile.filename);
     
-    // Store the file path in the database
-    const profilePicturePath = `/uploads/profile-pictures/${profilePictureFile.filename}`;
+    // Store the file path in the database using the new UPLOAD_PATHS
+    const profilePicturePath = path.join(UPLOAD_PATHS.PROFILE_PICTURES, profilePictureFile.filename);
     
     // Update the user's profile picture
     console.log('Updating user profile picture in database');
