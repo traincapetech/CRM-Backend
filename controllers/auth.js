@@ -3,6 +3,7 @@ const bcrypt = require("bcrypt");
 const fs = require('fs'); // Added for file cleanup
 const path = require('path'); // Added for path.join
 const { UPLOAD_PATHS } = require('../config/storage');
+const asyncHandler = require('../middleware/async'); // Added for asyncHandler
 
 // @desc    Register user
 // @route   POST /api/auth/register
@@ -82,58 +83,49 @@ exports.register = async (req, res) => {
 // @desc    Login user
 // @route   POST /api/auth/login
 // @access  Public
-exports.login = async (req, res) => {
-  try {
-    console.log("Login attempt:", { email: req.body.email });
-    const { email, password } = req.body;
+exports.login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
 
-    // Validate email & password
-    if (!email || !password) {
-      console.log("Missing credentials - email or password not provided");
-      return res.status(400).json({
-        success: false,
-        message: "Please provide an email and password",
-      });
-    }
-
-    // Check for user and explicitly select password field
-    const user = await User.findOne({ email }).select('+password');
-
-    if (!user) {
-      console.log(`User not found with email: ${email}`);
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-    }
-    
-    console.log(`User found: ${user._id}, comparing passwords`);
-    
-    // Use the matchPassword method from the User model
-    const isMatch = await user.matchPassword(password);
-    
-    if (!isMatch) {
-      console.log("Password does not match");
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-    }
-    
-    console.log("Login successful, sending token response");
-    sendTokenResponse(user, 200, res);
-  } catch (err) {
-    console.error("Login error:", {
-      name: err.name,
-      message: err.message,
-      stack: err.stack
-    });
-    res.status(500).json({
+  // Validate email & password
+  if (!email || !password) {
+    return res.status(400).json({
       success: false,
-      message: "An error occurred during login. Please try again.",
+      message: 'Please provide email and password'
     });
   }
-};
+
+  // Check for user
+  const user = await User.findOne({ email }).select('+password');
+
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid credentials'
+    });
+  }
+
+  // Check if password matches
+  const isMatch = await user.matchPassword(password);
+
+  if (!isMatch) {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid credentials'
+    });
+  }
+
+  // Create token
+  const token = user.getSignedJwtToken();
+
+  // Remove password from output
+  user.password = undefined;
+
+  res.status(200).json({
+    success: true,
+    token,
+    data: user
+  });
+});
 
 // @desc    Get current logged in user
 // @route   GET /api/auth/me
