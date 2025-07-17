@@ -458,3 +458,32 @@ exports.uploadEmployeeFiles = upload.fields([
   { name: 'resume', maxCount: 1 },
   { name: 'offerLetter', maxCount: 1 }
 ]); 
+
+// @desc    Get employee document
+// @route   GET /api/employees/documents/:filename
+// @access  Private
+exports.getDocument = async (req, res) => {
+  try {
+    const { filename } = req.params;
+    
+    // Construct the file path
+    const filePath = path.join(UPLOAD_PATHS.EMPLOYEES, filename);
+    
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        message: 'Document not found'
+      });
+    }
+    
+    // Send the file
+    res.sendFile(filePath);
+  } catch (err) {
+    console.error('Error serving document:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+}; 
