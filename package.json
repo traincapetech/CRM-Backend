@@ -11,7 +11,6 @@
     "drop-indexes": "node utils/dropUniqueIndexes.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "agenda": "^5.0.0",
     "axios": "^1.9.0",
     "bcrypt": "^5.1.1",
