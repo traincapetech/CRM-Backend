@@ -28,7 +28,6 @@ const uploadProfilePicture = upload.fields([
   { name: 'profilePicture', maxCount: 1 }
 ]);
 
-
 // Register all routes
 console.log('Registering auth routes...');
 
@@ -179,6 +178,7 @@ console.log('GET /api/auth/documents/:filename registered');
 router.delete('/users/:id', protect, authorize('Admin', 'Manager'), deleteUser);
 console.log('DELETE /api/auth/users/:id registered');
 
+// Add profile picture update route
 router.put('/profile-picture', protect, uploadProfilePicture, updateProfilePicture);
 console.log('PUT /api/auth/profile-picture registered');
 
