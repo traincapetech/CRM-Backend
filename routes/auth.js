@@ -182,6 +182,138 @@ console.log('DELETE /api/auth/users/:id registered');
 router.put('/profile-picture', protect, uploadProfilePicture, updateProfilePicture);
 console.log('PUT /api/auth/profile-picture registered');
 
+router.post('/forgot-password', async (req, res) => {
+  console.log("Received request to forgot-password:", req.body);
+  
+  // Log environment variables for debugging (without leaking secrets)
+  console.log("Email config:", { 
+    emailUser: process.env.EMAIL_USER ? `${process.env.EMAIL_USER.substring(0, 5)}...` : 'undefined',
+    emailPassSet: process.env.EMAIL_PASS ? 'Yes' : 'No'
+  });
+
+  // Check if email configuration is set
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    console.error("Email configuration missing:", {
+      hasEmailUser: !!process.env.EMAIL_USER,
+      hasEmailPass: !!process.env.EMAIL_PASS
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Email server configuration is missing. Please contact support.",
+      error: "Missing email configuration"
+    });
+  }
+  
+  const transporter = nodemailer.createTransport({
+    host: "smtp.hostinger.com",
+    port: 465,
+    secure: true,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
+  });
+
+  // Verify transporter configuration
+  try {
+    await transporter.verify();
+    console.log("Email transporter verified successfully");
+  } catch (error) {
+    console.error("Email transporter verification failed:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Email server configuration is invalid. Please contact support.",
+      error: error.message
+    });
+  }
+  
+  const { email } = req.body;
+  
+  if (!email) {
+    console.log("Email not provided in request");
+    return res.status(400).json({ success: false, message: "Email is required" });
+  }
+  
+  try {
+    console.log(`Looking for user with email: ${email}`);
+    const user = await UserModel.findOne({ email });
+    
+    if (!user) {
+      console.log(`User with email ${email} not found`);
+      return res.status(400).json({ 
+        success: false, 
+        message: "Email ID does not exist in the database" 
+      });
+    }
+    
+    console.log(`User found, generating OTP for ${email}`);
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    user.verifyOtp = otp;
+    user.verifyOtpExpireAt = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
+    
+    await user.save();
+    console.log(`OTP saved to user database: ${otp}`);
+    
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "Password Reset OTP",
+      html: `
+      <div style="font-family: Arial, sans-serif; text-align: center; padding: 20px; background-color: #f4f4f4;">
+        <div style="max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 10px; border: 1px solid #ddd;">
+          <h2 style="color: #333;">OTP Verification</h2>
+          <p style="color: #555; font-size: 16px;">Your One-Time Password (OTP) for verification is:</p>
+          <div style="font-size: 24px; font-weight: bold; color: #333; padding: 10px 20px; background: #f8f8f8; border: 1px dashed #333; display: inline-block; margin: 10px 0;">
+            ${otp}
+          </div>
+          <p style="color: #777; font-size: 14px;">This OTP is valid for 10 minutes. Do not share it with anyone.</p>
+          <p style="color: #777; font-size: 14px;">If you did not request this, please ignore this email.</p>
+          <div style="font-size: 12px; color: #aaa; margin-top: 20px;">© 2025 TrainCape Industries</div>
+        </div>
+      </div>
+      `
+    };
+
+    console.log("Attempting to send email now...");
+    
+    // Send email
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Email sent successfully:", info.messageId);
+    return res.json({ success: true, message: "OTP sent successfully" });
+    
+  } catch (error) {
+    console.error("Error in forgot-password:", {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      code: error.code
+    });
+    
+    // Provide more specific error messages
+    if (error.code === 'EAUTH') {
+      return res.status(500).json({
+        success: false,
+        message: "Email authentication failed. Please contact support.",
+        error: "Invalid email credentials"
+      });
+    }
+    
+    if (error.code === 'ESOCKET') {
+      return res.status(500).json({
+        success: false,
+        message: "Could not connect to email server. Please try again later.",
+        error: "Connection error"
+      });
+    }
+    
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to send OTP. Please try again later.",
+      error: error.message
+    });
+  }
+});
+
 router.post("/sendOTPToEmail", async (req, res) => {
   console.log("Received request to sendOTPToEmail:", req.body);
   
