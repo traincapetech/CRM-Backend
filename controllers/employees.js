@@ -354,28 +354,27 @@ exports.deleteEmployee = async (req, res) => {
 // @access  Private
 exports.getDepartments = async (req, res) => {
   try {
-    // Find all active departments
-    const departments = await Department.find({ isActive: true });
+    const departments = await Department.find().select('name _id');
     
     // If no departments exist, create a default one
     if (departments.length === 0) {
       const defaultDepartment = await Department.create({
         name: 'General',
-        description: 'General Department',
-        isActive: true
+        description: 'Default department'
       });
       departments.push(defaultDepartment);
     }
 
-    res.status(200).json({
+    res.json({
       success: true,
       data: departments
     });
-  } catch (err) {
-    console.error('Error fetching departments:', err);
+  } catch (error) {
+    console.error('Error fetching departments:', error);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Error fetching departments',
+      error: error.message
     });
   }
 };
@@ -407,50 +406,35 @@ exports.createDepartment = async (req, res) => {
   }
 };
 
-// @desc    Get all roles
+// @desc    Get all employee roles
 // @route   GET /api/employees/roles
 // @access  Private
 exports.getRoles = async (req, res) => {
   try {
-    // Find all active roles
-    const roles = await Role.find({ isActive: true });
+    const roles = await EmployeeRole.find().select('name _id');
     
     // If no roles exist, create default ones
     if (roles.length === 0) {
-      const defaultRoles = await Role.insertMany([
-        {
-          name: 'Sales Person',
-          description: 'Sales Person Role',
-          isActive: true
-        },
-        {
-          name: 'Lead Person',
-          description: 'Lead Person Role',
-          isActive: true
-        },
-        {
-          name: 'Manager',
-          description: 'Manager Role',
-          isActive: true
-        },
-        {
-          name: 'Employee',
-          description: 'General Employee Role',
-          isActive: true
-        }
+      const defaultRoles = await EmployeeRole.insertMany([
+        { name: 'Employee', description: 'Regular employee' },
+        { name: 'Manager', description: 'Department manager' },
+        { name: 'HR', description: 'Human resources' },
+        { name: 'Sales Person', description: 'Sales team member' },
+        { name: 'Lead Person', description: 'Lead generation team member' }
       ]);
       roles.push(...defaultRoles);
     }
 
-    res.status(200).json({
+    res.json({
       success: true,
       data: roles
     });
-  } catch (err) {
-    console.error('Error fetching roles:', err);
+  } catch (error) {
+    console.error('Error fetching roles:', error);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Error fetching roles',
+      error: error.message
     });
   }
 };
@@ -495,6 +479,161 @@ exports.uploadEmployeeFiles = upload.fields([
   { name: 'resume', maxCount: 1 },
   { name: 'offerLetter', maxCount: 1 }
 ]); 
+
+// @desc    Upload employee documents
+// @route   POST /api/employees/:id/documents
+// @access  Private
+exports.uploadDocuments = async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.id);
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    // Check authorization
+    if (!['HR', 'Admin', 'Manager'].includes(req.user.role) && 
+        employee.userId?.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to upload documents'
+      });
+    }
+
+    // Handle file uploads
+    if (!req.files) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please upload files'
+      });
+    }
+
+    // Initialize documents object if it doesn't exist
+    if (!employee.documents) {
+      employee.documents = {};
+    }
+
+    // Process each uploaded file
+    Object.keys(req.files).forEach(docType => {
+      const file = req.files[docType][0];
+      employee.documents[docType] = {
+        filename: file.filename,
+        originalName: file.originalname,
+        path: file.path,
+        mimetype: file.mimetype,
+        size: file.size,
+        uploadedAt: new Date()
+      };
+    });
+
+    await employee.save();
+
+    res.status(200).json({
+      success: true,
+      data: employee.documents
+    });
+  } catch (err) {
+    console.error('Error uploading documents:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+// @desc    Get employee documents
+// @route   GET /api/employees/:id/documents
+// @access  Private
+exports.getDocuments = async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.id);
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    // Check authorization
+    if (!['HR', 'Admin', 'Manager'].includes(req.user.role) && 
+        employee.userId?.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to view documents'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: employee.documents || {}
+    });
+  } catch (err) {
+    console.error('Error getting documents:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+// @desc    Delete employee document
+// @route   DELETE /api/employees/:id/documents/:documentType
+// @access  Private
+exports.deleteDocument = async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.id);
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    // Check authorization
+    if (!['HR', 'Admin', 'Manager'].includes(req.user.role) && 
+        employee.userId?.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete documents'
+      });
+    }
+
+    const { documentType } = req.params;
+
+    if (!employee.documents || !employee.documents[documentType]) {
+      return res.status(404).json({
+        success: false,
+        message: 'Document not found'
+      });
+    }
+
+    // Delete file from disk
+    const filePath = employee.documents[documentType].path;
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    // Remove document from employee record
+    delete employee.documents[documentType];
+    await employee.save();
+
+    res.status(200).json({
+      success: true,
+      data: {}
+    });
+  } catch (err) {
+    console.error('Error deleting document:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
 
 // @desc    Get employee document
 // @route   GET /api/employees/documents/:filename

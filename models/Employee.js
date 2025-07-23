@@ -56,7 +56,7 @@ const employeeSchema = new mongoose.Schema({
   },
   role: {
     type: mongoose.Schema.ObjectId,
-    ref: 'Role',
+    ref: 'EmployeeRole',
     required: [true, 'Please assign a role']
   },
   hrId: {

@@ -1,4 +1,6 @@
 const express = require('express');
+const router = express.Router();
+const { protect } = require('../middleware/auth');
 const {
   generatePayroll,
   getPayroll,
@@ -9,21 +11,43 @@ const {
   approvePayroll
 } = require('../controllers/payroll');
 
-const router = express.Router();
-const { protect } = require('../middleware/auth');
+// Debug middleware
+const debugMiddleware = (req, res, next) => {
+  console.log('Payroll route accessed:', {
+    method: req.method,
+    path: req.path,
+    user: req.user ? {
+      id: req.user.id,
+      role: req.user.role
+    } : 'Not authenticated',
+    query: req.query,
+    params: req.params
+  });
+  next();
+};
 
-// Protect all routes
-router.use(protect);
+// Apply debug middleware to all routes
+router.use(debugMiddleware);
 
-// Payroll management routes
-router.post('/generate', generatePayroll);
-router.get('/', getPayroll);
-router.put('/:id', updatePayroll);
-router.delete('/:id', deletePayroll);
-router.put('/:id/approve', approvePayroll);
+// Get payroll records and download salary slip - accessible to all authenticated users
+router.route('/')
+  .get(protect, getPayroll);
 
-// Salary slip routes
-router.get('/:id/salary-slip', generateSalarySlip);
-router.get('/:id/download', downloadSalarySlip);
+router.route('/:id/salary-slip')
+  .get(protect, generateSalarySlip);
+
+router.route('/:id/download')
+  .get(protect, downloadSalarySlip);
+
+// Admin/HR/Manager only routes
+router.route('/generate')
+  .post(protect, generatePayroll);
+
+router.route('/:id')
+  .put(protect, updatePayroll)
+  .delete(protect, deletePayroll);
+
+router.route('/:id/approve')
+  .put(protect, approvePayroll);
 
 module.exports = router; 

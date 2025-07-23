@@ -123,6 +123,8 @@ exports.checkOut = async (req, res) => {
 // @access  Private
 exports.getTodayAttendance = async (req, res) => {
   try {
+    console.log('Getting today attendance for user:', req.user.id);
+    
     // Find employee record
     const employee = await Employee.findOne({ userId: req.user.id });
     if (!employee) {
@@ -142,6 +144,7 @@ exports.getTodayAttendance = async (req, res) => {
       date: today
     });
 
+    console.log('Found attendance:', attendance ? attendance._id : 'None');
     res.status(200).json({
       success: true,
       data: attendance,
@@ -152,7 +155,8 @@ exports.getTodayAttendance = async (req, res) => {
     console.error('Get today attendance error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
+      error: error.message
     });
   }
 };

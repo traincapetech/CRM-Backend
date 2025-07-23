@@ -1,35 +1,53 @@
 const express = require('express');
 const router = express.Router();
+const { protect } = require('../middleware/auth');
 const {
-  applyLeave,
-  getAllLeaves,
+  getLeaves,
   getMyLeaves,
-  updateLeaveStatus,
-  cancelLeave,
-  getLeaveStats,
-  getLeaveBalance
+  createLeave,
+  updateLeave,
+  deleteLeave,
+  getLeaveBalance,
+  approveLeave,
+  rejectLeave
 } = require('../controllers/leaves');
-const { protect, authorize } = require('../middleware/auth');
 
-// Apply for leave
-router.post('/', protect, applyLeave);
+// Debug middleware
+const debugMiddleware = (req, res, next) => {
+  console.log('Leave route accessed:', {
+    method: req.method,
+    path: req.path,
+    user: req.user ? {
+      id: req.user.id,
+      role: req.user.role
+    } : 'Not authenticated'
+  });
+  next();
+};
 
-// Get my leaves
-router.get('/my-leaves', protect, getMyLeaves);
+// Apply debug middleware to all routes
+router.use(debugMiddleware);
 
-// Get leave balance
-router.get('/balance', protect, getLeaveBalance);
+// Employee routes
+router.route('/my-leaves')
+  .get(protect, getMyLeaves);
 
-// Get leave statistics
-router.get('/stats', protect, getLeaveStats);
+router.route('/balance')
+  .get(protect, getLeaveBalance);
 
-// Get all leaves (for managers/admins)
-router.get('/', protect, authorize('Admin', 'Manager'), getAllLeaves);
+router.route('/')
+  .post(protect, createLeave)
+  .get(protect, getLeaves);
 
-// Update leave status (approve/reject)
-router.put('/:id/status', protect, authorize('Admin', 'Manager'), updateLeaveStatus);
+// Admin/HR/Manager routes
+router.route('/:id')
+  .put(protect, updateLeave)
+  .delete(protect, deleteLeave);
 
-// Cancel leave
-router.put('/:id/cancel', protect, cancelLeave);
+router.route('/:id/approve')
+  .put(protect, approveLeave);
+
+router.route('/:id/reject')
+  .put(protect, rejectLeave);
 
 module.exports = router; 

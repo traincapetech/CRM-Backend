@@ -13,7 +13,7 @@ const leaveSchema = new mongoose.Schema({
   },
   leaveType: {
     type: String,
-    enum: ['sick', 'casual', 'annual', 'emergency', 'maternity', 'paternity', 'bereavement', 'personal'],
+    enum: ['casual', 'sick', 'earned', 'annual', 'emergency', 'maternity', 'paternity', 'bereavement'],
     required: true
   },
   startDate: {
@@ -47,32 +47,11 @@ const leaveSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
-  approvedDate: {
-    type: Date
-  },
+  approvedDate: Date,
   rejectionReason: {
     type: String,
     maxlength: 300
   },
-  attachments: [{
-    filename: String,
-    path: String,
-    uploadedAt: {
-      type: Date,
-      default: Date.now
-    }
-  }],
-  comments: [{
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    comment: String,
-    createdAt: {
-      type: Date,
-      default: Date.now
-    }
-  }],
   isHalfDay: {
     type: Boolean,
     default: false
@@ -101,10 +80,5 @@ leaveSchema.pre('save', function(next) {
   }
   next();
 });
-
-// Index for better query performance
-leaveSchema.index({ employeeId: 1, status: 1 });
-leaveSchema.index({ startDate: 1, endDate: 1 });
-leaveSchema.index({ appliedDate: -1 });
 
 module.exports = mongoose.model('Leave', leaveSchema); 

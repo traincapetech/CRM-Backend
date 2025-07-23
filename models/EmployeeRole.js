@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const roleSchema = new mongoose.Schema({
+const employeeRoleSchema = new mongoose.Schema({
   name: {
     type: String,
     required: [true, 'Please add a role name'],
@@ -22,11 +22,11 @@ const roleSchema = new mongoose.Schema({
 });
 
 // Virtual for employee count
-roleSchema.virtual('employeeCount', {
+employeeRoleSchema.virtual('employeeCount', {
   ref: 'Employee',
   localField: '_id',
   foreignField: 'role',
   count: true
 });
 
-module.exports = mongoose.model('Role', roleSchema); 
+module.exports = mongoose.model('EmployeeRole', employeeRoleSchema); 

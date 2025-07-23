@@ -83,49 +83,66 @@ exports.register = async (req, res) => {
 // @desc    Login user
 // @route   POST /api/auth/login
 // @access  Public
-exports.login = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
+exports.login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-  // Validate email & password
-  if (!email || !password) {
-    return res.status(400).json({
+    console.log('Login attempt for:', email);
+
+    // Validate email & password
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email and password'
+      });
+    }
+
+    // Check for user
+    const user = await User.findOne({ email }).select('+password');
+    
+    console.log('Found user:', user ? user._id : 'Not found');
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Check if password matches
+    const isMatch = await user.matchPassword(password);
+    console.log('Password match:', isMatch);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Create token
+    const token = user.getSignedJwtToken();
+    console.log('Generated token:', token);
+
+    res.status(200).json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
       success: false,
-      message: 'Please provide email and password'
+      message: 'Error logging in',
+      error: error.message
     });
   }
-
-  // Check for user
-  const user = await User.findOne({ email }).select('+password');
-
-  if (!user) {
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid credentials'
-    });
-  }
-
-  // Check if password matches
-  const isMatch = await user.matchPassword(password);
-
-  if (!isMatch) {
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid credentials'
-    });
-  }
-
-  // Create token
-  const token = user.getSignedJwtToken();
-
-  // Remove password from output
-  user.password = undefined;
-
-  res.status(200).json({
-    success: true,
-    token,
-    data: user
-  });
-});
+};
 
 // @desc    Get current logged in user
 // @route   GET /api/auth/me
@@ -824,6 +841,198 @@ exports.updateUserWithDocuments = async (req, res) => {
     res.status(400).json({
       success: false,
       message: err.message,
+    });
+  }
+};
+
+// @desc    Update user profile
+// @route   PUT /api/auth/me
+// @access  Private
+exports.updateProfile = async (req, res) => {
+  try {
+    console.log('Profile update requested by user:', req.user.id);
+    console.log('Request body:', req.body);
+    
+    const { fullName, email } = req.body;
+    
+    // Build update object
+    const updateData = {};
+    if (fullName) updateData.fullName = fullName;
+    if (email) updateData.email = email;
+    
+    // Update password if provided
+    if (req.body.password) {
+      updateData.password = req.body.password;
+    }
+    
+    // Update user
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      updateData,
+      { new: true, runValidators: true }
+    );
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: user
+    });
+  } catch (err) {
+    console.error('Error updating profile:', err);
+    res.status(400).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+// @desc    Forgot password
+// @route   POST /api/auth/forgot-password
+// @access  Public
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    console.log('Forgot password request for:', email);
+
+    // Find user by email
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    // Save OTP to user
+    user.verifyOtp = otp;
+    user.verifyOtpExpireAt = otpExpiry;
+    await user.save();
+
+    // TODO: Send OTP via email
+    console.log('Generated OTP:', otp);
+
+    res.status(200).json({
+      success: true,
+      message: 'OTP sent to your email'
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error sending OTP',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Verify OTP
+// @route   POST /api/auth/verifyOtp
+// @access  Public
+exports.verifyOTP = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    console.log('OTP verification request:', { email, otp });
+
+    // Find user by email
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if OTP matches and is not expired
+    if (user.verifyOtp !== otp || Date.now() > user.verifyOtpExpireAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired OTP'
+      });
+    }
+
+    // Generate reset OTP
+    const resetOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const resetOtpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    // Save reset OTP
+    user.resetOtp = resetOtp;
+    user.resetOtpExpireAt = resetOtpExpiry;
+    user.verifyOtp = undefined;
+    user.verifyOtpExpireAt = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully',
+      resetOtp
+    });
+  } catch (error) {
+    console.error('OTP verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verifying OTP',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Reset password
+// @route   POST /api/auth/reset_password
+// @access  Public
+exports.resetPassword = async (req, res) => {
+  try {
+    const { email, resetOtp, newPassword } = req.body;
+
+    console.log('Password reset request:', { email, resetOtp });
+
+    // Find user by email
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if reset OTP matches and is not expired
+    if (user.resetOtp !== resetOtp || Date.now() > user.resetOtpExpireAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired reset OTP'
+      });
+    }
+
+    // Update password
+    user.password = newPassword;
+    user.resetOtp = undefined;
+    user.resetOtpExpireAt = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset successful'
+    });
+  } catch (error) {
+    console.error('Password reset error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error resetting password',
+      error: error.message
     });
   }
 };
