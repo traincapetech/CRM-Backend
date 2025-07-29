@@ -47,6 +47,8 @@ const attendanceRoutes = require('./routes/attendance');
 const payrollRoutes = require('./routes/payroll');
 const incentivesRoutes = require('./routes/incentives');
 const documentationRoutes = require('./routes/documentation');
+const invoiceRoutes = require('./routes/invoices');
+const stripeInvoiceRoutes = require('./routes/stripeInvoices');
 const logs = require('./routes/logs');
 const app = express();
 const server = http.createServer(app);
@@ -302,6 +304,8 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/incentives', incentivesRoutes);
 app.use('/api/documentation', documentationRoutes);
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/stripe-invoices', stripeInvoiceRoutes);
 app.use('/api/logs', logs);
 
 // Basic route for testing

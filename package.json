@@ -27,7 +27,8 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.1",
     "pdfkit": "^0.17.1",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "stripe": "^18.3.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
