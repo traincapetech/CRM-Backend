@@ -1,4 +1,17 @@
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+// Initialize Stripe with error handling for missing API key
+let stripe;
+try {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    console.warn('⚠️ STRIPE_SECRET_KEY not found in environment variables');
+    stripe = null;
+  } else {
+    stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+  }
+} catch (error) {
+  console.error('❌ Error initializing Stripe:', error.message);
+  stripe = null;
+}
+
 const mongoose = require('mongoose');
 const StripeInvoice = require('../models/StripeInvoice');
 const Invoice = require('../models/Invoice');
@@ -7,6 +20,10 @@ const User = require('../models/User');
 // Create Stripe customer
 const createStripeCustomer = async (customerData) => {
   try {
+    if (!stripe) {
+      throw new Error('Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.');
+    }
+    
     const customer = await stripe.customers.create({
       email: customerData.email,
       name: customerData.name,
@@ -25,6 +42,10 @@ const createStripeCustomer = async (customerData) => {
 // Create Stripe product and price
 const createStripeProduct = async (productData) => {
   try {
+    if (!stripe) {
+      throw new Error('Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.');
+    }
+    
     const product = await stripe.products.create({
       name: productData.name,
       description: productData.description
@@ -46,6 +67,12 @@ const createStripeProduct = async (productData) => {
 // Create Stripe invoice
 const createStripeInvoice = async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(503).json({ 
+        message: 'Stripe payment processing is currently unavailable. Please contact support.' 
+      });
+    }
+    
     const { crmInvoiceId, customerData, items, dueDate } = req.body;
     const userId = req.user.id;
 
@@ -190,13 +217,17 @@ const getStripeInvoice = async (req, res) => {
     }
 
     // Get latest data from Stripe
-    try {
-      const stripeData = await stripe.invoices.retrieve(invoice.stripeInvoiceId);
-      invoice.status = stripeData.status;
-      invoice.paidAt = stripeData.status === 'paid' ? new Date(stripeData.status_transitions.paid_at * 1000) : null;
-      await invoice.save();
-    } catch (stripeError) {
-      console.error('Error fetching from Stripe:', stripeError);
+    if (stripe) {
+      try {
+        const stripeData = await stripe.invoices.retrieve(invoice.stripeInvoiceId);
+        invoice.status = stripeData.status;
+        invoice.paidAt = stripeData.status === 'paid' ? new Date(stripeData.status_transitions.paid_at * 1000) : null;
+        await invoice.save();
+      } catch (stripeError) {
+        console.error('Error fetching from Stripe:', stripeError);
+      }
+    } else {
+      console.warn('Stripe not configured - using cached invoice data');
     }
 
     res.json(invoice);
@@ -209,6 +240,11 @@ const getStripeInvoice = async (req, res) => {
 
 // Webhook handler for Stripe events
 const handleStripeWebhook = async (req, res) => {
+  if (!stripe) {
+    console.warn('Stripe webhook received but Stripe is not configured');
+    return res.status(503).json({ message: 'Stripe is not configured' });
+  }
+
   const sig = req.headers['stripe-signature'];
   let event;
 
