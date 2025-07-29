@@ -299,17 +299,33 @@ exports.updateInvoice = async (req, res) => {
 // @access  Private (Admin, Manager)
 exports.deleteInvoice = async (req, res) => {
   try {
+    console.log('============= DELETE INVOICE REQUEST =============');
+    console.log('Invoice ID to delete:', req.params.id);
+    console.log('User making request:', {
+      id: req.user._id,
+      role: req.user.role,
+      name: req.user.fullName
+    });
+
     const invoice = await Invoice.findById(req.params.id);
 
     if (!invoice || invoice.isDeleted) {
+      console.log('Invoice not found or already deleted');
       return res.status(404).json({
         success: false,
         message: 'Invoice not found'
       });
     }
 
+    console.log('Found invoice:', {
+      id: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      isDeleted: invoice.isDeleted
+    });
+
     // Check authorization
     if (!['Admin', 'Manager'].includes(req.user.role)) {
+      console.log('User not authorized to delete invoices');
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete invoices'
@@ -321,7 +337,7 @@ exports.deleteInvoice = async (req, res) => {
     invoice.updatedBy = req.user._id;
     await invoice.save();
 
-    console.log('Invoice soft deleted:', invoice.invoiceNumber);
+    console.log('Invoice soft deleted successfully:', invoice.invoiceNumber);
 
     res.status(200).json({
       success: true,

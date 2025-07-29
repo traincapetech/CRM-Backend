@@ -17,6 +17,126 @@ const StripeInvoice = require('../models/StripeInvoice');
 const Invoice = require('../models/Invoice');
 const User = require('../models/User');
 
+// Currency conversion for Stripe compatibility
+const getStripeCurrency = (currency) => {
+  const currencyMap = {
+    'INR': 'inr',
+    'USD': 'usd',
+    'EUR': 'eur',
+    'GBP': 'gbp',
+    'CAD': 'cad',
+    'AUD': 'aud',
+    'JPY': 'jpy',
+    'SGD': 'sgd',
+    'HKD': 'hkd',
+    'CHF': 'chf',
+    'SEK': 'sek',
+    'NOK': 'nok',
+    'DKK': 'dkk',
+    'PLN': 'pln',
+    'CZK': 'czk',
+    'HUF': 'huf',
+    'RON': 'ron',
+    'BGN': 'bgn',
+    'HRK': 'hrk',
+    'RUB': 'rub',
+    'TRY': 'try',
+    'BRL': 'brl',
+    'MXN': 'mxn',
+    'ARS': 'ars',
+    'CLP': 'clp',
+    'COP': 'cop',
+    'PEN': 'pen',
+    'UYU': 'uyu',
+    'VND': 'vnd',
+    'THB': 'thb',
+    'MYR': 'myr',
+    'IDR': 'idr',
+    'PHP': 'php',
+    'KRW': 'krw',
+    'TWD': 'twd',
+    'ILS': 'ils',
+    'AED': 'aed',
+    'SAR': 'sar',
+    'QAR': 'qar',
+    'KWD': 'kwd',
+    'BHD': 'bhd',
+    'OMR': 'omr',
+    'JOD': 'jod',
+    'LBP': 'lbp',
+    'EGP': 'egp',
+    'ZAR': 'zar',
+    'NGN': 'ngn',
+    'KES': 'kes',
+    'GHS': 'ghs',
+    'UGX': 'ugx',
+    'TZS': 'tzs',
+    'ZMW': 'zmw',
+    'MAD': 'mad',
+    'TND': 'tnd',
+    'DZD': 'dzd',
+    'LYD': 'lyd',
+    'SDG': 'sdg',
+    'ETB': 'etb',
+    'DJF': 'djf',
+    'SOS': 'sos',
+    'KMF': 'kmf',
+    'MUR': 'mur',
+    'SCR': 'scr',
+    'CVE': 'cve',
+    'GMD': 'gmd',
+    'GNF': 'gnf',
+    'SLL': 'sll',
+    'LRD': 'lrd',
+    'SLE': 'sle',
+    'XOF': 'xof',
+    'XAF': 'xaf',
+    'XPF': 'xpf',
+    'CDF': 'cdf',
+    'RWF': 'rwf',
+    'BIF': 'bif',
+    'MWK': 'mwk',
+    'ZWL': 'zwl',
+    'NAD': 'nad',
+    'BWP': 'bwp',
+    'LSL': 'lsl',
+    'SZL': 'szl',
+    'MZN': 'mzn',
+    'MGA': 'mga',
+    'BMD': 'bmd',
+    'BBD': 'bbd',
+    'XCD': 'xcd',
+    'ANG': 'ang',
+    'AWG': 'awg',
+    'KYD': 'kyd',
+    'JMD': 'jmd',
+    'TTD': 'ttd',
+    'BZD': 'bzd',
+    'GYD': 'gyd',
+    'SRD': 'srd',
+    'HTG': 'htg',
+    'DOP': 'dop',
+    'CUC': 'cuc',
+    'CUP': 'cup',
+    'PYG': 'pyg',
+    'BOB': 'bob',
+    'UYU': 'uyu',
+    'UYI': 'uyi',
+    'GYD': 'gyd',
+    'SRD': 'srd',
+    'HTG': 'htg',
+    'DOP': 'dop',
+    'CUC': 'cuc',
+    'CUP': 'cup',
+    'PYG': 'pyg',
+    'BOB': 'bob',
+    'UYU': 'uyu',
+    'UYI': 'uyi'
+  };
+  
+  return currencyMap[currency.toUpperCase()] || 'usd'; // Default to USD if not supported
+};
+
 // Create Stripe customer
 const createStripeCustomer = async (customerData) => {
   try {
@@ -67,7 +187,10 @@ const createStripeProduct = async (productData) => {
 // Create Stripe invoice
 const createStripeInvoice = async (req, res) => {
   try {
+    console.log('🔍 Creating Stripe invoice with data:', req.body);
+    
     if (!stripe) {
+      console.error('❌ Stripe not configured');
       return res.status(503).json({ 
         message: 'Stripe payment processing is currently unavailable. Please contact support.' 
       });
@@ -76,53 +199,73 @@ const createStripeInvoice = async (req, res) => {
     const { crmInvoiceId, customerData, items, dueDate } = req.body;
     const userId = req.user.id;
 
+    console.log('📋 Input data:', { crmInvoiceId, customerData, items, dueDate, userId });
+
     // Get CRM invoice for reference
     const crmInvoice = await Invoice.findById(crmInvoiceId);
     if (!crmInvoice) {
+      console.error('❌ CRM Invoice not found:', crmInvoiceId);
       return res.status(404).json({ message: 'CRM Invoice not found' });
     }
+
+    console.log('✅ CRM Invoice found:', crmInvoice.invoiceNumber);
 
     // Create or get Stripe customer
     let stripeCustomer;
     try {
+      console.log('👤 Looking for existing Stripe customer:', customerData.email);
       stripeCustomer = await stripe.customers.list({
         email: customerData.email,
         limit: 1
       });
       
       if (stripeCustomer.data.length === 0) {
+        console.log('👤 Creating new Stripe customer');
         stripeCustomer = await createStripeCustomer(customerData);
       } else {
+        console.log('👤 Found existing Stripe customer');
         stripeCustomer = stripeCustomer.data[0];
       }
     } catch (error) {
-      return res.status(400).json({ message: 'Error with customer data' });
+      console.error('❌ Error with customer data:', error);
+      return res.status(400).json({ message: 'Error with customer data: ' + error.message });
     }
+
+    console.log('✅ Stripe customer ready:', stripeCustomer.id);
 
     // Create invoice items
     const invoiceItems = [];
     for (const item of items) {
-      // Create product for each item
-      const { product, price } = await createStripeProduct({
-        name: item.description,
-        description: item.description,
-        unitAmount: item.unitPrice,
-        currency: crmInvoice.currency
-      });
+      try {
+        console.log('📦 Creating invoice item for:', item.description);
+        
+        // Add invoice item directly with price_data
+        await stripe.invoiceItems.create({
+          customer: stripeCustomer.id,
+          price_data: {
+            currency: getStripeCurrency(crmInvoice.currency),
+            product_data: {
+              name: item.description,
+              description: item.description
+            },
+            unit_amount: Math.round(item.unitPrice * 100) // Convert to cents
+          },
+          quantity: item.quantity,
+          metadata: {
+            crmItemId: item._id || '',
+            taxRate: item.taxRate || 0
+          }
+        });
 
-      // Add invoice item
-      await stripe.invoiceItems.create({
-        customer: stripeCustomer.id,
-        price: price.id,
-        quantity: item.quantity,
-        metadata: {
-          crmItemId: item._id || '',
-          taxRate: item.taxRate || 0
-        }
-      });
-
-      invoiceItems.push({ product, price });
+        console.log('✅ Invoice item created for:', item.description);
+        invoiceItems.push({ description: item.description, quantity: item.quantity });
+      } catch (itemError) {
+        console.error('❌ Error creating item:', itemError);
+        throw new Error(`Failed to create item "${item.description}": ${itemError.message}`);
+      }
     }
+
+    console.log('✅ All items created, creating Stripe invoice');
 
     // Create Stripe invoice
     const stripeInvoice = await stripe.invoices.create({
@@ -135,6 +278,8 @@ const createStripeInvoice = async (req, res) => {
       }
     });
 
+    console.log('✅ Stripe invoice created:', stripeInvoice.id);
+
     // Save to our database
     const stripeInvoiceRecord = await StripeInvoice.create({
       stripeInvoiceId: stripeInvoice.id,
@@ -142,7 +287,7 @@ const createStripeInvoice = async (req, res) => {
       customerEmail: customerData.email,
       customerName: customerData.name,
       amount: crmInvoice.totalAmount,
-      currency: crmInvoice.currency,
+      currency: getStripeCurrency(crmInvoice.currency), // Use Stripe-compatible currency
       status: stripeInvoice.status,
       dueDate: dueDate ? new Date(dueDate) : null,
       stripeInvoiceUrl: stripeInvoice.hosted_invoice_url,
@@ -152,8 +297,11 @@ const createStripeInvoice = async (req, res) => {
       crmInvoiceId: crmInvoiceId
     });
 
+    console.log('✅ Stripe invoice saved to database:', stripeInvoiceRecord._id);
+
     // Send the invoice
     const sentInvoice = await stripe.invoices.sendInvoice(stripeInvoice.id);
+    console.log('✅ Invoice sent to customer');
 
     res.status(201).json({
       message: 'Stripe invoice created and sent successfully',
@@ -163,8 +311,13 @@ const createStripeInvoice = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error creating Stripe invoice:', error);
-    res.status(500).json({ message: 'Error creating Stripe invoice', error: error.message });
+    console.error('❌ Error creating Stripe invoice:', error);
+    console.error('❌ Error stack:', error.stack);
+    res.status(500).json({ 
+      message: 'Error creating Stripe invoice', 
+      error: error.message,
+      details: error.stack
+    });
   }
 };
 
