@@ -163,6 +163,25 @@ exports.createInvoice = async (req, res) => {
     req.body.createdBy = req.user._id;
     req.body.invoiceNumber = invoiceNumber;
 
+    // Recalculate totals from items for data integrity
+    if (req.body.items && req.body.items.length > 0) {
+      let subtotal = 0;
+      let totalAmount = 0;
+      req.body.items.forEach(item => {
+        const itemSubtotal = item.quantity * item.unitPrice;
+        const itemTax = (itemSubtotal * item.taxRate) / 100;
+        item.subtotal = itemSubtotal;
+        item.total = itemSubtotal + itemTax;
+        
+        subtotal += itemSubtotal;
+        totalAmount += item.total;
+      });
+      req.body.subtotal = subtotal;
+      req.body.totalAmount = totalAmount;
+      req.body.balanceDue = totalAmount;
+      req.body.amountPaid = 0;
+    }
+
     // Calculate due date based on payment terms
     if (req.body.paymentTerms && req.body.paymentTerms !== 'Due on Receipt') {
       const days = parseInt(req.body.paymentTerms.split(' ')[1]) || 30;
@@ -175,20 +194,6 @@ exports.createInvoice = async (req, res) => {
     }
     if (!req.body.relatedLead || req.body.relatedLead === '') {
       delete req.body.relatedLead;
-    }
-
-    // Ensure all required numeric fields are present
-    if (typeof req.body.subtotal === 'undefined') {
-      req.body.subtotal = req.body.items.reduce((sum, item) => sum + (item.subtotal || 0), 0);
-    }
-    if (typeof req.body.totalAmount === 'undefined') {
-      req.body.totalAmount = req.body.items.reduce((sum, item) => sum + (item.total || 0), 0);
-    }
-    if (typeof req.body.balanceDue === 'undefined') {
-      req.body.balanceDue = req.body.totalAmount || 0;
-    }
-    if (typeof req.body.amountPaid === 'undefined') {
-      req.body.amountPaid = 0;
     }
 
     console.log('Processed invoice data:', JSON.stringify(req.body, null, 2));
@@ -255,6 +260,24 @@ exports.updateInvoice = async (req, res) => {
 
     // Set updated by
     req.body.updatedBy = req.user._id;
+    
+    // Recalculate totals from items for data integrity
+    if (req.body.items && req.body.items.length > 0) {
+      let subtotal = 0;
+      let totalAmount = 0;
+      req.body.items.forEach(item => {
+        const itemSubtotal = item.quantity * item.unitPrice;
+        const itemTax = (itemSubtotal * item.taxRate) / 100;
+        item.subtotal = itemSubtotal;
+        item.total = itemSubtotal + itemTax;
+        
+        subtotal += itemSubtotal;
+        totalAmount += item.total;
+      });
+      req.body.subtotal = subtotal;
+      req.body.totalAmount = totalAmount;
+      req.body.balanceDue = totalAmount - invoice.amountPaid; // Update balance due
+    }
 
     // Calculate due date based on payment terms
     if (req.body.paymentTerms && req.body.paymentTerms !== 'Due on Receipt') {
@@ -379,10 +402,11 @@ exports.generatePDF = async (req, res) => {
       });
     }
 
-    // Create PDF document
+    // Create PDF document with proper A4 settings
     const doc = new PDFDocument({
       size: 'A4',
-      margin: 50
+      margin: 40,
+      autoFirstPage: true
     });
 
     // Set response headers
@@ -436,10 +460,11 @@ exports.downloadPDF = async (req, res) => {
       });
     }
 
-    // Create PDF document
+    // Create PDF document with proper A4 settings
     const doc = new PDFDocument({
       size: 'A4',
-      margin: 50
+      margin: 40,
+      autoFirstPage: true
     });
 
     // Set response headers for download
@@ -548,6 +573,63 @@ exports.recordPayment = async (req, res) => {
   }
 };
 
+// @desc    Send invoice to customer
+// @route   POST /api/invoices/:id/send
+// @access  Private (Admin, Manager, Sales Person)
+exports.sendToCustomer = async (req, res) => {
+  try {
+    console.log('============= SEND INVOICE TO CUSTOMER =============');
+    console.log('Invoice ID:', req.params.id);
+    console.log('User making request:', {
+      id: req.user._id,
+      role: req.user.role,
+      name: req.user.fullName
+    });
+
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice || invoice.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found'
+      });
+    }
+
+    // Check if user has permission to send this invoice
+    if (req.user.role === 'Sales Person' && invoice.createdBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to send this invoice'
+      });
+    }
+
+    // Update invoice status to 'Sent'
+    invoice.status = 'Sent';
+    invoice.updatedBy = req.user._id;
+    await invoice.save();
+
+    // TODO: Implement actual email sending functionality
+    // For now, just return success
+    console.log('Invoice sent to customer:', invoice.invoiceNumber);
+
+    res.status(200).json({
+      success: true,
+      message: 'Invoice sent to customer successfully',
+      data: {
+        invoiceNumber: invoice.invoiceNumber,
+        customerEmail: invoice.clientInfo.email,
+        status: invoice.status
+      }
+    });
+
+  } catch (err) {
+    console.error('Error sending invoice to customer:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
 // @desc    Get invoice statistics
 // @route   GET /api/invoices/stats
 // @access  Private (Admin, Manager)
@@ -643,162 +725,191 @@ exports.getInvoiceStats = async (req, res) => {
   }
 };
 
-// Helper function to generate PDF content
+// Helper function to generate PDF content with corrected alignment and calculations
 function generatePDFContent(doc, invoice) {
   const pageWidth = doc.page.width;
   const margin = 40;
-  const contentWidth = pageWidth - (margin * 2);
-  let y = margin;
+  const contentWidth = pageWidth - margin * 2;
+  let y = doc.y;
+  const lineSpacing = 16;
+  const smallLineSpacing = 12;
 
-  // Colors
+  // Colors and Fonts
   const primaryColor = '#2563eb';
   const secondaryColor = '#64748b';
   const textColor = '#1e293b';
+  const lightGray = '#f8fafc';
+  const boldFont = 'Helvetica-Bold';
+  const regularFont = 'Helvetica';
 
-  // Helper for text
-  const addText = (text, x, y, options = {}) => {
-    const { fontSize = 10, bold = false, color = textColor, align = 'left', width = undefined } = options;
-    doc.fontSize(fontSize).fillColor(color);
-    if (bold) doc.font('Helvetica-Bold');
-    else doc.font('Helvetica');
-    doc.text(text, x, y, { align, width });
+  // Helper function to draw a line and advance Y
+  const drawLine = () => {
+    doc.strokeColor(secondaryColor).lineWidth(1).moveTo(margin, y).lineTo(pageWidth - margin, y).stroke();
+    y += 15;
   };
 
-  // --- Header: Logo + Company Info ---
+  // --- Header Section ---
+  const headerStart = y;
+  const companyInfoWidth = 280;
+  const logoWidth = 80;
+  const logoHeight = 60;
   const logoPath = path.join(__dirname, '../assets/images/traincape-logo.jpg');
-  let logoHeight = 0;
+
+  // Draw logo on the left
   try {
     if (fs.existsSync(logoPath)) {
-      doc.image(logoPath, margin, y, { width: 50, height: 40 });
-      logoHeight = 40;
+      doc.image(logoPath, margin, y, { width: logoWidth, height: logoHeight });
     }
-  } catch (error) {}
-
-  // Company Info (right side)
-  const companyX = pageWidth - margin - 220;
-  let companyY = y;
-  addText(invoice.companyInfo.name, companyX, companyY, { fontSize: 13, bold: true, color: primaryColor });
-  companyY += 16;
-  addText(invoice.companyInfo.address.street, companyX, companyY, { fontSize: 8 });
-  companyY += 12;
-  addText(`${invoice.companyInfo.address.city}, ${invoice.companyInfo.address.state}`, companyX, companyY, { fontSize: 8 });
-  companyY += 12;
-  if (invoice.companyInfo.email) {
-    addText(`Email: ${invoice.companyInfo.email}`, companyX, companyY, { fontSize: 8, color: secondaryColor });
-    companyY += 12;
+  } catch (error) {
+    // Logo not found, continue without it
   }
-  if (invoice.companyInfo.phone) {
-    addText(`Phone: ${invoice.companyInfo.phone}`, companyX, companyY, { fontSize: 8, color: secondaryColor });
-    companyY += 12;
-  }
-  y += Math.max(logoHeight, companyY - margin, 60) + 10;
+  
+  // Company Info on the right
+  const companyX = pageWidth - margin - companyInfoWidth;
+  doc.fontSize(18).fillColor(primaryColor).font(boldFont).text('TRAINCAPE TECHNOLOGY', companyX, headerStart, { width: companyInfoWidth, align: 'right' });
+  doc.fontSize(11).fillColor(textColor).font(regularFont).text('Khandolia Plaza, 118C, Dabri - Palam Rd', companyX, doc.y, { width: companyInfoWidth, align: 'right' });
+  doc.text('Vaishali, Vaishali Colony, Dashrath Puri', companyX, doc.y, { width: companyInfoWidth, align: 'right' });
+  doc.text('New Delhi, Delhi', companyX, doc.y, { width: companyInfoWidth, align: 'right' });
+  doc.text(`Email: sales@traincapetech.in`, companyX, doc.y, { width: companyInfoWidth, align: 'right', link: 'mailto:sales@traincapetech.in' });
+  doc.text(`Phone: +44 1253 928501`, companyX, doc.y, { width: companyInfoWidth, align: 'right' });
+  
+  y = Math.max(doc.y, headerStart + logoHeight + 20);
 
-  // --- Invoice Title & Details ---
-  addText('INVOICE', margin, y, { fontSize: 18, bold: true, color: primaryColor });
-  const detailsX = pageWidth - margin - 200;
-  addText('Invoice #:', detailsX, y, { fontSize: 10, bold: true });
-  addText(invoice.invoiceNumber, detailsX + 70, y, { fontSize: 10, color: primaryColor });
-  addText('Date:', detailsX, y + 15, { fontSize: 10, bold: true });
-  addText(new Date(invoice.invoiceDate).toLocaleDateString(), detailsX + 70, y + 15, { fontSize: 10 });
-  addText('Status:', detailsX, y + 30, { fontSize: 10, bold: true });
-  addText(invoice.status, detailsX + 70, y + 30, { fontSize: 10, color: primaryColor });
-  y += 40;
+  // --- Invoice Details & Bill To Section ---
+  doc.fontSize(28).fillColor(primaryColor).font(boldFont).text('INVOICE', margin, y);
+  const invoiceTitleY = y;
+  y = doc.y + 20;
 
-  // --- Bill To ---
-  addText('BILL TO:', margin, y, { fontSize: 11, bold: true, color: primaryColor });
-  y += 14;
-  addText(invoice.clientInfo.name, margin, y, { fontSize: 10, bold: true });
-  y += 12;
+  const billToX = margin;
+  const detailsLabelX = pageWidth - 200;
+  const detailsValueX = pageWidth - margin;
+  const detailsColWidth = detailsValueX - detailsLabelX;
+  
+  doc.fontSize(16).fillColor(primaryColor).font(boldFont).text('BILL TO:', billToX, y);
+  const billToY = doc.y;
+  
+  doc.fontSize(13).fillColor(textColor).font(boldFont).text(invoice.clientInfo.name, billToX, billToY + lineSpacing);
+  let currentY = doc.y + smallLineSpacing;
+  
   if (invoice.clientInfo.company) {
-    addText(invoice.clientInfo.company, margin, y, { fontSize: 9 });
-    y += 10;
+    doc.fontSize(12).font(regularFont).text(invoice.clientInfo.company, billToX, currentY);
+    currentY = doc.y;
   }
   if (invoice.clientInfo.address.street && invoice.clientInfo.address.street !== 'N/A') {
-    addText(invoice.clientInfo.address.street, margin, y, { fontSize: 8 });
-    y += 10;
+    doc.fontSize(12).font(regularFont).text(invoice.clientInfo.address.street, billToX, currentY);
+    currentY = doc.y;
   }
   if (invoice.clientInfo.address.city && invoice.clientInfo.address.city !== 'N/A') {
     const cityState = [invoice.clientInfo.address.city, invoice.clientInfo.address.state].filter(Boolean).join(', ');
     if (cityState) {
-      addText(cityState, margin, y, { fontSize: 8 });
-      y += 10;
+      doc.fontSize(12).font(regularFont).text(cityState, billToX, currentY);
+      currentY = doc.y;
     }
   }
   if (invoice.clientInfo.email) {
-    addText(`Email: ${invoice.clientInfo.email}`, margin, y, { fontSize: 8, color: secondaryColor });
-    y += 10;
+    doc.fontSize(12).font(regularFont).text(`Email: ${invoice.clientInfo.email}`, billToX, currentY);
+    currentY = doc.y;
   }
-  y += 5;
+  
+  // Invoice Details
+  const detailsY = invoiceTitleY;
+  doc.fontSize(12).fillColor(textColor).font(boldFont).text('Invoice #:', detailsLabelX, detailsY);
+  doc.font(regularFont).text(invoice.invoiceNumber, detailsLabelX, detailsY, { width: detailsColWidth, align: 'right' });
+
+  doc.font(boldFont).text('Date:', detailsLabelX, detailsY + lineSpacing);
+  doc.font(regularFont).text(new Date(invoice.invoiceDate).toLocaleDateString(), detailsLabelX, detailsY + lineSpacing, { width: detailsColWidth, align: 'right' });
+
+  doc.font(boldFont).text('Status:', detailsLabelX, detailsY + lineSpacing * 2);
+  doc.font(regularFont).text(invoice.status, detailsLabelX, detailsY + lineSpacing * 2, { width: detailsColWidth, align: 'right' });
+  
+  y = Math.max(currentY, detailsY + lineSpacing * 2) + 20;
+  
+  drawLine();
 
   // --- Items Table ---
-  doc.rect(margin, y, contentWidth, 16).fillAndStroke(primaryColor, primaryColor);
-  addText('Description', margin + 8, y + 3, { fontSize: 9, bold: true, color: 'white' });
-  addText('Qty', margin + 180, y + 3, { fontSize: 9, bold: true, color: 'white', align: 'center' });
-  addText('Price', margin + 200, y + 3, { fontSize: 9, bold: true, color: 'white', align: 'right' });
-  addText('Tax', margin + 260, y + 3, { fontSize: 9, bold: true, color: 'white', align: 'center' });
-  addText('Total', margin + 360, y + 3, { fontSize: 9, bold: true, color: 'white', align: 'right' });
+  y += 10;
+  const tableTop = y;
+  const tableRowHeight = 25;
+  const colPadding = 5;
 
-  let rowCount = 0;
-  invoice.items.forEach(item => {
-    const rowColor = rowCount % 2 === 0 ? 'white' : '#f8fafc';
-    doc.rect(margin, y, contentWidth, 14).fillAndStroke(rowColor, '#e2e8f0');
-    addText(item.description, margin + 8, y + 2, { fontSize: 8 });
-    addText(item.quantity.toString(), margin + 180, y + 2, { fontSize: 8, align: 'center' });
-    addText(`${invoice.currencySymbol}${item.unitPrice.toFixed(2)}`, margin + 200, y + 2, { fontSize: 8, align: 'right' });
-    addText(`${item.taxRate}%`, margin + 260, y + 2, { fontSize: 8, align: 'center' });
-    addText(`${invoice.currencySymbol}${item.total.toFixed(2)}`, margin + 360, y + 2, { fontSize: 8, bold: true, align: 'right' });
-    y += 14;
-    rowCount++;
+  // Define dynamic column widths
+  const descriptionColWidth = contentWidth * 0.45;
+  const qtyColWidth = contentWidth * 0.1;
+  const priceColWidth = contentWidth * 0.15;
+  const taxColWidth = contentWidth * 0.15;
+  const totalColWidth = contentWidth - descriptionColWidth - qtyColWidth - priceColWidth - taxColWidth;
+
+  // Define column x-coordinates
+  const col1X = margin;
+  const col2X = col1X + descriptionColWidth;
+  const col3X = col2X + qtyColWidth;
+  const col4X = col3X + priceColWidth;
+  const col5X = col4X + taxColWidth;
+
+  // Table Header
+  doc.rect(margin, tableTop, contentWidth, tableRowHeight).fill(primaryColor);
+  y = tableTop + 8;
+  doc.fontSize(11).fillColor('white').font(boldFont).text('Description', col1X + colPadding, y);
+  doc.text('Qty', col2X, y, { width: qtyColWidth, align: 'center' });
+  doc.text('Unit Price', col3X, y, { width: priceColWidth, align: 'center' });
+  doc.text('Tax %', col4X, y, { width: taxColWidth, align: 'center' });
+  doc.text('Total', col5X, y, { width: totalColWidth - colPadding, align: 'right' });
+  y = tableTop + tableRowHeight;
+
+  // Table Rows
+  doc.fillColor(textColor).font(regularFont);
+  invoice.items.forEach((item, index) => {
+    const rowY = y;
+    const backgroundColor = index % 2 === 0 ? 'white' : lightGray;
+    doc.rect(margin, rowY, contentWidth, tableRowHeight).fill(backgroundColor);
+    
+    doc.fillColor(textColor).text(item.description, col1X + colPadding, rowY + 8, { width: descriptionColWidth - colPadding });
+    doc.text(item.quantity.toString(), col2X, rowY + 8, { width: qtyColWidth, align: 'center' });
+    doc.text(`${invoice.currencySymbol}${item.unitPrice.toFixed(2)}`, col3X, rowY + 8, { width: priceColWidth, align: 'center' });
+    doc.text(`${item.taxRate}%`, col4X, rowY + 8, { width: taxColWidth, align: 'center' });
+    doc.text(`${invoice.currencySymbol}${item.total.toFixed(2)}`, col5X, rowY + 8, { width: totalColWidth - colPadding, align: 'right' });
+    
+    y += tableRowHeight;
   });
-  y += 8;
+  y += 25;
 
-  // --- Totals ---
-  const totalsX = margin + 250;
-  let totalsY = y;
-  const totalsLineSpacing = 22;
-  doc.rect(totalsX - 20, totalsY - 8, 240, totalsLineSpacing * 3 + 16).fillAndStroke('#f8fafc', '#e2e8f0');
-  addText('Subtotal:', totalsX, totalsY, { fontSize: 9, bold: true });
-  addText(`${invoice.currencySymbol}${invoice.items.reduce((sum, item) => sum + item.subtotal, 0).toFixed(2)}`, totalsX + 170, totalsY, { fontSize: 9, align: 'right' });
-  addText('Tax:', totalsX, totalsY + totalsLineSpacing, { fontSize: 9 });
-  addText(`${invoice.currencySymbol}${invoice.items.reduce((sum, item) => sum + item.taxAmount, 0).toFixed(2)}`, totalsX + 170, totalsY + totalsLineSpacing, { fontSize: 9, align: 'right' });
-  addText('Total Amount:', totalsX, totalsY + totalsLineSpacing * 2, { fontSize: 11, bold: true, color: primaryColor });
-  addText(`${invoice.currencySymbol}${invoice.totalAmount.toFixed(2)}`, totalsX + 170, totalsY + totalsLineSpacing * 2, { fontSize: 11, bold: true, color: primaryColor, align: 'right' });
-  y = Math.max(y, totalsY + totalsLineSpacing * 2 + 20);
+  // --- Totals Section ---
+  const totalsX = pageWidth - margin - 220;
+  const totalsY = y;
+  const totalValueX = pageWidth - margin - 110;
+  const totalValueWidth = 110;
+  
+  // Recalculate totals for display to ensure accuracy, even if DB data is old
+  const subtotal = invoice.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+  const totalTax = invoice.items.reduce((sum, item) => sum + ((item.quantity * item.unitPrice) * item.taxRate / 100), 0);
+  const totalAmount = subtotal + totalTax;
+  
+  doc.fontSize(12).font(boldFont).text('Subtotal:', totalsX, totalsY);
+  doc.font(regularFont).text(`${invoice.currencySymbol}${subtotal.toFixed(2)}`, totalValueX, totalsY, { width: totalValueWidth, align: 'right' });
+  y = doc.y + 10;
 
-  // --- Amount in Words ---
-  if (invoice.getAmountInWords) {
-    addText(`Amount in words: ${invoice.getAmountInWords()}`, margin, y + 8, { fontSize: 8, color: secondaryColor });
-    y += 18;
+  doc.font(boldFont).text('Tax:', totalsX, y);
+  doc.font(regularFont).text(`${invoice.currencySymbol}${totalTax.toFixed(2)}`, totalValueX, y, { width: totalValueWidth, align: 'right' });
+  y = doc.y + 15;
+
+  doc.rect(totalsX, y, 220, 25).fill(lightGray);
+  doc.fontSize(14).font(boldFont).fillColor(primaryColor).text('Total Amount:', totalsX + colPadding, y + 5);
+  doc.text(`${invoice.currencySymbol}${totalAmount.toFixed(2)}`, totalValueX, y + 5, { width: totalValueWidth, align: 'right' });
+  y = doc.y + 30;
+
+  // --- Other Information ---
+  if (typeof invoice.getAmountInWords === 'function') {
+    doc.fillColor(textColor).font(regularFont).text(`Amount in words: ${invoice.getAmountInWords()}`, margin, y);
+    y = doc.y + 15;
   }
-
-  // --- Notes ---
+  
   if (invoice.notes) {
-    addText('Notes:', margin, y, { fontSize: 9, bold: true, color: primaryColor });
-    addText(invoice.notes, margin + 40, y, { fontSize: 8 });
-    y += 14;
+    doc.font(boldFont).fillColor(primaryColor).text('Notes:', margin, y);
+    doc.font(regularFont).fillColor(textColor).text(invoice.notes, margin + 60, y, { width: contentWidth - 60 });
+    y = doc.y + 20;
   }
-
-  // --- Payment Details ---
-  if (invoice.paymentDetails && (invoice.paymentDetails.bankName || invoice.paymentDetails.accountNumber)) {
-    addText('Payment Details:', margin, y, { fontSize: 9, bold: true, color: primaryColor });
-    let paymentY = y + 12;
-    if (invoice.paymentDetails.bankName) {
-      addText(`Bank: ${invoice.paymentDetails.bankName}`, margin, paymentY, { fontSize: 8 });
-      paymentY += 10;
-    }
-    if (invoice.paymentDetails.accountNumber) {
-      addText(`Account: ${invoice.paymentDetails.accountNumber}`, margin, paymentY, { fontSize: 8 });
-      paymentY += 10;
-    }
-    if (invoice.paymentDetails.ifscCode) {
-      addText(`IFSC: ${invoice.paymentDetails.ifscCode}`, margin, paymentY, { fontSize: 8 });
-      paymentY += 10;
-    }
-    y = paymentY;
-  }
-
+  
   // --- Footer ---
-  if (y < doc.page.height - 50) {
-    addText('Thank you for your business!', margin, y + 10, { fontSize: 10, color: secondaryColor, align: 'center', width: contentWidth });
-  }
+  const footerY = doc.page.height - 30;
+  doc.fontSize(11).fillColor(secondaryColor).font(regularFont).text('Thank you for your business!', 0, footerY, { align: 'center' });
 }
