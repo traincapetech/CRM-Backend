@@ -238,16 +238,25 @@ const createStripeInvoice = async (req, res) => {
     for (const item of items) {
       try {
         console.log('📦 Creating invoice item for:', item.description);
+        console.log('📦 Item data:', {
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          taxRate: item.taxRate
+        });
         
-        // Add invoice item directly with price_data
+        // Create product first
+        const product = await stripe.products.create({
+          name: item.description,
+          description: item.description
+        });
+        
+        // Add invoice item with price_data using product ID
         await stripe.invoiceItems.create({
           customer: stripeCustomer.id,
           price_data: {
             currency: getStripeCurrency(crmInvoice.currency),
-            product_data: {
-              name: item.description,
-              description: item.description
-            },
+            product: product.id,
             unit_amount: Math.round(item.unitPrice * 100) // Convert to cents
           },
           quantity: item.quantity,
