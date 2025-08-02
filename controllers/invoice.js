@@ -865,9 +865,9 @@ function generatePDFContent(doc, invoice) {
     
     doc.fillColor(textColor).text(item.description, col1X + colPadding, rowY + 8, { width: descriptionColWidth - colPadding });
     doc.text(item.quantity.toString(), col2X, rowY + 8, { width: qtyColWidth, align: 'center' });
-    doc.text(`${invoice.currencySymbol}${item.unitPrice.toFixed(2)}`, col3X, rowY + 8, { width: priceColWidth, align: 'center' });
+    doc.text(`${item.unitPrice.toFixed(2)}`, col3X, rowY + 8, { width: priceColWidth, align: 'center' });
     doc.text(`${item.taxRate}%`, col4X, rowY + 8, { width: taxColWidth, align: 'center' });
-    doc.text(`${invoice.currencySymbol}${item.total.toFixed(2)}`, col5X, rowY + 8, { width: totalColWidth - colPadding, align: 'right' });
+    doc.text(`${item.total.toFixed(2)}`, col5X, rowY + 8, { width: totalColWidth - colPadding, align: 'right' });
     
     y += tableRowHeight;
   });
@@ -885,17 +885,17 @@ function generatePDFContent(doc, invoice) {
   const totalAmount = subtotal + totalTax;
   
   doc.fontSize(12).font(boldFont).text('Subtotal:', totalsX, totalsY);
-  doc.font(regularFont).text(`${invoice.currencySymbol}${subtotal.toFixed(2)}`, totalValueX, totalsY, { width: totalValueWidth, align: 'right' });
-  y = doc.y + 10;
-
-  doc.font(boldFont).text('Tax:', totalsX, y);
-  doc.font(regularFont).text(`${invoice.currencySymbol}${totalTax.toFixed(2)}`, totalValueX, y, { width: totalValueWidth, align: 'right' });
-  y = doc.y + 15;
-
-  doc.rect(totalsX, y, 220, 25).fill(lightGray);
-  doc.fontSize(14).font(boldFont).fillColor(primaryColor).text('Total Amount:', totalsX + colPadding, y + 5);
-  doc.text(`${invoice.currencySymbol}${totalAmount.toFixed(2)}`, totalValueX, y + 5, { width: totalValueWidth, align: 'right' });
-  y = doc.y + 30;
+  doc.font(regularFont).text(`${subtotal.toFixed(2)}`, totalValueX, totalsY, { width: totalValueWidth, align: 'right' });
+  
+  const taxY = totalsY + 18;
+  doc.font(boldFont).text('Tax:', totalsX, taxY);
+  doc.font(regularFont).text(`${totalTax.toFixed(2)}`, totalValueX, taxY, { width: totalValueWidth, align: 'right' });
+  
+  const totalY = taxY + 25;
+  doc.rect(totalsX, totalY, 220, 25).fill(lightGray);
+  doc.fontSize(14).font(boldFont).fillColor(primaryColor).text('Total Amount:', totalsX + colPadding, totalY + 5);
+  doc.text(`${totalAmount.toFixed(2)}`, totalValueX, totalY + 5, { width: totalValueWidth, align: 'right' });
+  y = totalY + 30;
 
   // --- Other Information ---
   if (typeof invoice.getAmountInWords === 'function') {
