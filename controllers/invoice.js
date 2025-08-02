@@ -910,6 +910,6 @@ function generatePDFContent(doc, invoice) {
   }
   
   // --- Footer ---
-  const footerY = doc.page.height - 30;
-  doc.fontSize(11).fillColor(secondaryColor).font(regularFont).text('Thank you for your business!', 0, footerY, { align: 'center' });
+  // const footerY = doc.page.height - 30;
+  // doc.fontSize(11).fillColor(secondaryColor).font(regularFont).text('Thank you for your business!', 0, footerY, { align: 'center' });
 }
