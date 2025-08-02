@@ -156,8 +156,19 @@ exports.createInvoice = async (req, res) => {
     console.log('============= CREATE INVOICE REQUEST =============');
     console.log('Invoice data:', req.body);
 
-    // Generate invoice number
-    const invoiceNumber = await Invoice.generateInvoiceNumber();
+    // Generate invoice number to use the month instead of the year
+    const currentDate = new Date();
+    const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
+    const lastInvoice = await Invoice.findOne().sort({ createdAt: -1 });
+    let counter = 1;
+    if (lastInvoice) {
+      const lastInvoiceNumber = lastInvoice.invoiceNumber;
+      const parts = lastInvoiceNumber.split('-');
+      if (parts.length === 3 && parts[1] === month) {
+        counter = parseInt(parts[2], 10) + 1;
+      }
+    }
+    const invoiceNumber = `INV-${month}-${counter.toString().padStart(4, '0')}`;
     
     // Set created by
     req.body.createdBy = req.user._id;
