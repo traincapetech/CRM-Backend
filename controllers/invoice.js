@@ -830,10 +830,9 @@ function generatePDFContent(doc, invoice) {
   doc.font(boldFont).text('Date:', detailsLabelX, detailsY + lineSpacing);
   doc.font(regularFont).text(new Date(invoice.invoiceDate).toLocaleDateString(), detailsLabelX, detailsY + lineSpacing, { width: detailsColWidth, align: 'right' });
 
-  doc.font(boldFont).text('Status:', detailsLabelX, detailsY + lineSpacing * 2);
-  doc.font(regularFont).text(invoice.status, detailsLabelX, detailsY + lineSpacing * 2, { width: detailsColWidth, align: 'right' });
-  
-  y = Math.max(currentY, detailsY + lineSpacing * 2) + 20;
+  // The 'Status' lines have been removed
+
+  y = Math.max(currentY, detailsY + lineSpacing) + 20;
   
   drawLine();
 
