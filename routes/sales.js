@@ -12,6 +12,7 @@ const {
 
 const { protect, authorize } = require('../middleware/auth');
 const Sale = require('../models/Sale');
+const currencyService = require('../services/currencyService');
 
 // All routes below this line require authentication
 router.use(protect);
@@ -299,70 +300,63 @@ router.get('/reports/revenue-analysis', protect, authorize('Admin', 'Manager'), 
             status: '$status'
           },
           totalSales: { $sum: 1 },
-          totalRevenue: { $sum: '$totalCost' },
-          totalTokens: { $sum: '$tokenAmount' },
-          averageOrderValue: { $avg: '$totalCost' }
+          totalCourseValue: { $sum: '$totalCost' }, // Total course prices
+          totalRevenue: { $sum: '$tokenAmount' }, // Actual payments received
+          totalTokens: { $sum: '$tokenAmount' }, // Same as revenue (payments received)
+          averageOrderValue: { $avg: '$totalCost' } // Average course price
         }
       }
     ];
 
     const results = await Sale.aggregate(pipeline);
     
-    // Get exchange rates with fallback
-    let exchangeRates = {
-      'USD': 1,
-      'EUR': 0.85,
-      'GBP': 0.73,
-      'INR': 83.12,
-      'CAD': 1.36,
-      'AUD': 1.52,
-      'JPY': 149.50,
-      'CNY': 7.24
-    };
-    
-    try {
-      const ExchangeRate = require('../models/ExchangeRate');
-      const exchangeRateDoc = await ExchangeRate.findOne().sort({ updatedAt: -1 });
-      if (exchangeRateDoc && exchangeRateDoc.rates) {
-        exchangeRates = Object.fromEntries(exchangeRateDoc.rates);
-      }
-    } catch (err) {
-      console.log('Using default exchange rates');
-    }
+    // Get fresh exchange rates using the currency service
+    const exchangeRates = await currencyService.getExchangeRates();
+    console.log('Using exchange rates:', exchangeRates);
     
     let totalRevenueUSD = 0;
     let totalTokensUSD = 0;
+    let totalCourseValueUSD = 0;
     let totalSalesCount = 0;
     const currencyBreakdown = {};
     
     results.forEach(item => {
       const currency = item._id.currency || 'USD';
-      const rate = exchangeRates[currency] || 1;
-      const revenueInUSD = item.totalRevenue / rate;
-      const tokensInUSD = item.totalTokens / rate;
+      
+      // Convert to USD using proper currency conversion
+      const revenueInUSD = currencyService.convertToUSD(item.totalRevenue, currency);
+      const tokensInUSD = currencyService.convertToUSD(item.totalTokens, currency);
+      const courseValueInUSD = currencyService.convertToUSD(item.totalCourseValue, currency);
+      
+      console.log(`Currency: ${currency}, Revenue: ${item.totalRevenue} ${currency} = ${revenueInUSD} USD`);
       
       totalRevenueUSD += revenueInUSD;
       totalTokensUSD += tokensInUSD;
+      totalCourseValueUSD += courseValueInUSD;
       totalSalesCount += item.totalSales;
       
       if (!currencyBreakdown[currency]) {
         currencyBreakdown[currency] = {
           totalSales: 0,
+          totalCourseValue: 0,
           totalRevenue: 0,
           totalTokens: 0,
+          courseValueUSD: 0,
           revenueUSD: 0,
           tokensUSD: 0
         };
       }
       
       currencyBreakdown[currency].totalSales += item.totalSales;
+      currencyBreakdown[currency].totalCourseValue += item.totalCourseValue;
       currencyBreakdown[currency].totalRevenue += item.totalRevenue;
       currencyBreakdown[currency].totalTokens += item.totalTokens;
+      currencyBreakdown[currency].courseValueUSD += courseValueInUSD;
       currencyBreakdown[currency].revenueUSD += revenueInUSD;
       currencyBreakdown[currency].tokensUSD += tokensInUSD;
     });
 
-    // Get daily breakdown for the period
+    // Get daily breakdown for the period with proper currency conversion
     const dailyPipeline = [
       {
         $match: {
@@ -375,11 +369,13 @@ router.get('/reports/revenue-analysis', protect, authorize('Admin', 'Manager'), 
           _id: {
             year: { $year: '$date' },
             month: { $month: '$date' },
-            day: { $dayOfMonth: '$date' }
+            day: { $dayOfMonth: '$date' },
+            currency: '$currency' // Group by currency to handle conversion properly
           },
           dailySales: { $sum: 1 },
-          dailyRevenue: { $sum: '$totalCost' },
-          dailyTokens: { $sum: '$tokenAmount' }
+          dailyCourseValue: { $sum: '$totalCost' }, // Course prices
+          dailyRevenue: { $sum: '$tokenAmount' }, // Actual payments
+          dailyTokens: { $sum: '$tokenAmount' } // Same as revenue
         }
       },
       {
@@ -389,12 +385,36 @@ router.get('/reports/revenue-analysis', protect, authorize('Admin', 'Manager'), 
 
     const dailyResults = await Sale.aggregate(dailyPipeline);
     
-    const dailyBreakdown = dailyResults.map(item => ({
-      date: `${item._id.year}-${String(item._id.month).padStart(2, '0')}-${String(item._id.day).padStart(2, '0')}`,
-      sales: item.dailySales,
-      revenue: item.dailyRevenue,
-      tokens: item.dailyTokens
-    }));
+    // Group by date and convert currencies to USD
+    const dailyBreakdownMap = new Map();
+    
+    dailyResults.forEach(item => {
+      const dateKey = `${item._id.year}-${String(item._id.month).padStart(2, '0')}-${String(item._id.day).padStart(2, '0')}`;
+      const currency = item._id.currency || 'USD';
+      
+      // Convert to USD
+      const courseValueUSD = currencyService.convertToUSD(item.dailyCourseValue, currency);
+      const revenueUSD = currencyService.convertToUSD(item.dailyRevenue, currency);
+      const tokensUSD = currencyService.convertToUSD(item.dailyTokens, currency);
+      
+      if (!dailyBreakdownMap.has(dateKey)) {
+        dailyBreakdownMap.set(dateKey, {
+          date: dateKey,
+          sales: 0,
+          courseValue: 0,
+          revenue: 0,
+          tokens: 0
+        });
+      }
+      
+      const existing = dailyBreakdownMap.get(dateKey);
+      existing.sales += item.dailySales;
+      existing.courseValue += courseValueUSD;
+      existing.revenue += revenueUSD;
+      existing.tokens += tokensUSD;
+    });
+    
+    const dailyBreakdown = Array.from(dailyBreakdownMap.values());
 
     res.json({
       success: true,
@@ -402,14 +422,20 @@ router.get('/reports/revenue-analysis', protect, authorize('Admin', 'Manager'), 
         period,
         summary: {
           totalSales: totalSalesCount,
-          totalRevenueUSD: Math.round(totalRevenueUSD * 100) / 100,
-          totalTokensUSD: Math.round(totalTokensUSD * 100) / 100,
-          pendingAmountUSD: Math.round((totalRevenueUSD - totalTokensUSD) * 100) / 100,
-          averageOrderValueUSD: totalSalesCount > 0 ? Math.round((totalRevenueUSD / totalSalesCount) * 100) / 100 : 0
+          totalCourseValueUSD: Math.round(totalCourseValueUSD * 100) / 100, // Total course prices
+          totalRevenueUSD: Math.round(totalRevenueUSD * 100) / 100, // Actual payments received
+          totalTokensUSD: Math.round(totalTokensUSD * 100) / 100, // Same as revenue
+          pendingAmountUSD: Math.round((totalCourseValueUSD - totalRevenueUSD) * 100) / 100, // Outstanding payments
+          averageOrderValueUSD: totalSalesCount > 0 ? Math.round((totalCourseValueUSD / totalSalesCount) * 100) / 100 : 0
         },
         currencyBreakdown,
         dailyBreakdown,
-        exchangeRatesUsed: exchangeRates
+        exchangeRatesUsed: exchangeRates,
+        conversionInfo: {
+          source: 'exchangerate-api.com',
+          lastUpdated: currencyService.getCacheStatus().lastUpdated,
+          cacheStatus: currencyService.getCacheStatus()
+        }
       }
     });
   } catch (error) {
@@ -657,6 +683,150 @@ router.get('/reports/status-analysis', protect, authorize('Admin', 'Manager'), a
     res.status(500).json({
       success: false,
       message: 'Error generating status analysis report'
+    });
+  }
+});
+
+// Comprehensive revenue analysis - includes all sales regardless of date
+router.get('/reports/comprehensive-revenue', protect, authorize('Admin', 'Manager'), async (req, res) => {
+  try {
+    console.log('🔄 Calculating comprehensive revenue analysis...');
+    
+    // Get ALL sales regardless of date, excluding only cancelled ones
+    const pipeline = [
+      {
+        $match: {
+          status: { $ne: 'Cancelled' }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            currency: '$currency',
+            status: '$status'
+          },
+          totalSales: { $sum: 1 },
+          totalCourseValue: { $sum: '$totalCost' }, // Total course prices
+          totalRevenue: { $sum: '$tokenAmount' }, // Actual payments received
+          totalTokens: { $sum: '$tokenAmount' }, // Same as revenue (payments received)
+          averageOrderValue: { $avg: '$totalCost' } // Average course price
+        }
+      }
+    ];
+
+    const results = await Sale.aggregate(pipeline);
+    
+    // Get fresh exchange rates using the currency service
+    const exchangeRates = await currencyService.getExchangeRates();
+    console.log('Using exchange rates:', exchangeRates);
+    
+    let totalRevenueUSD = 0;
+    let totalTokensUSD = 0;
+    let totalCourseValueUSD = 0;
+    let totalSalesCount = 0;
+    let pendingAmountUSD = 0;
+    let completedRevenueUSD = 0;
+    let pendingRevenueUSD = 0;
+    const currencyBreakdown = {};
+    const statusBreakdown = {
+      'Pending': { sales: 0, courseValue: 0, revenue: 0, pending: 0 },
+      'Completed': { sales: 0, courseValue: 0, revenue: 0, pending: 0 }
+    };
+    
+    results.forEach(item => {
+      const currency = item._id.currency || 'USD';
+      const status = item._id.status || 'Pending';
+      
+      // Convert to USD using proper currency conversion
+      const revenueInUSD = currencyService.convertToUSD(item.totalRevenue, currency);
+      const tokensInUSD = currencyService.convertToUSD(item.totalTokens, currency);
+      const courseValueInUSD = currencyService.convertToUSD(item.totalCourseValue, currency);
+      const pendingInUSD = courseValueInUSD - revenueInUSD;
+      
+      console.log(`Status: ${status}, Currency: ${currency}, Revenue: ${item.totalRevenue} ${currency} = ${revenueInUSD.toFixed(2)} USD, Course Value: ${item.totalCourseValue} ${currency} = ${courseValueInUSD.toFixed(2)} USD, Pending: ${pendingInUSD.toFixed(2)} USD`);
+      
+      totalRevenueUSD += revenueInUSD;
+      totalTokensUSD += tokensInUSD;
+      totalCourseValueUSD += courseValueInUSD;
+      totalSalesCount += item.totalSales;
+      pendingAmountUSD += pendingInUSD;
+      
+      // Track by status
+      if (status === 'Completed') {
+        completedRevenueUSD += revenueInUSD;
+        statusBreakdown['Completed'].sales += item.totalSales;
+        statusBreakdown['Completed'].courseValue += courseValueInUSD;
+        statusBreakdown['Completed'].revenue += revenueInUSD;
+        statusBreakdown['Completed'].pending += pendingInUSD;
+      } else if (status === 'Pending') {
+        pendingRevenueUSD += revenueInUSD;
+        statusBreakdown['Pending'].sales += item.totalSales;
+        statusBreakdown['Pending'].courseValue += courseValueInUSD;
+        statusBreakdown['Pending'].revenue += revenueInUSD;
+        statusBreakdown['Pending'].pending += pendingInUSD;
+      }
+      
+      if (!currencyBreakdown[currency]) {
+        currencyBreakdown[currency] = {
+          totalSales: 0,
+          totalCourseValue: 0,
+          totalRevenue: 0,
+          totalTokens: 0,
+          courseValueUSD: 0,
+          revenueUSD: 0,
+          tokensUSD: 0,
+          pendingUSD: 0
+        };
+      }
+      
+      currencyBreakdown[currency].totalSales += item.totalSales;
+      currencyBreakdown[currency].totalCourseValue += item.totalCourseValue;
+      currencyBreakdown[currency].totalRevenue += item.totalRevenue;
+      currencyBreakdown[currency].totalTokens += item.totalTokens;
+      currencyBreakdown[currency].courseValueUSD += courseValueInUSD;
+      currencyBreakdown[currency].revenueUSD += revenueInUSD;
+      currencyBreakdown[currency].tokensUSD += tokensInUSD;
+      currencyBreakdown[currency].pendingUSD += pendingInUSD;
+    });
+
+    console.log('\n📊 COMPREHENSIVE REVENUE SUMMARY:');
+    console.log('Total Sales:', totalSalesCount);
+    console.log('Total Course Value:', totalCourseValueUSD.toFixed(2), 'USD');
+    console.log('Total Revenue (Payments Received):', totalRevenueUSD.toFixed(2), 'USD');
+    console.log('Total Pending Amount (All Sales):', pendingAmountUSD.toFixed(2), 'USD');
+    console.log('Pending Amount (Pending Sales Only):', statusBreakdown['Pending'].pending.toFixed(2), 'USD');
+    console.log('Completed Sales Revenue:', completedRevenueUSD.toFixed(2), 'USD');
+    console.log('Pending Sales Revenue:', pendingRevenueUSD.toFixed(2), 'USD');
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          totalSales: totalSalesCount,
+          totalCourseValueUSD: Math.round(totalCourseValueUSD * 100) / 100,
+          totalRevenueUSD: Math.round(totalRevenueUSD * 100) / 100,
+          totalTokensUSD: Math.round(totalTokensUSD * 100) / 100,
+          pendingAmountUSD: Math.round(pendingAmountUSD * 100) / 100, // Total pending from all sales
+          pendingSalesOnlyUSD: Math.round(statusBreakdown['Pending'].pending * 100) / 100, // Only from pending sales
+          completedRevenueUSD: Math.round(completedRevenueUSD * 100) / 100,
+          pendingRevenueUSD: Math.round(pendingRevenueUSD * 100) / 100,
+          averageOrderValueUSD: totalSalesCount > 0 ? Math.round((totalCourseValueUSD / totalSalesCount) * 100) / 100 : 0
+        },
+        statusBreakdown,
+        currencyBreakdown,
+        exchangeRatesUsed: exchangeRates,
+        conversionInfo: {
+          source: 'exchangerate-api.com',
+          lastUpdated: currencyService.getCacheStatus().lastUpdated,
+          cacheStatus: currencyService.getCacheStatus()
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error in comprehensive revenue analysis:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error generating comprehensive revenue analysis report'
     });
   }
 });
