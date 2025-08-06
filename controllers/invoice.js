@@ -463,17 +463,14 @@ function generateExactPDFContent(doc, invoice) {
     const logoPath = path.join(__dirname, '../assets/images/traincape-logo.jpg'); // Fixed path
     console.log('Logo path:', logoPath); 
     if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, 450, 65, { width: 60 });
+        doc.image(logoPath, 40, 35, { width: 60 });
         console.log('Logo loaded successfully');
     } else {
         console.log('Logo not found at path:', logoPath);
     }
     
-    doc.font('Helvetica-Bold').fontSize(26).fillColor(colorTraincape).text('GST Invoice', 40, 58);
-    // doc.font('Helvetica').fontSize(9).text('TECHNOLOGY', 107, 83, { characterSpacing: 1 });
-
-    // GST Invoice Title
-    // doc.font('Helvetica-Bold').fontSize(16).fillColor(colorBlue).text('GST Invoice', 450, 65, { align: 'left' });
+    doc.font('Helvetica-Bold').fontSize(26).fillColor(colorTraincape).text('GST Invoice', 245, 35);
+    doc.font('Helvetica-Bold').fontSize(8.8).fillColor(colorDarkGrey).text('GSTIN: 07AAJCT0342G1ZJ', 470, 25, { align: 'left' });
 
     // Invoice Info (Left)
       doc.font('Helvetica-Bold').fontSize(9.5).fillColor(colorDarkBlue).text('Invoice No:',40,110)
@@ -496,11 +493,9 @@ function generateExactPDFContent(doc, invoice) {
     doc.font('Helvetica').fontSize(9.5).text('Rz-118C, Khandoliya Plaza, 4th Floor, Dabri-Palam Road,', companyBlockX + 10, companyBlockY + 25)
        .text('New Delhi, Delhi, India-110045', companyBlockX + 10, companyBlockY + 37)
        .moveDown(0.5)
-       .text(`GSTIN: ${invoice.companyInfo?.gstin || '07AAJCT0342G1ZJ'}`, companyBlockX + 10, companyBlockY + 52)
-       .text(`PAN: ${invoice.companyInfo?.pan || 'AAJCT0342G'}`, companyBlockX + 10, companyBlockY + 64)
-       .moveDown(0.5)
-       .text(`Email: ${invoice.companyInfo?.email || 'sales@traincapetech.info'}`, companyBlockX + 10, companyBlockY + 79)
-       .text(`Phone: ${invoice.companyInfo?.phone || '+91 62802 81505'}`, companyBlockX + 10, companyBlockY + 91);
+       .text(`Email: ${invoice.companyInfo?.email || 'sales@traincapetech.info'}`, companyBlockX + 10, companyBlockY + 52)
+       .text(`GSTIN: ${invoice.companyInfo?.gstin || '07AAJCT0342G1ZJ'}`, companyBlockX + 10, companyBlockY + 78)
+       .text(`Phone: ${invoice.companyInfo?.phone || '+91 62802 81505'}`, companyBlockX + 10, companyBlockY + 64);
     // Billed To Block
     const billedToBlockX = 350;
     const billedToBlockY = 140;
@@ -542,7 +537,6 @@ function generateExactPDFContent(doc, invoice) {
     });
 
     // Totals Section
-    // Totals Section
     const totalsY = 450;
     const totalsLeftX = 450; // New X-coordinate for left-aligned text
     const totalsRightX = 550; // New X-coordinate for right-aligned text
@@ -562,7 +556,7 @@ function generateExactPDFContent(doc, invoice) {
     
     doc.font('Helvetica-Bold').fontSize(11);
     doc.text('TOTAL', totalsLeftX - 100, totalsY + 45, {width: totalsWidth, align: 'left'});
-    doc.text(`₹${invoice.totalAmount.toFixed(2)}`, totalsRightX - 100, totalsY + 45, { width: totalsWidth, align: 'right'});
+    doc.text(`${invoice.totalAmount.toFixed(2)}`, totalsRightX - 100, totalsY + 45, { width: totalsWidth, align: 'right'});
     
     // Footer - Authorised Signatory with image and address
     const signatureImageY = 550; // Adjusted Y-coordinate to give more space
