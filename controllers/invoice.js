@@ -506,7 +506,7 @@ function generateExactPDFContent(doc, invoice) {
     doc.font('Helvetica-Bold').fillColor(colorDarkGrey).text('Billed To', billedToBlockX + 10, billedToBlockY + 10)
        .font('Helvetica').text(invoice.clientInfo.name, billedToBlockX + 10, billedToBlockY + 25)
        .text(invoice.clientInfo.address.street, billedToBlockX + 10, billedToBlockY + 37)
-       .text(`${invoice.clientInfo.address.city || ''} ${invoice.clientInfo.address.state || ''} ${invoice.clientInfo.address.zip || ''}`, billedToBlockX + 10, billedToBlockY + 49)
+       .text(`${invoice.clientInfo.address.city || ''}, ${invoice.clientInfo.address.state || ''} - ${invoice.clientInfo.address.zipCode || ''}`, billedToBlockX + 10, billedToBlockY + 49)
        .text(`Email: ${invoice.clientInfo.email || ''}`, billedToBlockX + 10, billedToBlockY + 61)
        .text(`Phone: ${invoice.clientInfo.phone || ''}`, billedToBlockX + 10, billedToBlockY + 73);
 
