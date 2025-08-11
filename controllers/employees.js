@@ -2,43 +2,23 @@ const Employee = require('../models/Employee');
 const Department = require('../models/Department');
 const Role = require('../models/EmployeeRole');
 const User = require('../models/User');
-const multer = require('multer');
-const path = require('path');
 const fs = require('fs');
-const { UPLOAD_PATHS } = require('../config/storage');
+const path = require('path');
+const fileStorage = require('../services/fileStorageService');
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, UPLOAD_PATHS.EMPLOYEES);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 20 * 1024, // 20KB max
-    files: 10 // Maximum 10 files per request
-  },
-  fileFilter: function (req, file, cb) {
-    // Check minimum file size (10KB)
-    if (parseInt(req.headers['content-length']) < 10 * 1024) {
-      cb(new Error('File size too small. Minimum size is 10KB'), false);
-      return;
-    }
-    
-    // Allow images and PDFs
-    if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
-      cb(null, true);
-    } else {
-      cb(new Error('Only images and PDF files are allowed!'), false);
-    }
-  }
-});
+// Export multer upload middleware
+exports.uploadEmployeeFiles = fileStorage.uploadMiddleware.fields([
+  { name: 'photograph', maxCount: 1 },
+  { name: 'tenthMarksheet', maxCount: 1 },
+  { name: 'twelfthMarksheet', maxCount: 1 },
+  { name: 'bachelorDegree', maxCount: 1 },
+  { name: 'postgraduateDegree', maxCount: 1 },
+  { name: 'aadharCard', maxCount: 1 },
+  { name: 'panCard', maxCount: 1 },
+  { name: 'pcc', maxCount: 1 },
+  { name: 'resume', maxCount: 1 },
+  { name: 'offerLetter', maxCount: 1 }
+]);
 
 // @desc    Get all employees
 // @route   GET /api/employees
@@ -203,11 +183,19 @@ exports.createEmployee = async (req, res) => {
 
     // Handle file uploads
     if (req.files) {
-      Object.keys(req.files).forEach(fieldName => {
-        if (req.files[fieldName] && req.files[fieldName][0]) {
-          employeeData[fieldName] = req.files[fieldName][0].path;
+      for (const fieldName of Object.keys(req.files)) {
+        const arr = req.files[fieldName];
+        if (arr && arr[0]) {
+          const file = arr[0];
+          try {
+            const uploaded = await fileStorage.uploadEmployeeDoc(file, fieldName);
+            // store rich object (with url)
+            employeeData[fieldName] = uploaded;
+          } catch (e) {
+            console.error(`Upload failed for ${fieldName}:`, e.message);
+          }
         }
-      });
+      }
     }
 
     // Create employee
@@ -268,15 +256,27 @@ exports.updateEmployee = async (req, res) => {
 
     // Handle file uploads
     if (req.files) {
-      Object.keys(req.files).forEach(fieldName => {
-        if (req.files[fieldName] && req.files[fieldName][0]) {
-          // Delete old file if exists
-          if (employee[fieldName] && fs.existsSync(employee[fieldName])) {
-            fs.unlinkSync(employee[fieldName]);
+      for (const fieldName of Object.keys(req.files)) {
+        const arr = req.files[fieldName];
+        if (arr && arr[0]) {
+          // delete old
+          const oldInfo = employee[fieldName];
+          if (oldInfo) {
+            if (typeof oldInfo === 'object') {
+              await fileStorage.deleteEmployeeDoc(oldInfo);
+            } else if (typeof oldInfo === 'string' && fs.existsSync(oldInfo)) {
+              fs.unlinkSync(oldInfo);
+            }
           }
-          employeeData[fieldName] = req.files[fieldName][0].path;
+          const file = arr[0];
+          try {
+            const uploaded = await fileStorage.uploadEmployeeDoc(file, fieldName);
+            employeeData[fieldName] = uploaded;
+          } catch (e) {
+            console.error(`Upload failed for ${fieldName}:`, e.message);
+          }
         }
-      });
+      }
     }
 
     employee = await Employee.findByIdAndUpdate(req.params.id, employeeData, {
@@ -466,20 +466,6 @@ exports.createRole = async (req, res) => {
   }
 };
 
-// Export multer upload middleware
-exports.uploadEmployeeFiles = upload.fields([
-  { name: 'photograph', maxCount: 1 },
-  { name: 'tenthMarksheet', maxCount: 1 },
-  { name: 'twelfthMarksheet', maxCount: 1 },
-  { name: 'bachelorDegree', maxCount: 1 },
-  { name: 'postgraduateDegree', maxCount: 1 },
-  { name: 'aadharCard', maxCount: 1 },
-  { name: 'panCard', maxCount: 1 },
-  { name: 'pcc', maxCount: 1 },
-  { name: 'resume', maxCount: 1 },
-  { name: 'offerLetter', maxCount: 1 }
-]); 
-
 // @desc    Upload employee documents
 // @route   POST /api/employees/:id/documents
 // @access  Private
@@ -516,18 +502,27 @@ exports.uploadDocuments = async (req, res) => {
       employee.documents = {};
     }
 
-    // Process each uploaded file
-    Object.keys(req.files).forEach(docType => {
-      const file = req.files[docType][0];
-      employee.documents[docType] = {
-        filename: file.filename,
-        originalName: file.originalname,
-        path: file.path,
-        mimetype: file.mimetype,
-        size: file.size,
-        uploadedAt: new Date()
-      };
-    });
+    // Replace whole processing with async for-of
+    employee.documents = employee.documents || {};
+    for (const docType of Object.keys(req.files)) {
+      const file = req.files[docType]?.[0];
+      if (!file) continue;
+      // delete old
+      const oldInfo = employee.documents[docType];
+      if (oldInfo) {
+        if (typeof oldInfo === 'object') {
+          await fileStorage.deleteEmployeeDoc(oldInfo);
+        } else if (typeof oldInfo === 'string' && fs.existsSync(oldInfo)) {
+          try { fs.unlinkSync(oldInfo); } catch {}
+        }
+      }
+      try {
+        const uploaded = await fileStorage.uploadEmployeeDoc(file, docType);
+        employee.documents[docType] = uploaded;
+      } catch (e) {
+        console.error('Upload doc failed:', e.message);
+      }
+    }
 
     await employee.save();
 
@@ -652,9 +647,9 @@ exports.getDocument = async (req, res) => {
 
     // Construct possible file paths (check both direct path and nested path)
     const possiblePaths = [
-      path.join(UPLOAD_PATHS.EMPLOYEES, filename),
-      path.join(UPLOAD_PATHS.DOCUMENTS, filename),
-      path.join(UPLOAD_PATHS.DOCUMENTS, 'employees', filename)
+      path.join(fileStorage.UPLOAD_PATHS.EMPLOYEES, filename),
+      path.join(fileStorage.UPLOAD_PATHS.DOCUMENTS, filename),
+      path.join(fileStorage.UPLOAD_PATHS.DOCUMENTS, 'employees', filename)
     ];
 
     // Find the first path that exists
