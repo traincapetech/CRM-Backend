@@ -1,15 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-let drive;
-try {
-  drive = require('./googleDriveService');
-} catch (e) {
-  console.warn('Google Drive service not available:', e.message);
-  drive = null;
-}
+const drive = require('./googleDriveService');
 
-const USE_GOOGLE_DRIVE = process.env.USE_GOOGLE_DRIVE === 'true' && drive !== null;
+// Always use Google Drive
+const USE_GOOGLE_DRIVE = true;
 
 // Define upload paths
 const UPLOAD_PATHS = {
@@ -64,40 +59,25 @@ function publicLocalUrl(category, filename) {
 
 async function uploadEmployeeDoc(file, docType) {
   const category = 'employees';
-  if (USE_GOOGLE_DRIVE) {
-    try {
-      const result = await drive.upload(file.path, file.filename, file.mimetype, 'employee', docType);
-      try { fs.unlinkSync(file.path); } catch {}
-      return {
-        storage: 'google-drive',
-        fileName: file.filename,
-        url: result.url,
-        fileId: result.fileId,
-        webViewLink: result.webViewLink,
-        webContentLink: result.webContentLink,
-        uploadedAt: new Date(),
-        mimetype: file.mimetype,
-        size: file.size,
-        originalName: file.originalname
-      };
-    } catch (e) {
-      console.error('Drive upload error:', e.message);
-    }
+  try {
+    const result = await drive.upload(file.path, file.filename, file.mimetype, 'employee', docType);
+    try { fs.unlinkSync(file.path); } catch {}
+    return {
+      storage: 'google-drive',
+      fileName: file.filename,
+      url: result.url,
+      fileId: result.fileId,
+      webViewLink: result.webViewLink,
+      webContentLink: result.webContentLink,
+      uploadedAt: new Date(),
+      mimetype: file.mimetype,
+      size: file.size,
+      originalName: file.originalname
+    };
+  } catch (e) {
+    console.error('Drive upload error:', e.message);
+    throw new Error(`Failed to upload to Google Drive: ${e.message}`);
   }
-  const permanentDir = path.join(__dirname, '..', 'uploads', category);
-  fs.mkdirSync(permanentDir, { recursive: true });
-  const destPath = path.join(permanentDir, file.filename);
-  fs.renameSync(file.path, destPath);
-  return {
-    storage: 'local',
-    fileName: file.filename,
-    path: destPath,
-    url: publicLocalUrl(category, file.filename),
-    uploadedAt: new Date(),
-    mimetype: file.mimetype,
-    size: file.size,
-    originalName: file.originalname
-  };
 }
 
 async function deleteEmployeeDoc(info) {
@@ -106,14 +86,11 @@ async function deleteEmployeeDoc(info) {
       await drive.delete(info.fileId);
       return true;
     }
-    if (info?.storage === 'local' && info.path && fs.existsSync(info.path)) {
-      fs.unlinkSync(info.path);
-      return true;
-    }
+    throw new Error('Invalid document info or missing Google Drive fileId');
   } catch (e) {
     console.error('Delete doc error:', e.message);
+    throw e;
   }
-  return false;
 }
 
 module.exports = { 

@@ -3,6 +3,7 @@ const bcrypt = require("bcrypt");
 const fs = require('fs'); // Added for file cleanup
 const path = require('path'); // Added for path.join
 const { UPLOAD_PATHS } = require('../config/storage');
+const { sendEmail } = require('../config/nodemailer');
 const asyncHandler = require('../middleware/async'); // Added for asyncHandler
 
 // @desc    Register user
@@ -97,8 +98,11 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Check for user
-    const user = await User.findOne({ email }).select('+password');
+    // Check for user and explicitly select password field
+    const user = await User.findOne({ email })
+      .select('+password')
+      .lean()
+      .exec();
     
     console.log('Found user:', user ? user._id : 'Not found');
 
@@ -920,8 +924,21 @@ exports.forgotPassword = async (req, res) => {
     user.verifyOtpExpireAt = otpExpiry;
     await user.save();
 
-    // TODO: Send OTP via email
-    console.log('Generated OTP:', otp);
+    // Send OTP via email
+    const emailText = `Your OTP for password reset is: ${otp}. This OTP will expire in 10 minutes.`;
+    const emailHtml = `
+      <h2>Password Reset OTP</h2>
+      <p>Your OTP for password reset is: <strong>${otp}</strong></p>
+      <p>This OTP will expire in 10 minutes.</p>
+      <p>If you did not request this password reset, please ignore this email.</p>
+    `;
+    
+    await sendEmail(
+      email,
+      'Password Reset OTP - Traincape CRM',
+      emailText,
+      emailHtml
+    );
 
     res.status(200).json({
       success: true,
