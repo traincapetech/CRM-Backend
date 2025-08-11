@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const ChatRoom = require('../models/ChatRoom');
 const ChatMessage = require('../models/ChatMessage');
 const User = require('../models/User');
@@ -108,10 +109,13 @@ class ChatService {
   // Get user's chat rooms with last message info
   static async getUserChatRooms(userId) {
     try {
+      // Convert userId to ObjectId if it's a string
+      const userObjectId = typeof userId === 'string' ? mongoose.Types.ObjectId(userId) : userId;
+
       const chatRooms = await ChatRoom.find({
         $or: [
-          { senderId: userId },
-          { recipientId: userId }
+          { senderId: userObjectId },
+          { recipientId: userObjectId }
         ]
       })
       .populate('senderId', 'fullName email profilePicture chatStatus lastSeen')
@@ -120,11 +124,11 @@ class ChatService {
       
       // Format the response to include the other user's info
       const formattedRooms = chatRooms.map(room => {
-        const otherUser = room.senderId._id.toString() === userId.toString() 
+        const otherUser = room.senderId._id.toString() === userObjectId.toString() 
           ? room.recipientId 
           : room.senderId;
         
-        const unreadCount = room.senderId._id.toString() === userId.toString()
+        const unreadCount = room.senderId._id.toString() === userObjectId.toString()
           ? room.unreadCount.senderId
           : room.unreadCount.recipientId;
         

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
+const fileStorage = require('../services/fileStorageService');
 const {
   getEmployees,
   getEmployee,
@@ -9,8 +10,10 @@ const {
   deleteEmployee,
   getDepartments,
   getRoles,
+  uploadEmployeeFiles,
   uploadDocuments,
   getDocuments,
+  getDocument,
   deleteDocument
 } = require('../controllers/employees');
 
@@ -43,17 +46,20 @@ router.route('/roles')
 // Employee routes - accessible to all authenticated users
 router.route('/')
   .get(protect, getEmployees)
-  .post(protect, createEmployee);
+  .post(protect, uploadEmployeeFiles, createEmployee);
 
 router.route('/:id')
   .get(protect, getEmployee)
-  .put(protect, updateEmployee)
+  .put(protect, uploadEmployeeFiles, updateEmployee)
   .delete(protect, deleteEmployee);
 
 // Document routes
 router.route('/:id/documents')
-  .post(protect, uploadDocuments)
+  .post(protect, uploadEmployeeFiles, uploadDocuments)
   .get(protect, getDocuments);
+
+// Serve a single document by filename (local fallback)
+router.get('/documents/:filename', protect, getDocument);
 
 router.route('/:id/documents/:documentType')
   .delete(protect, deleteDocument);

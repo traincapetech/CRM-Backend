@@ -5,6 +5,27 @@ const drive = require('./googleDriveService');
 
 const USE_GOOGLE_DRIVE = process.env.USE_GOOGLE_DRIVE === 'true';
 
+// Define upload paths
+const UPLOAD_PATHS = {
+  EMPLOYEES: path.join(__dirname, '..', 'uploads', 'employees'),
+  DOCUMENTS: path.join(__dirname, '..', 'uploads', 'documents'),
+  PROFILE_PICTURES: path.join(__dirname, '..', 'uploads', 'profile-pictures'),
+  INCENTIVES: path.join(__dirname, '..', 'uploads', 'incentives'),
+  TMP: path.join(__dirname, '..', 'uploads', 'tmp')
+};
+
+// Ensure all upload directories exist
+Object.values(UPLOAD_PATHS).forEach(dir => {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log('Created directory:', dir);
+  } catch (err) {
+    if (err.code !== 'EEXIST') {
+      console.error('Error creating directory:', dir, err);
+    }
+  }
+});
+
 // Ensure a temp upload directory exists for incoming multipart files
 function ensureTmpDir() {
   const tmpDir = path.join(__dirname, '..', 'uploads', 'tmp');
@@ -89,4 +110,9 @@ async function deleteEmployeeDoc(info) {
   return false;
 }
 
-module.exports = { uploadMiddleware, uploadEmployeeDoc, deleteEmployeeDoc }; 
+module.exports = { 
+  uploadMiddleware, 
+  uploadEmployeeDoc, 
+  deleteEmployeeDoc,
+  UPLOAD_PATHS
+}; 

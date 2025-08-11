@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
+const fileStorage = require('../services/fileStorageService');
 const {
   register,
   login,
@@ -70,9 +71,39 @@ router.route('/users/:id')
   .delete(protect, deleteUser);
 
 router.route('/users/with-documents')
-  .post(protect, createUserWithDocuments);
+  .post(
+    protect,
+    fileStorage.uploadMiddleware.fields([
+      { name: 'photograph', maxCount: 1 },
+      { name: 'tenthMarksheet', maxCount: 1 },
+      { name: 'twelfthMarksheet', maxCount: 1 },
+      { name: 'bachelorDegree', maxCount: 1 },
+      { name: 'postgraduateDegree', maxCount: 1 },
+      { name: 'aadharCard', maxCount: 1 },
+      { name: 'panCard', maxCount: 1 },
+      { name: 'pcc', maxCount: 1 },
+      { name: 'resume', maxCount: 1 },
+      { name: 'offerLetter', maxCount: 1 }
+    ]),
+    createUserWithDocuments
+  );
 
 router.route('/users/:id/with-documents')
-  .put(protect, updateUserWithDocuments);
+  .put(
+    protect,
+    fileStorage.uploadMiddleware.fields([
+      { name: 'photograph', maxCount: 1 },
+      { name: 'tenthMarksheet', maxCount: 1 },
+      { name: 'twelfthMarksheet', maxCount: 1 },
+      { name: 'bachelorDegree', maxCount: 1 },
+      { name: 'postgraduateDegree', maxCount: 1 },
+      { name: 'aadharCard', maxCount: 1 },
+      { name: 'panCard', maxCount: 1 },
+      { name: 'pcc', maxCount: 1 },
+      { name: 'resume', maxCount: 1 },
+      { name: 'offerLetter', maxCount: 1 }
+    ]),
+    updateUserWithDocuments
+  );
 
 module.exports = router; 

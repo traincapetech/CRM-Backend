@@ -411,11 +411,11 @@ exports.createDepartment = async (req, res) => {
 // @access  Private
 exports.getRoles = async (req, res) => {
   try {
-    const roles = await EmployeeRole.find().select('name _id');
-    
+    const roles = await Role.find().select('name _id');
+
     // If no roles exist, create default ones
     if (roles.length === 0) {
-      const defaultRoles = await EmployeeRole.insertMany([
+      const defaultRoles = await Role.insertMany([
         { name: 'Employee', description: 'Regular employee' },
         { name: 'Manager', description: 'Department manager' },
         { name: 'HR', description: 'Human resources' },
@@ -636,79 +636,41 @@ exports.deleteDocument = async (req, res) => {
 exports.getDocument = async (req, res) => {
   try {
     const { filename } = req.params;
-    
-    // Validate filename
+
     if (!filename) {
-      return res.status(400).json({
-        success: false,
-        message: 'Filename is required'
-      });
+      return res.status(400).json({ success: false, message: 'Filename is required' });
     }
 
-    // Construct possible file paths (check both direct path and nested path)
-    const possiblePaths = [
-      path.join(fileStorage.UPLOAD_PATHS.EMPLOYEES, filename),
-      path.join(fileStorage.UPLOAD_PATHS.DOCUMENTS, filename),
-      path.join(fileStorage.UPLOAD_PATHS.DOCUMENTS, 'employees', filename)
-    ];
+    // Primary local uploads path: server/uploads/employees/<filename>
+    const primaryPath = path.join(__dirname, '..', 'uploads', 'employees', filename);
 
-    // Find the first path that exists
     let filePath = null;
-    for (const path of possiblePaths) {
-      if (fs.existsSync(path)) {
-        filePath = path;
-        break;
-      }
+    if (fs.existsSync(primaryPath)) {
+      filePath = primaryPath;
     }
 
-    // If no file found in any location
     if (!filePath) {
-      console.error('Document not found in paths:', possiblePaths);
-      return res.status(404).json({
-        success: false,
-        message: 'Document not found'
-      });
+      return res.status(404).json({ success: false, message: 'Document not found' });
     }
 
-    // Get file stats
     const stats = fs.statSync(filePath);
     if (!stats.isFile()) {
-      return res.status(404).json({
-        success: false,
-        message: 'Document not found'
-      });
+      return res.status(404).json({ success: false, message: 'Document not found' });
     }
 
-    // Set appropriate headers
     const ext = path.extname(filename).toLowerCase();
-    const contentType = ext === '.pdf' ? 'application/pdf' : 
-                       ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
-                       ext === '.png' ? 'image/png' :
-                       'application/octet-stream';
+    const contentType = ext === '.pdf' ? 'application/pdf'
+      : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg'
+      : ext === '.png' ? 'image/png'
+      : 'application/octet-stream';
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', stats.size);
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
 
-    // Stream the file
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
-
-    // Handle stream errors
-    fileStream.on('error', (err) => {
-      console.error('Error streaming file:', err);
-      if (!res.headersSent) {
-        res.status(500).json({
-          success: false,
-          message: 'Error streaming document'
-        });
-      }
-    });
+    fs.createReadStream(filePath).pipe(res);
   } catch (err) {
     console.error('Error serving document:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error'
-    });
+    res.status(500).json({ success: false, message: 'Server Error' });
   }
-}; 
+};

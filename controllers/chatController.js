@@ -141,7 +141,7 @@ const getOnlineUsers = async (req, res) => {
 // @access  Private
 const getAllUsersForChat = async (req, res) => {
   try {
-    const currentUserId = req.user.id;
+    const currentUserId = req.user._id;
     
     // Get all users except current user, including customers
     const users = await User.find({ 
