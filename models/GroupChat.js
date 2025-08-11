@@ -1,20 +1,19 @@
 const mongoose = require('mongoose');
 
 const groupChatSchema = new mongoose.Schema({
-  groupId: {
+  name: {
     type: String,
     required: true,
-    unique: true,
-    index: true
-  },
-  groupName: {
-    type: String,
-    required: true,
-    trim: true
+    trim: true,
+    maxlength: 100
   },
   description: {
     type: String,
     trim: true,
+    maxlength: 500
+  },
+  avatar: {
+    type: String,
     default: ''
   },
   createdBy: {
@@ -22,48 +21,55 @@ const groupChatSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  admins: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
   members: [{
-    userId: {
+    user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true
+    },
+    joinedAt: {
+      type: Date,
+      default: Date.now
     },
     role: {
       type: String,
       enum: ['admin', 'member'],
       default: 'member'
-    },
-    joinedAt: {
-      type: Date,
-      default: Date.now
     }
   }],
   lastMessage: {
-    type: String,
-    default: ''
-  },
-  lastMessageTime: {
-    type: Date,
-    default: Date.now
-  },
-  lastMessageSender: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    content: String,
+    sender: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    timestamp: Date
   },
   isActive: {
     type: Boolean,
     default: true
   },
-  avatar: {
-    type: String,
-    default: ''
+  settings: {
+    allowMemberInvite: {
+      type: Boolean,
+      default: false
+    },
+    muteNotifications: {
+      type: Boolean,
+      default: false
+    }
   }
 }, {
   timestamps: true
 });
 
-// Indexes for efficient querying
-groupChatSchema.index({ 'members.userId': 1 });
-groupChatSchema.index({ isActive: 1, lastMessageTime: -1 });
+// Index for efficient querying
+groupChatSchema.index({ 'members.user': 1 });
+groupChatSchema.index({ createdBy: 1 });
+groupChatSchema.index({ isActive: 1 });
 
 module.exports = mongoose.model('GroupChat', groupChatSchema); 

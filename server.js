@@ -50,7 +50,6 @@ const documentationRoutes = require('./routes/documentation');
 const invoiceRoutes = require('./routes/invoices');
 const stripeInvoiceRoutes = require('./routes/stripeInvoices');
 const logs = require('./routes/logs');
-const vouchers = require('./routes/vouchers');
 const app = express();
 const server = http.createServer(app);
 
@@ -308,7 +307,6 @@ app.use('/api/documentation', documentationRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/stripe-invoices', stripeInvoiceRoutes);
 app.use('/api/logs', logs);
-app.use('/api/vouchers', vouchers);
 
 // Basic route for testing
 app.get('/', (req, res) => {

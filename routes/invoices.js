@@ -8,8 +8,7 @@ const {
   generatePDF,
   downloadPDF,
   recordPayment,
-  getInvoiceStats,
-  sendToCustomer
+  getInvoiceStats
 } = require('../controllers/invoice');
 
 const router = express.Router();
@@ -40,8 +39,5 @@ router.route('/:id/download')
 
 router.route('/:id/payment')
   .post(authorize('Admin', 'Manager', 'Sales Person'), recordPayment);
-
-router.route('/:id/send')
-  .post(authorize('Admin', 'Manager', 'Sales Person'), sendToCustomer);
 
 module.exports = router; 
