@@ -1,9 +1,15 @@
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-const drive = require('./googleDriveService');
+let drive;
+try {
+  drive = require('./googleDriveService');
+} catch (e) {
+  console.warn('Google Drive service not available:', e.message);
+  drive = null;
+}
 
-const USE_GOOGLE_DRIVE = process.env.USE_GOOGLE_DRIVE === 'true';
+const USE_GOOGLE_DRIVE = process.env.USE_GOOGLE_DRIVE === 'true' && drive !== null;
 
 // Define upload paths
 const UPLOAD_PATHS = {
