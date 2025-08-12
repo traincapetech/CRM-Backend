@@ -99,10 +99,7 @@ exports.login = async (req, res) => {
     }
 
     // Check for user and explicitly select password field
-    const user = await User.findOne({ email })
-      .select('+password')
-      .lean()
-      .exec();
+    const user = await User.findOne({ email }).select('+password -__v');
     
     console.log('Found user:', user ? user._id : 'Not found');
 
@@ -139,11 +136,33 @@ exports.login = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('Login error:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
+    
+    // Handle specific error types
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: Object.values(error.errors).map(err => err.message)
+      });
+    }
+    
+    if (error.name === 'MongoError' || error.name === 'MongoServerError') {
+      return res.status(500).json({
+        success: false,
+        message: 'Database error',
+        error: 'Please try again later'
+      });
+    }
+    
     res.status(500).json({
       success: false,
-      message: 'Error logging in',
-      error: error.message
+      message: 'Error logging in. Please try again.',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };

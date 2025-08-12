@@ -3,8 +3,8 @@ const path = require('path');
 const multer = require('multer');
 const drive = require('./googleDriveService');
 
-// Always use Google Drive
-const USE_GOOGLE_DRIVE = true;
+// Use Google Drive if available
+const USE_GOOGLE_DRIVE = process.env.USE_GOOGLE_DRIVE === 'true' && drive !== null;
 
 // Define upload paths
 const UPLOAD_PATHS = {

@@ -104,7 +104,7 @@ PORT=8080
 BASE_URL=https://yourcrm.com
 
 # Database
-DB_URI=mongodb://username:password@cluster.mongodb.net/crm_production
+Mongo_URI=mongodb://username:password@cluster.mongodb.net/crm_production
 
 # JWT
 JWT_SECRET=your-super-secure-32-character-secret

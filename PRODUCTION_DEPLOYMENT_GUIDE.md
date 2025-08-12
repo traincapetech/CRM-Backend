@@ -120,7 +120,7 @@ NODE_ENV=production
 BASE_URL=https://yourcrm.com
 
 # Database
-DB_URI=mongodb://username:password@cluster.mongodb.net/crm_production
+Mongo_URI=mongodb://username:password@cluster.mongodb.net/crm_production
 
 # Storage (choose one)
 STORAGE_TYPE=s3  # or 'local', 'gcs', 'azure'

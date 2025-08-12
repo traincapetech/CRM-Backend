@@ -2,17 +2,19 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
-    // Use live database connection
-    const DB_URI = process.env.DB_URI || 'mongodb+srv://traincape:parichay@traincapetechnology.1p6rbwq.mongodb.net/CRM?retryWrites=true&w=majority&appName=TraincapeTechnology';
+    if (!process.env.MONGO_URI) {
+      throw new Error('MONGO_URI environment variable is required');
+    }
+    const Mongo_URI = process.env.MONGO_URI;
     
     console.log('Environment variables:', {
       NODE_ENV: process.env.NODE_ENV,
       JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
       JWT_EXPIRE: process.env.JWT_EXPIRE,
-      DB_URI: DB_URI.includes('mongodb+srv') ? 'Live MongoDB Atlas' : DB_URI
+      Mongo_URI: Mongo_URI.includes('mongodb+srv') ? 'Live MongoDB Atlas' : Mongo_URI
     });
 
-    const conn = await mongoose.connect(DB_URI, {
+    const conn = await mongoose.connect(Mongo_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true
     });
