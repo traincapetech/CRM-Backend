@@ -1035,6 +1035,14 @@ exports.resetPassword = async (req, res) => {
 
     console.log('Password reset request:', { email, resetOtp });
 
+    // Validate password
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long'
+      });
+    }
+
     // Find user by email
     const user = await User.findOne({ email });
 
