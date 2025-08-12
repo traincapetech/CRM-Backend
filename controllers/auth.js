@@ -1002,7 +1002,13 @@ exports.verifyOTP = async (req, res) => {
 
     // Generate reset OTP
     const resetOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    const resetOtpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+    const resetOtpExpiry = Date.now() + 30 * 60 * 1000; // 30 minutes
+
+    console.log('Generating reset OTP:', {
+      email,
+      resetOtp,
+      resetOtpExpiry
+    });
 
     // Save reset OTP
     user.resetOtp = resetOtp;
@@ -1033,7 +1039,13 @@ exports.resetPassword = async (req, res) => {
   try {
     const { email, resetOtp, newPassword } = req.body;
 
-    console.log('Password reset request:', { email, resetOtp });
+    console.log('Password reset request:', {
+      email,
+      resetOtp,
+      hasPassword: !!newPassword,
+      passwordLength: newPassword ? newPassword.length : 0,
+      body: req.body
+    });
 
     // Validate password
     if (!newPassword || newPassword.length < 6) {
@@ -1054,10 +1066,40 @@ exports.resetPassword = async (req, res) => {
     }
 
     // Check if reset OTP matches and is not expired
-    if (user.resetOtp !== resetOtp || Date.now() > user.resetOtpExpireAt) {
+    console.log('Password Reset Validation:', {
+      email,
+      providedOtp: resetOtp,
+      storedOtp: user.resetOtp,
+      otpExpiry: new Date(user.resetOtpExpireAt),
+      now: new Date(),
+      timeDiff: (user.resetOtpExpireAt - Date.now()) / 1000 / 60 + ' minutes',
+      password: newPassword ? 'provided' : 'missing',
+      passwordLength: newPassword?.length
+    });
+
+    if (!user.resetOtp || !user.resetOtpExpireAt) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid or expired reset OTP'
+        message: 'No reset OTP found. Please request a new password reset.'
+      });
+    }
+
+    if (user.resetOtp !== resetOtp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid reset OTP. Please use the OTP from the verification step.'
+      });
+    }
+
+    if (Date.now() > user.resetOtpExpireAt) {
+      // Clear expired OTPs
+      user.resetOtp = undefined;
+      user.resetOtpExpireAt = undefined;
+      await user.save();
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Reset OTP has expired. Please request a new password reset.'
       });
     }
 
