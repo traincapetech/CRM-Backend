@@ -318,7 +318,7 @@ exports.updatePayroll = async (req, res) => {
 exports.generateSalarySlip = async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id)
-      .populate('employeeId', 'fullName email phoneNumber department')
+      .populate('employeeId', 'fullName email phoneNumber department userId')
       .populate('userId', 'fullName email');
 
     if (!payroll) {
@@ -330,7 +330,20 @@ exports.generateSalarySlip = async (req, res) => {
 
     // Check authorization - allow admin/HR/manager to view any, others only their own
     const isAdmin = ['Admin', 'HR', 'Manager'].includes(req.user.role);
-    const isEmployee = req.user.id === payroll.userId.toString();
+    
+    // Check if user is the employee (either through userId or employeeId)
+    const isEmployee = req.user.id === payroll.userId.toString() || 
+                      req.user.id === payroll.employeeId?.userId?.toString();
+    
+    console.log('Generate salary slip authorization check:', {
+      userId: req.user.id,
+      userRole: req.user.role,
+      payrollUserId: payroll.userId?.toString(),
+      payrollEmployeeUserId: payroll.employeeId?.userId?.toString(),
+      isAdmin,
+      isEmployee
+    });
+    
     if (!isAdmin && !isEmployee) {
       return res.status(403).json({
         success: false,
@@ -373,7 +386,7 @@ exports.generateSalarySlip = async (req, res) => {
 exports.downloadSalarySlip = async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id)
-      .populate('employeeId', 'fullName email phoneNumber department')
+      .populate('employeeId', 'fullName email phoneNumber department userId')
       .populate('userId', 'fullName email');
 
     if (!payroll) {
@@ -385,7 +398,20 @@ exports.downloadSalarySlip = async (req, res) => {
 
     // Check authorization - allow admin/HR/manager to view any, others only their own
     const isAdmin = ['Admin', 'HR', 'Manager'].includes(req.user.role);
-    const isEmployee = req.user.id === payroll.userId.toString();
+    
+    // Check if user is the employee (either through userId or employeeId)
+    const isEmployee = req.user.id === payroll.userId.toString() || 
+                      req.user.id === payroll.employeeId?.userId?.toString();
+    
+    console.log('Download authorization check:', {
+      userId: req.user.id,
+      userRole: req.user.role,
+      payrollUserId: payroll.userId?.toString(),
+      payrollEmployeeUserId: payroll.employeeId?.userId?.toString(),
+      isAdmin,
+      isEmployee
+    });
+    
     if (!isAdmin && !isEmployee) {
       return res.status(403).json({
         success: false,
