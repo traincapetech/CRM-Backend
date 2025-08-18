@@ -112,7 +112,7 @@ exports.getPayroll = async (req, res) => {
       query.employeeId = employeeId;
     }
     // Otherwise, if user is not admin/HR/manager, only show their own payroll
-    else if (!['Admin', 'HR', 'Manager', 'User', 'Sales Person', 'Lead Person'].includes(req.user.role)) {
+    else if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
       if (employee) {
         // Use both employeeId and userId to ensure we catch all records
         query.$or = [
@@ -328,8 +328,8 @@ exports.generateSalarySlip = async (req, res) => {
       });
     }
 
-    // Check authorization - allow both admin and the employee themselves
-    const isAdmin = ['Admin', 'HR', 'Manager', 'User', 'Sales Person', 'Lead Person'].includes(req.user.role);
+    // Check authorization - allow admin/HR/manager to view any, others only their own
+    const isAdmin = ['Admin', 'HR', 'Manager'].includes(req.user.role);
     const isEmployee = req.user.id === payroll.userId.toString();
     if (!isAdmin && !isEmployee) {
       return res.status(403).json({
@@ -383,8 +383,8 @@ exports.downloadSalarySlip = async (req, res) => {
       });
     }
 
-    // Check authorization - allow both admin and the employee themselves
-    const isAdmin = ['Admin', 'HR', 'Manager', 'User', 'Sales Person', 'Lead Person'].includes(req.user.role);
+    // Check authorization - allow admin/HR/manager to view any, others only their own
+    const isAdmin = ['Admin', 'HR', 'Manager'].includes(req.user.role);
     const isEmployee = req.user.id === payroll.userId.toString();
     if (!isAdmin && !isEmployee) {
       return res.status(403).json({
