@@ -1,8 +1,5 @@
 const Payroll = require('../models/Payroll');
 const Employee = require('../models/Employee');
-const Attendance = require('../models/Attendance');
-const Incentive = require('../models/Incentive');
-const User = require('../models/User');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
@@ -64,7 +61,7 @@ exports.generatePayroll = async (req, res) => {
     const payrollData = {
       ...req.body,
       employeeId: employee._id,
-      userId: employee.userId._id  // Make sure to set the userId from the employee record
+      userId: employee.userId._id // Make sure to set the userId from the employee record
     };
 
     const payroll = await Payroll.create(payrollData);
@@ -115,7 +112,7 @@ exports.getPayroll = async (req, res) => {
       query.employeeId = employeeId;
     }
     // Otherwise, if user is not admin/HR/manager, only show their own payroll
-    else if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+    else if (!['Admin', 'HR', 'Manager', 'User', 'Sales Person', 'Lead Person'].includes(req.user.role)) {
       if (employee) {
         // Use both employeeId and userId to ensure we catch all records
         query.$or = [
@@ -332,7 +329,7 @@ exports.generateSalarySlip = async (req, res) => {
     }
 
     // Check authorization - allow both admin and the employee themselves
-    const isAdmin = ['Admin', 'HR', 'Manager'].includes(req.user.role);
+    const isAdmin = ['Admin', 'HR', 'Manager', 'User', 'Sales Person', 'Lead Person'].includes(req.user.role);
     const isEmployee = req.user.id === payroll.userId.toString();
     if (!isAdmin && !isEmployee) {
       return res.status(403).json({
@@ -342,7 +339,7 @@ exports.generateSalarySlip = async (req, res) => {
     }
 
     // Create PDF and pipe directly to response
-    const doc = new PDFDocument();
+    const doc = new PDFDocument({ margin: 30 });
     
     // Set response headers
     res.setHeader('Content-Type', 'application/pdf');
@@ -351,94 +348,8 @@ exports.generateSalarySlip = async (req, res) => {
     // Pipe the PDF directly to the response
     doc.pipe(res);
 
-    // Company Logo
-    try {
-      const logoPath = path.join(__dirname, '../assets/images/traincape-logo.jpg');
-      if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, 250, 30, { width: 100, height: 60 });
-        doc.moveDown(2);
-      }
-    } catch (error) {
-      console.log('Logo not found, continuing without logo');
-      doc.moveDown();
-    }
-
-    // Header
-    doc.fontSize(16).text('SALARY SLIP', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12).text('Traincape Technology', { align: 'center' });
-    doc.fontSize(10).text('Khandolia Plaza, 118C, Dabri - Palam Rd, Delhi 110045', { align: 'center' });
-    doc.moveDown();
-
-    // Employee Details
-    doc.fontSize(10);
-    doc.text(`Employee Name: ${payroll.employeeId.fullName}`);
-    doc.text(`Employee ID: ${payroll.employeeId._id}`);
-    doc.text(`Department: ${payroll.employeeId.department?.name || 'N/A'}`);
-    doc.text(`Email: ${payroll.employeeId.email}`);
-    doc.text(`Phone: ${payroll.employeeId.phoneNumber || 'N/A'}`);
-    doc.moveDown();
-
-    // Pay Period
-    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    doc.text(`Pay Period: ${months[payroll.month - 1]} ${payroll.year}`);
-    doc.text(`Working Days: ${payroll.workingDays}`);
-    doc.text(`Days Present: ${payroll.daysPresent}`);
-    doc.moveDown();
-
-    // Earnings
-    doc.fontSize(12).text('Earnings', { underline: true });
-    doc.fontSize(10);
-    doc.text(`Base Salary: ₹${payroll.baseSalary.toFixed(2)}`);
-    doc.text(`House Rent Allowance (HRA): ₹${payroll.hra.toFixed(2)}`);
-    doc.text(`Dearness Allowance (DA): ₹${payroll.da.toFixed(2)}`);
-    doc.text(`Conveyance Allowance: ₹${payroll.conveyanceAllowance.toFixed(2)}`);
-    doc.text(`Medical Allowance: ₹${payroll.medicalAllowance.toFixed(2)}`);
-    doc.text(`Special Allowance: ₹${payroll.specialAllowance.toFixed(2)}`);
-    doc.text(`Overtime Amount: ₹${payroll.overtimeAmount.toFixed(2)}`);
-    doc.moveDown();
-
-    // Bonuses
-    doc.fontSize(12).text('Bonuses', { underline: true });
-    doc.fontSize(10);
-    doc.text(`Performance Bonus: ₹${payroll.performanceBonus.toFixed(2)}`);
-    doc.text(`Project Bonus: ₹${payroll.projectBonus.toFixed(2)}`);
-    doc.text(`Attendance Bonus: ₹${payroll.attendanceBonus.toFixed(2)}`);
-    doc.text(`Festival Bonus: ₹${payroll.festivalBonus.toFixed(2)}`);
-    doc.moveDown();
-
-    // Deductions
-    doc.fontSize(12).text('Deductions', { underline: true });
-    doc.fontSize(10);
-    doc.text(`Provident Fund (PF): ₹${payroll.pf.toFixed(2)}`);
-    doc.text(`ESI: ₹${payroll.esi.toFixed(2)}`);
-    doc.text(`Professional Tax: ₹${payroll.tax.toFixed(2)}`);
-    doc.text(`Loan Recovery: ₹${payroll.loan.toFixed(2)}`);
-    doc.text(`Other Deductions: ₹${payroll.other.toFixed(2)}`);
-    doc.moveDown();
-
-    // Total Calculations
-    const totalEarnings = payroll.baseSalary + payroll.hra + payroll.da + 
-                         payroll.conveyanceAllowance + payroll.medicalAllowance + 
-                         payroll.specialAllowance + payroll.overtimeAmount +
-                         payroll.performanceBonus + payroll.projectBonus + 
-                         payroll.attendanceBonus + payroll.festivalBonus;
-
-    const totalDeductions = payroll.pf + payroll.esi + payroll.tax + 
-                          payroll.loan + payroll.other;
-
-    doc.fontSize(12).text('Summary', { underline: true });
-    doc.fontSize(10);
-    doc.text(`Total Earnings: ₹${totalEarnings.toFixed(2)}`);
-    doc.text(`Total Deductions: ₹${totalDeductions.toFixed(2)}`);
-    doc.moveDown();
-    doc.fontSize(12).text(`Net Salary: ₹${payroll.netSalary.toFixed(2)}`, { bold: true });
-
-    // Footer
-    doc.moveDown(2);
-    doc.fontSize(8);
-    doc.text('This is a computer-generated document. No signature is required.', { align: 'center' });
-    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    // Call the unified PDF generation function
+    generatePDFContent(doc, payroll);
 
     // Finalize PDF
     doc.end();
@@ -473,7 +384,7 @@ exports.downloadSalarySlip = async (req, res) => {
     }
 
     // Check authorization - allow both admin and the employee themselves
-    const isAdmin = ['Admin', 'HR', 'Manager', 'User', 'Sales Person'].includes(req.user.role);
+    const isAdmin = ['Admin', 'HR', 'Manager', 'User', 'Sales Person', 'Lead Person'].includes(req.user.role);
     const isEmployee = req.user.id === payroll.userId.toString();
     if (!isAdmin && !isEmployee) {
       return res.status(403).json({
@@ -483,7 +394,7 @@ exports.downloadSalarySlip = async (req, res) => {
     }
 
     // Generate and stream the PDF
-    const doc = new PDFDocument();
+    const doc = new PDFDocument({ margin: 30 });
     
     // Set response headers
     res.setHeader('Content-Type', 'application/pdf');
@@ -492,94 +403,8 @@ exports.downloadSalarySlip = async (req, res) => {
     // Pipe the PDF directly to the response
     doc.pipe(res);
 
-    // Company Logo
-    try {
-      const logoPath = path.join(__dirname, '../assets/images/traincape-logo.jpg');
-      if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, 250, 30, { width: 100, height: 60 });
-        doc.moveDown(2);
-      }
-    } catch (error) {
-      console.log('Logo not found, continuing without logo');
-      doc.moveDown();
-    }
-
-    // Header
-    doc.fontSize(16).text('SALARY SLIP', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12).text('Traincape Technology', { align: 'center' });
-    doc.fontSize(10).text('Khandolia Plaza, 118C, Dabri - Palam Rd, Delhi 110045', { align: 'center' });
-    doc.moveDown();
-
-    // Employee Details
-    doc.fontSize(10);
-    doc.text(`Employee Name: ${payroll.employeeId.fullName}`);
-    doc.text(`Employee ID: ${payroll.employeeId._id}`);
-    doc.text(`Department: ${payroll.employeeId.department?.name || 'N/A'}`);
-    doc.text(`Email: ${payroll.employeeId.email}`);
-    doc.text(`Phone: ${payroll.employeeId.phoneNumber || 'N/A'}`);
-    doc.moveDown();
-
-    // Pay Period
-    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    doc.text(`Pay Period: ${months[payroll.month - 1]} ${payroll.year}`);
-    doc.text(`Working Days: ${payroll.workingDays}`);
-    doc.text(`Days Present: ${payroll.daysPresent}`);
-    doc.moveDown();
-
-    // Earnings
-    doc.fontSize(12).text('Earnings', { underline: true });
-    doc.fontSize(10);
-    doc.text(`Base Salary: ₹${payroll.baseSalary.toFixed(2)}`);
-    doc.text(`House Rent Allowance (HRA): ₹${payroll.hra.toFixed(2)}`);
-    doc.text(`Dearness Allowance (DA): ₹${payroll.da.toFixed(2)}`);
-    doc.text(`Conveyance Allowance: ₹${payroll.conveyanceAllowance.toFixed(2)}`);
-    doc.text(`Medical Allowance: ₹${payroll.medicalAllowance.toFixed(2)}`);
-    doc.text(`Special Allowance: ₹${payroll.specialAllowance.toFixed(2)}`);
-    doc.text(`Overtime Amount: ₹${payroll.overtimeAmount.toFixed(2)}`);
-    doc.moveDown();
-
-    // Bonuses
-    doc.fontSize(12).text('Bonuses', { underline: true });
-    doc.fontSize(10);
-    doc.text(`Performance Bonus: ₹${payroll.performanceBonus.toFixed(2)}`);
-    doc.text(`Project Bonus: ₹${payroll.projectBonus.toFixed(2)}`);
-    doc.text(`Attendance Bonus: ₹${payroll.attendanceBonus.toFixed(2)}`);
-    doc.text(`Festival Bonus: ₹${payroll.festivalBonus.toFixed(2)}`);
-    doc.moveDown();
-
-    // Deductions
-    doc.fontSize(12).text('Deductions', { underline: true });
-    doc.fontSize(10);
-    doc.text(`Provident Fund (PF): ₹${payroll.pf.toFixed(2)}`);
-    doc.text(`ESI: ₹${payroll.esi.toFixed(2)}`);
-    doc.text(`Professional Tax: ₹${payroll.tax.toFixed(2)}`);
-    doc.text(`Loan Recovery: ₹${payroll.loan.toFixed(2)}`);
-    doc.text(`Other Deductions: ₹${payroll.other.toFixed(2)}`);
-    doc.moveDown();
-
-    // Total Calculations
-    const totalEarnings = payroll.baseSalary + payroll.hra + payroll.da + 
-                         payroll.conveyanceAllowance + payroll.medicalAllowance + 
-                         payroll.specialAllowance + payroll.overtimeAmount +
-                         payroll.performanceBonus + payroll.projectBonus + 
-                         payroll.attendanceBonus + payroll.festivalBonus;
-
-    const totalDeductions = payroll.pf + payroll.esi + payroll.tax + 
-                          payroll.loan + payroll.other;
-
-    doc.fontSize(12).text('Summary', { underline: true });
-    doc.fontSize(10);
-    doc.text(`Total Earnings: ₹${totalEarnings.toFixed(2)}`);
-    doc.text(`Total Deductions: ₹${totalDeductions.toFixed(2)}`);
-    doc.moveDown();
-    doc.fontSize(12).text(`Net Salary: ₹${payroll.netSalary.toFixed(2)}`, { bold: true });
-
-    // Footer
-    doc.moveDown(2);
-    doc.fontSize(8);
-    doc.text('This is a computer-generated document. No signature is required.', { align: 'center' });
-    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    // Call the unified PDF generation function
+    generatePDFContent(doc, payroll);
 
     // Finalize PDF
     doc.end();
@@ -697,4 +522,263 @@ exports.deletePayroll = async (req, res) => {
       message: 'Server error'
     });
   }
-}; 
+};
+
+/**
+ * Generates the content for the PDF salary slip.
+ * @param {object} doc - The PDFDocument instance.
+ * @param {object} payroll - The payroll data object.
+ */
+const generatePDFContent = (doc, payroll) => {
+  // Set up the border
+  doc.rect(30, 30, doc.page.width - 60, doc.page.height - 60).stroke();
+
+  // Company Logo
+  const logoPath = path.join(__dirname, '../assets/images/traincape-logo.jpg');
+  if (fs.existsSync(logoPath)) {
+    doc.image(logoPath, doc.page.width / 2 + 160, 33, { width: 80 });
+  }
+  doc.moveDown(2);
+
+  // Header
+  doc.fontSize(18).text('SALARY SLIP', { align: 'center', bold: true });
+  doc.fontSize(12).text('Traincape Technology', { align: 'center' });
+  doc.fontSize(10).text('Khandolia Plaza, 118C, Dabri - Palam Rd, Delhi 110045', { align: 'center' });
+  doc.moveDown();
+  doc.strokeColor('#aaaaaa').lineWidth(1).lineCap('butt').moveTo(50, doc.y).lineTo(doc.page.width - 0, doc.y).stroke();
+  doc.moveDown();
+
+  // Employee Details
+  const contentIndent = 20; // Define a consistent indent for padding
+
+  doc.fontSize(12).text('Employee Details', { underline: true, indent: contentIndent });
+  doc.fontSize(10);
+  doc.text(`Name: ${payroll.employeeId.fullName}`, { indent: contentIndent });
+  doc.text(`Employee ID: ${payroll.employeeId._id}`, { indent: contentIndent });
+  doc.text(`Department: ${payroll.employeeId.department?.name || 'N/A'}`, { indent: contentIndent });
+  doc.text(`Email: ${payroll.employeeId.email}`, { indent: contentIndent });
+  doc.text(`Phone: ${payroll.employeeId.phoneNumber || 'N/A'}`, { indent: contentIndent });
+  doc.moveDown();
+  doc.strokeColor('#aaaaaa').lineWidth(1).lineCap('butt').moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).stroke();
+  doc.moveDown();
+  
+  // Pay Period
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  doc.fontSize(12).text('Pay Period', { underline: true, indent: contentIndent });
+  doc.fontSize(10);
+  doc.text(`Month: ${months[payroll.month - 1]} ${payroll.year}`, { indent: contentIndent });
+  doc.text(`Working Days: ${payroll.workingDays}`, { indent: contentIndent });
+  doc.text(`Days Present: ${payroll.daysPresent}`, { indent: contentIndent });
+  doc.moveDown();
+  doc.strokeColor('#aaaaaa').lineWidth(1).lineCap('butt').moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).stroke();
+  doc.moveDown();
+
+  // Earnings and Deductions in two columns
+  const startX = 50;
+  const columnWidth = (doc.page.width - 100) / 2;
+  const startY = doc.y;
+
+  // Earnings Column
+  doc.fontSize(12).text('Earnings', startX, startY, { underline: true });
+  doc.fontSize(10);
+  let earningsY = doc.y + 10;
+  doc.text(`Base Salary:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.baseSalary.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  doc.text(`HRA:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.hra.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  doc.text(`DA:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.da.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  doc.text(`Conveyance:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.conveyanceAllowance.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  doc.text(`Medical:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.medicalAllowance.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  doc.text(`Special:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.specialAllowance.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  doc.text(`Overtime:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.overtimeAmount.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  // Bonuses
+  earningsY += 10;
+  doc.text(`Performance Bonus:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.performanceBonus.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  doc.text(`Project Bonus:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.projectBonus.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  doc.text(`Attendance Bonus:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.attendanceBonus.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  doc.text(`Festival Bonus:`, startX, earningsY);
+  doc.text(`Rs. ${payroll.festivalBonus.toFixed(2)}`, startX + 150, earningsY, { align: 'right', width: columnWidth - 150 });
+  earningsY += 20;
+
+  // Deductions Column
+  const deductionsX = startX + columnWidth + 10;
+  doc.fontSize(12).text('Deductions', deductionsX, startY, { underline: true });
+  doc.fontSize(10);
+  let deductionsY = doc.y + 10;
+  doc.text(`Provident Fund (PF):`, deductionsX, deductionsY);
+  doc.text(`Rs. ${payroll.pf.toFixed(2)}`, deductionsX + 150, deductionsY, { align: 'right', width: columnWidth - 150 });
+  deductionsY += 20;
+
+  doc.text(`ESI:`, deductionsX, deductionsY);
+  doc.text(`Rs. ${payroll.esi.toFixed(2)}`, deductionsX + 150, deductionsY, { align: 'right', width: columnWidth - 150 });
+  deductionsY += 20;
+
+  doc.text(`Professional Tax:`, deductionsX, deductionsY);
+  doc.text(`Rs. ${payroll.tax.toFixed(2)}`, deductionsX + 150, deductionsY, { align: 'right', width: columnWidth - 150 });
+  deductionsY += 20;
+
+  doc.text(`Loan Recovery:`, deductionsX, deductionsY);
+  doc.text(`Rs. ${payroll.loan.toFixed(2)}`, deductionsX + 150, deductionsY, { align: 'right', width: columnWidth - 150 });
+  deductionsY += 20;
+
+  doc.text(`Other Deductions:`, deductionsX, deductionsY);
+  doc.text(`Rs. ${payroll.other.toFixed(2)}`, deductionsX + 150, deductionsY, { align: 'right', width: columnWidth - 150 });
+
+  doc.y = Math.max(earningsY, deductionsY) + 20;
+  doc.strokeColor('#aaaaaa').lineWidth(1).lineCap('butt').moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).stroke();
+  doc.moveDown();
+
+  // Summary
+  doc.fontSize(12).text('Summary', { underline: true });
+  doc.fontSize(10);
+  const totalEarnings = payroll.baseSalary + payroll.hra + payroll.da + 
+                       payroll.conveyanceAllowance + payroll.medicalAllowance + 
+                       payroll.specialAllowance + payroll.overtimeAmount +
+                       payroll.performanceBonus + payroll.projectBonus + 
+                       payroll.attendanceBonus + payroll.festivalBonus;
+
+  const totalDeductions = payroll.pf + payroll.esi + payroll.tax + 
+                        payroll.loan + payroll.other;
+
+  doc.text(`Total Earnings: Rs. ${totalEarnings.toFixed(2)}`);
+  doc.text(`Total Deductions: Rs. ${totalDeductions.toFixed(2)}`);
+  doc.moveDown();
+
+  doc.fontSize(14).text(`Net Salary: Rs. ${payroll.netSalary.toFixed(2)}`, { bold: true });
+  doc.moveDown(2);
+
+  // Footer
+  doc.fontSize(8);
+  doc.text('This is a computer-generated document. No signature is required.', { align: 'center' });
+  doc.text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+};
+
+// @desc    Approve payroll
+// @route   PUT /api/payroll/:id/approve
+// @access  Private (Admin/HR/Manager)
+exports.approvePayroll = async (req, res) => {
+  try {
+    // Check authorization
+    if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to approve payroll'
+      });
+    }
+
+    const payroll = await Payroll.findById(req.params.id);
+    if (!payroll) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payroll record not found'
+      });
+    }
+
+    payroll.status = 'APPROVED';
+    payroll.approvedBy = req.user.id;
+    payroll.approvedDate = new Date();
+    
+    await payroll.save();
+
+    res.status(200).json({
+      success: true,
+      data: payroll,
+      message: 'Payroll approved successfully'
+    });
+  } catch (error) {
+    console.error('Approve payroll error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+// @desc    Delete payroll
+// @route   DELETE /api/payroll/:id
+// @access  Private (Admin/HR/Manager)
+exports.deletePayroll = async (req, res) => {
+  try {
+    console.log('Delete payroll request received for ID:', req.params.id);
+    console.log('User role:', req.user.role);
+    
+    // Check authorization
+    if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+      console.log('Authorization failed - user role not allowed');
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete payroll'
+      });
+    }
+
+    const payroll = await Payroll.findById(req.params.id);
+    if (!payroll) {
+      console.log('Payroll not found with ID:', req.params.id);
+      return res.status(404).json({
+        success: false,
+        message: 'Payroll record not found'
+      });
+    }
+
+    console.log('Payroll found with status:', payroll.status);
+    
+    console.log('Attempting to delete payroll...');
+    
+    // Delete associated salary slip file if exists
+    if (payroll.salarySlipPath && fs.existsSync(payroll.salarySlipPath)) {
+      fs.unlinkSync(payroll.salarySlipPath);
+      console.log('Deleted salary slip file');
+    }
+
+    // Reset associated incentives if any
+    const Incentive = require('../models/Incentive');
+    await Incentive.updateMany(
+      { payrollId: payroll._id },
+      { $unset: { payrollId: 1 } }
+    );
+    console.log('Reset associated incentives');
+
+    await Payroll.findByIdAndDelete(req.params.id);
+    console.log('Payroll deleted successfully');
+
+    res.status(200).json({
+      success: true,
+      data: {},
+      message: 'Payroll deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete payroll error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};

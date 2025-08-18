@@ -252,7 +252,7 @@ const InvoiceSchema = new mongoose.Schema({
   },
   currencySymbol: {
     type: String,
-    default: '₹',
+    default: 'Rs.',
     trim: true
   },
   exchangeRate: {
