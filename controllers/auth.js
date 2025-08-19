@@ -609,10 +609,17 @@ exports.createUserWithDocuments = async (req, res) => {
           console.log('No files found in auth controller request');
         }
         
+        console.log('Employee data before creation:', JSON.stringify(employeeData, null, 2));
         const employee = await Employee.create(employeeData);
         console.log(`Employee created successfully with ID: ${employee._id}`);
       } catch (employeeError) {
         console.error("Error creating employee record:", employeeError);
+        console.error("Employee error details:", {
+          name: employeeError.name,
+          message: employeeError.message,
+          code: employeeError.code,
+          errors: employeeError.errors
+        });
         // If employee creation fails, delete the user and throw error
         await User.findByIdAndDelete(user._id);
         throw new Error(`Failed to create employee record: ${employeeError.message}`);

@@ -5,6 +5,7 @@ const fileStorage = require('../services/fileStorageService');
 const {
   getEmployees,
   getEmployee,
+  getEmployeeByUserId,
   createEmployee,
   updateEmployee,
   deleteEmployee,
@@ -54,6 +55,10 @@ router.route('/:id')
   .get(protect, getEmployee)
   .put(protect, uploadEmployeeFiles, updateEmployee)
   .delete(protect, deleteEmployee);
+
+// Get employee by user ID
+router.route('/user/:userId')
+  .get(protect, getEmployeeByUserId);
 
 // Document routes
 router.route('/:id/documents')

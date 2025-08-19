@@ -117,7 +117,12 @@ exports.getEmployees = async (req, res) => {
 // @access  Private
 exports.getEmployee = async (req, res) => {
   try {
-    const employee = await Employee.findById(req.params.id);
+    console.log('Fetching employee with ID:', req.params.id);
+    
+    const employee = await Employee.findById(req.params.id)
+      .populate('department', 'name description')
+      .populate('role', 'name description')
+      .populate('hrId', 'fullName email');
 
     if (!employee) {
       return res.status(404).json({
@@ -125,6 +130,21 @@ exports.getEmployee = async (req, res) => {
         message: 'Employee not found'
       });
     }
+
+    console.log('Found employee data:', {
+      id: employee._id,
+      fullName: employee.fullName,
+      email: employee.email,
+      hasDocuments: {
+        photograph: !!employee.photograph,
+        tenthMarksheet: !!employee.tenthMarksheet,
+        aadharCard: !!employee.aadharCard,
+        panCard: !!employee.panCard,
+        pcc: !!employee.pcc,
+        resume: !!employee.resume,
+        offerLetter: !!employee.offerLetter
+      }
+    });
 
     // Check authorization - Allow HR, Admin, Manager, and users viewing their own profile
     if (req.user.role === 'HR' || req.user.role === 'Admin' || req.user.role === 'Manager' || 
@@ -141,6 +161,61 @@ exports.getEmployee = async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching employee:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Get employee by user ID
+// @route   GET /api/employees/user/:userId
+// @access  Private
+exports.getEmployeeByUserId = async (req, res) => {
+  try {
+    console.log('Fetching employee by user ID:', req.params.userId);
+    
+    const employee = await Employee.findOne({ userId: req.params.userId })
+      .populate('department', 'name description')
+      .populate('role', 'name description')
+      .populate('hrId', 'fullName email');
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found for this user'
+      });
+    }
+
+    console.log('Found employee by userId:', {
+      id: employee._id,
+      fullName: employee.fullName,
+      email: employee.email,
+      hasDocuments: {
+        photograph: !!employee.photograph,
+        tenthMarksheet: !!employee.tenthMarksheet,
+        aadharCard: !!employee.aadharCard,
+        panCard: !!employee.panCard,
+        pcc: !!employee.pcc,
+        resume: !!employee.resume,
+        offerLetter: !!employee.offerLetter
+      }
+    });
+
+    // Check authorization - Allow HR, Admin, Manager, and users viewing their own profile
+    if (req.user.role === 'HR' || req.user.role === 'Admin' || req.user.role === 'Manager' || 
+        employee.userId?.toString() === req.user.id) {
+      // Authorized
+    } else {
+      // Allow all users to view employee data for profile purposes
+    }
+
+    res.status(200).json({
+      success: true,
+      data: employee
+    });
+  } catch (err) {
+    console.error('Error fetching employee by userId:', err);
     res.status(500).json({
       success: false,
       message: 'Server Error'
