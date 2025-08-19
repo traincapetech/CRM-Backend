@@ -27,7 +27,9 @@ const debugMiddleware = (req, res, next) => {
       role: req.user.role
     } : 'Not authenticated',
     query: req.query,
-    params: req.params
+    params: req.params,
+    contentType: req.headers['content-type'],
+    contentLength: req.headers['content-length']
   });
   
   next();

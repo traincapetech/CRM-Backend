@@ -153,6 +153,12 @@ exports.getEmployee = async (req, res) => {
 // @access  Private
 exports.createEmployee = async (req, res) => {
   try {
+    console.log('Create employee request received:', {
+      body: req.body,
+      files: req.files ? Object.keys(req.files) : 'No files',
+      contentType: req.headers['content-type']
+    });
+    
     // Parse employee data from form
     const employeeData = typeof req.body.employee === 'string' ? JSON.parse(req.body.employee) : req.body;
     
@@ -183,12 +189,21 @@ exports.createEmployee = async (req, res) => {
 
     // Handle file uploads
     if (req.files) {
+      console.log('Processing file uploads:', Object.keys(req.files));
       for (const fieldName of Object.keys(req.files)) {
         const arr = req.files[fieldName];
         if (arr && arr[0]) {
           const file = arr[0];
+          console.log(`Processing file ${fieldName}:`, {
+            originalName: file.originalname,
+            filename: file.filename,
+            mimetype: file.mimetype,
+            size: file.size,
+            path: file.path
+          });
           try {
             const uploaded = await fileStorage.uploadEmployeeDoc(file, fieldName);
+            console.log(`File ${fieldName} uploaded successfully:`, uploaded);
             // store rich object (with url)
             employeeData[fieldName] = uploaded;
           } catch (e) {
@@ -196,6 +211,8 @@ exports.createEmployee = async (req, res) => {
           }
         }
       }
+    } else {
+      console.log('No files found in request');
     }
 
     // Create employee

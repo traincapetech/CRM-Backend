@@ -4,6 +4,12 @@ const fs = require('fs');
 function createDriveClient() {
   try {
     const keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    console.log('Google Drive Client Creation:', {
+      keyFile: keyFile,
+      keyFileExists: keyFile ? fs.existsSync(keyFile) : false,
+      USE_GOOGLE_DRIVE: process.env.USE_GOOGLE_DRIVE
+    });
+    
     if (!keyFile || !fs.existsSync(keyFile)) {
       console.warn('GOOGLE_APPLICATION_CREDENTIALS missing or file not found');
       return null;

@@ -573,40 +573,40 @@ exports.createUserWithDocuments = async (req, res) => {
           salary: req.body.salary ? parseFloat(req.body.salary) : 0,
           status: req.body.status || 'ACTIVE',
           collegeName: req.body.collegeName || '',
-          internshipDuration: req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null,
-          
-          // Initialize documents object
-          documents: {}
+          internshipDuration: req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null
         };
         
-        // Process uploaded documents
+        // Process uploaded documents using file storage service
         if (req.files) {
+          console.log('Processing file uploads in auth controller:', Object.keys(req.files));
           const documentTypes = ['photograph', 'tenthMarksheet', 'twelfthMarksheet', 'bachelorDegree', 'postgraduateDegree', 'aadharCard', 'panCard', 'pcc', 'resume', 'offerLetter'];
           
           for (const docType of documentTypes) {
             if (req.files[docType] && req.files[docType][0]) {
               const file = req.files[docType][0];
+              console.log(`Processing file ${docType}:`, {
+                originalName: file.originalname,
+                filename: file.filename,
+                mimetype: file.mimetype,
+                size: file.size,
+                path: file.path
+              });
+              
               try {
-                // Ensure the file was saved successfully
-                if (!fs.existsSync(file.path)) {
-                  console.error(`File not saved: ${file.path}`);
-                  continue;
-                }
+                const fileStorage = require('../services/fileStorageService');
+                const uploaded = await fileStorage.uploadEmployeeDoc(file, docType);
+                console.log(`File ${docType} uploaded successfully:`, uploaded);
                 
-                employeeData.documents[docType] = {
-                  filename: file.filename,
-                  originalName: file.originalname,
-                  path: file.path,
-                  mimetype: file.mimetype,
-                  size: file.size,
-                  uploadedAt: new Date()
-                };
+                // Store the uploaded file info directly in employee data
+                employeeData[docType] = uploaded;
               } catch (fileError) {
                 console.error(`Error processing file ${docType}:`, fileError);
                 // Continue with other files if one fails
               }
             }
           }
+        } else {
+          console.log('No files found in auth controller request');
         }
         
         const employee = await Employee.create(employeeData);
@@ -622,9 +622,20 @@ exports.createUserWithDocuments = async (req, res) => {
     // Return user data without password
     const userData = await User.findById(user._id);
     
+    // Also fetch and return employee data if it exists
+    let employeeData = null;
+    if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(role)) {
+      const Employee = require('../models/Employee');
+      employeeData = await Employee.findOne({ userId: user._id })
+        .populate('department', 'name')
+        .populate('role', 'name');
+    }
+    
     res.status(201).json({
       success: true,
       data: userData,
+      employee: employeeData,
+      message: 'User created successfully with documents'
     });
   } catch (err) {
     console.error("User creation with documents error details:", {
@@ -775,8 +786,7 @@ exports.updateUserWithDocuments = async (req, res) => {
           email: user.email,
           userId: user._id,
           role: employeeRole._id,
-          department: department._id,
-          documents: {}
+          department: department._id
         });
       }
       
@@ -826,27 +836,37 @@ exports.updateUserWithDocuments = async (req, res) => {
         }
       }
       
-      // Process uploaded documents if any
+      // Process uploaded documents using file storage service
       if (req.files) {
-        if (!employee.documents) {
-          employee.documents = {};
-        }
-        
+        console.log('Processing file uploads in update auth controller:', Object.keys(req.files));
         const documentTypes = ['photograph', 'tenthMarksheet', 'twelfthMarksheet', 'bachelorDegree', 'postgraduateDegree', 'aadharCard', 'panCard', 'pcc', 'resume', 'offerLetter'];
         
         for (const docType of documentTypes) {
-          if (req.files[docType]) {
+          if (req.files[docType] && req.files[docType][0]) {
             const file = req.files[docType][0];
-            employee.documents[docType] = {
-              filename: file.filename, // Use the generated filename, not originalname
-              originalName: file.originalname, // Store original name separately
-              path: file.path,
+            console.log(`Processing file ${docType} for update:`, {
+              originalName: file.originalname,
+              filename: file.filename,
               mimetype: file.mimetype,
               size: file.size,
-              uploadedAt: new Date()
-            };
+              path: file.path
+            });
+            
+            try {
+              const fileStorage = require('../services/fileStorageService');
+              const uploaded = await fileStorage.uploadEmployeeDoc(file, docType);
+              console.log(`File ${docType} uploaded successfully for update:`, uploaded);
+              
+              // Store the uploaded file info directly in employee data
+              employee[docType] = uploaded;
+            } catch (fileError) {
+              console.error(`Error processing file ${docType} for update:`, fileError);
+              // Continue with other files if one fails
+            }
           }
         }
+      } else {
+        console.log('No files found in update auth controller request');
       }
       
       await employee.save();

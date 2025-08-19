@@ -37,3 +37,5 @@ coverage/
 
 # Dependency directories
 node_modules/
+config/google-credentials.json
+test-upload.txt
