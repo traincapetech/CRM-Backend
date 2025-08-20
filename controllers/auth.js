@@ -775,47 +775,80 @@ exports.updateUserWithDocuments = async (req, res) => {
       
       console.log(`Looking for employee record for user: ${user._id}, role: ${userRole}`);
       
-      // Find or create employee record
+      // Debug: Check what employees exist with this email
+      const allEmployeesWithEmail = await Employee.find({ email: user.email });
+      console.log(`All employees with email ${user.email}:`, allEmployeesWithEmail.map(emp => ({
+        id: emp._id,
+        userId: emp.userId,
+        fullName: emp.fullName,
+        email: emp.email
+      })));
+      
+      // Find or create employee record - try multiple search criteria
       let employee = await Employee.findOne({ userId: user._id });
+      
+      // If not found by userId, try by email
+      if (!employee) {
+        console.log(`Employee not found by userId, trying by email: ${user.email}`);
+        employee = await Employee.findOne({ email: user.email });
+      }
       
       console.log(`Employee lookup result:`, {
         found: !!employee,
         employeeId: employee?._id,
         employeeUserId: employee?.userId,
-        searchUserId: user._id
+        employeeEmail: employee?.email,
+        searchUserId: user._id,
+        searchEmail: user.email
       });
       
       if (!employee) {
         console.log('No employee record found, creating new one...');
-        // Find or create department
-        let department = await Department.findOne({ name: 'General' });
-        if (!department) {
-          department = await Department.create({
-            name: 'General',
-            description: 'General Department for all employees'
-          });
-        }
         
-        // Find or create role for the current user role
-        let employeeRole = await Role.findOne({ name: userRole });
-        if (!employeeRole) {
-          employeeRole = await Role.create({
-            name: userRole,
-            description: `Role for ${userRole}`
+        // Double-check: Make sure no employee exists with this email
+        const existingEmployeeByEmail = await Employee.findOne({ email: user.email });
+        if (existingEmployeeByEmail) {
+          console.log(`Found existing employee by email, updating userId instead of creating new one`);
+          employee = existingEmployeeByEmail;
+          // Update the userId to link it to this user
+          employee.userId = user._id;
+          await employee.save();
+        } else {
+          // Find or create department
+          let department = await Department.findOne({ name: 'General' });
+          if (!department) {
+            department = await Department.create({
+              name: 'General',
+              description: 'General Department for all employees'
+            });
+          }
+          
+          // Find or create role for the current user role
+          let employeeRole = await Role.findOne({ name: userRole });
+          if (!employeeRole) {
+            employeeRole = await Role.create({
+              name: userRole,
+              description: `Role for ${userRole}`
+            });
+          }
+          
+          // Create new employee if doesn't exist
+          employee = await Employee.create({
+            fullName: user.fullName,
+            email: user.email,
+            userId: user._id,
+            role: employeeRole._id,
+            department: department._id
           });
+          console.log(`Created new employee record: ${employee._id}`);
         }
-        
-        // Create new employee if doesn't exist
-        employee = await Employee.create({
-          fullName: user.fullName,
-          email: user.email,
-          userId: user._id,
-          role: employeeRole._id,
-          department: department._id
-        });
-        console.log(`Created new employee record: ${employee._id}`);
       } else {
         console.log(`Found existing employee record: ${employee._id}`);
+        // Update the userId if it's missing or different
+        if (!employee.userId || employee.userId.toString() !== user._id.toString()) {
+          console.log(`Updating employee userId from ${employee.userId} to ${user._id}`);
+          employee.userId = user._id;
+        }
       }
       
       // Update employee basic info with new values
