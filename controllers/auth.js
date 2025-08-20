@@ -700,6 +700,14 @@ exports.updateUserWithDocuments = async (req, res) => {
     console.log('Request body:', req.body);
     console.log('Request files:', req.files ? Object.keys(req.files) : 'No files');
     
+    // Validate required parameters
+    if (!req.params.id) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required"
+      });
+    }
+    
     const { fullName, email, role } = req.body;
 
     // Check if user exists
@@ -732,7 +740,7 @@ exports.updateUserWithDocuments = async (req, res) => {
     // Update user fields - only update provided fields
     const updateData = {};
     if (fullName && fullName.trim() !== '') updateData.fullName = fullName;
-    if (email && email.trim() !== '') updateData.email = email;
+    if (email && email.trim() !== '') updateData.email = email.toLowerCase().trim();
     if (role && role.trim() !== '') updateData.role = role;
 
     // Handle password update if provided
@@ -909,38 +917,38 @@ exports.updateUserWithDocuments = async (req, res) => {
       });
       
       // Use findByIdAndUpdate instead of save() to ensure proper update
-      const updateData = {};
+      const employeeUpdateData = {};
       
       // Add all the updated fields
-      if (employee.fullName) updateData.fullName = employee.fullName;
-      if (employee.email) updateData.email = employee.email;
-      if (req.body.phoneNumber !== undefined) updateData.phoneNumber = req.body.phoneNumber;
-      if (req.body.whatsappNumber !== undefined) updateData.whatsappNumber = req.body.whatsappNumber;
-      if (req.body.linkedInUrl !== undefined) updateData.linkedInUrl = req.body.linkedInUrl;
-      if (req.body.currentAddress !== undefined) updateData.currentAddress = req.body.currentAddress;
-      if (req.body.permanentAddress !== undefined) updateData.permanentAddress = req.body.permanentAddress;
-      if (req.body.dateOfBirth !== undefined) updateData.dateOfBirth = req.body.dateOfBirth ? new Date(req.body.dateOfBirth) : null;
-      if (req.body.joiningDate !== undefined) updateData.joiningDate = req.body.joiningDate ? new Date(req.body.joiningDate) : null;
-      if (req.body.salary !== undefined) updateData.salary = req.body.salary ? parseFloat(req.body.salary) : 0;
-      if (req.body.status !== undefined) updateData.status = req.body.status;
-      if (req.body.collegeName !== undefined) updateData.collegeName = req.body.collegeName;
-      if (req.body.internshipDuration !== undefined) updateData.internshipDuration = req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null;
+      if (employee.fullName) employeeUpdateData.fullName = employee.fullName;
+      if (employee.email) employeeUpdateData.email = employee.email;
+      if (req.body.phoneNumber !== undefined) employeeUpdateData.phoneNumber = req.body.phoneNumber;
+      if (req.body.whatsappNumber !== undefined) employeeUpdateData.whatsappNumber = req.body.whatsappNumber;
+      if (req.body.linkedInUrl !== undefined) employeeUpdateData.linkedInUrl = req.body.linkedInUrl;
+      if (req.body.currentAddress !== undefined) employeeUpdateData.currentAddress = req.body.currentAddress;
+      if (req.body.permanentAddress !== undefined) employeeUpdateData.permanentAddress = req.body.permanentAddress;
+      if (req.body.dateOfBirth !== undefined) employeeUpdateData.dateOfBirth = req.body.dateOfBirth ? new Date(req.body.dateOfBirth) : null;
+      if (req.body.joiningDate !== undefined) employeeUpdateData.joiningDate = req.body.joiningDate ? new Date(req.body.joiningDate) : null;
+      if (req.body.salary !== undefined) employeeUpdateData.salary = req.body.salary ? parseFloat(req.body.salary) : 0;
+      if (req.body.status !== undefined) employeeUpdateData.status = req.body.status;
+      if (req.body.collegeName !== undefined) employeeUpdateData.collegeName = req.body.collegeName;
+      if (req.body.internshipDuration !== undefined) employeeUpdateData.internshipDuration = req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null;
       
       // Add document fields
-      if (employee.photograph) updateData.photograph = employee.photograph;
-      if (employee.tenthMarksheet) updateData.tenthMarksheet = employee.tenthMarksheet;
-      if (employee.twelfthMarksheet) updateData.twelfthMarksheet = employee.twelfthMarksheet;
-      if (employee.bachelorDegree) updateData.bachelorDegree = employee.bachelorDegree;
-      if (employee.postgraduateDegree) updateData.postgraduateDegree = employee.postgraduateDegree;
-      if (employee.aadharCard) updateData.aadharCard = employee.aadharCard;
-      if (employee.panCard) updateData.panCard = employee.panCard;
-      if (employee.pcc) updateData.pcc = employee.pcc;
-      if (employee.resume) updateData.resume = employee.resume;
-      if (employee.offerLetter) updateData.offerLetter = employee.offerLetter;
+      if (employee.photograph) employeeUpdateData.photograph = employee.photograph;
+      if (employee.tenthMarksheet) employeeUpdateData.tenthMarksheet = employee.tenthMarksheet;
+      if (employee.twelfthMarksheet) employeeUpdateData.twelfthMarksheet = employee.twelfthMarksheet;
+      if (employee.bachelorDegree) employeeUpdateData.bachelorDegree = employee.bachelorDegree;
+      if (employee.postgraduateDegree) employeeUpdateData.postgraduateDegree = employee.postgraduateDegree;
+      if (employee.aadharCard) employeeUpdateData.aadharCard = employee.aadharCard;
+      if (employee.panCard) employeeUpdateData.panCard = employee.panCard;
+      if (employee.pcc) employeeUpdateData.pcc = employee.pcc;
+      if (employee.resume) employeeUpdateData.resume = employee.resume;
+      if (employee.offerLetter) employeeUpdateData.offerLetter = employee.offerLetter;
       
-      console.log('Update data for employee:', updateData);
+      console.log('Update data for employee:', employeeUpdateData);
       
-      employee = await Employee.findByIdAndUpdate(employee._id, updateData, {
+      employee = await Employee.findByIdAndUpdate(employee._id, employeeUpdateData, {
         new: true,
         runValidators: true
       });
@@ -981,9 +989,16 @@ exports.updateUserWithDocuments = async (req, res) => {
     });
   } catch (err) {
     console.error(`Error updating user with documents: ${err.message}`);
+    console.error(`Error stack: ${err.stack}`);
+    console.error(`Error details:`, {
+      name: err.name,
+      code: err.code,
+      errors: err.errors
+    });
     res.status(400).json({
       success: false,
       message: err.message,
+      details: err.errors || err.message
     });
   }
 };
