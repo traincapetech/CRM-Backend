@@ -6,66 +6,67 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 
-// @desc    Get all invoices
-// @route   GET /api/invoices
-// @access  Private (Admin, Manager, Sales Person)
+/**
+ * @desc    Get all invoices with filtering, sorting, and pagination.
+ * @route   GET /api/invoices
+ * @access  Private (Admin, Manager, Sales Person)
+ */
 exports.getInvoices = async (req, res) => {
   try {
     console.log('============= GET INVOICES REQUEST =============');
-    console.log('User making request:', {
-      id: req.user._id,
-      role: req.user.role,
-      name: req.user.fullName
-    });
+    console.log(`User ID: ${req.user._id}, Role: ${req.user.role}`);
 
+    // Start with a base query for all non-deleted invoices
     let query = Invoice.find({ isDeleted: false });
 
-    // Role-based filtering
+    // Apply role-based filtering to the query.
+    // A Sales Person can only view invoices they have created.
     if (req.user.role === 'Sales Person') {
-      // Sales Person can only see invoices they created
       query = query.where('createdBy').equals(req.user._id);
-    } else if (req.user.role === 'Manager') {
-      // Manager can see all invoices
-      query = query;
-    } else if (req.user.role === 'Admin') {
-      // Admin can see all invoices
-      query = query;
+      console.log('Applying "Sales Person" filter.');
+    } else if (['Manager', 'Admin'].includes(req.user.role)) {
+      // Managers and Admins can see all invoices. No additional filtering needed.
+      console.log('Accessing all invoices as an Admin or Manager.');
     } else {
+      // If the user's role is not recognized, they are not authorized.
       return res.status(403).json({
         success: false,
         message: 'Not authorized to access invoices'
       });
     }
 
-    // Apply filters
+    // Apply additional filters from the query string if they exist.
     const { status, startDate, endDate, clientEmail, invoiceNumber } = req.query;
-    
+
     if (status) {
       query = query.where('status').equals(status);
     }
     
+    // Filter by a date range.
     if (startDate && endDate) {
       query = query.where('invoiceDate').gte(new Date(startDate)).lte(new Date(endDate));
     }
     
+    // Case-insensitive regex search for client email.
     if (clientEmail) {
       query = query.where('clientInfo.email').regex(new RegExp(clientEmail, 'i'));
     }
     
+    // Case-insensitive regex search for invoice number.
     if (invoiceNumber) {
       query = query.where('invoiceNumber').regex(new RegExp(invoiceNumber, 'i'));
     }
 
-    // Populate related data
+    // Populate related data from other collections for a richer response.
     query = query.populate('createdBy', 'fullName email')
                  .populate('updatedBy', 'fullName email')
                  .populate('relatedSale', 'customerName course totalCost')
                  .populate('relatedLead', 'name course');
 
-    // Sort by latest first
+    // Sort the results by creation date in descending order (latest first).
     query = query.sort('-createdAt');
 
-    // Pagination
+    // Implement pagination logic.
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 25;
     const startIndex = (page - 1) * limit;
@@ -76,7 +77,7 @@ exports.getInvoices = async (req, res) => {
 
     const invoices = await query;
 
-    // Pagination result
+    // Create a pagination result object to help the client navigate pages.
     const pagination = {};
     if (endIndex < total) {
       pagination.next = {
@@ -91,7 +92,7 @@ exports.getInvoices = async (req, res) => {
       };
     }
 
-    console.log(`Found ${invoices.length} invoices`);
+    console.log(`Found ${invoices.length} invoices out of a total of ${total}.`);
 
     res.status(200).json({
       success: true,
@@ -108,9 +109,11 @@ exports.getInvoices = async (req, res) => {
   }
 };
 
-// @desc    Get single invoice
-// @route   GET /api/invoices/:id
-// @access  Private (Admin, Manager, Sales Person)
+/**
+ * @desc    Get a single invoice by its ID.
+ * @route   GET /api/invoices/:id
+ * @access  Private (Admin, Manager, Sales Person)
+ */
 exports.getInvoice = async (req, res) => {
   try {
     const invoice = await Invoice.findById(req.params.id)
@@ -120,6 +123,7 @@ exports.getInvoice = async (req, res) => {
       .populate('relatedLead', 'name course')
       .populate('payments.recordedBy', 'fullName');
 
+    // Check if the invoice exists and is not soft-deleted.
     if (!invoice || invoice.isDeleted) {
       return res.status(404).json({
         success: false,
@@ -127,7 +131,7 @@ exports.getInvoice = async (req, res) => {
       });
     }
 
-    // Check authorization
+    // Sales Person authorization check: a sales person can only see their own invoices.
     if (req.user.role === 'Sales Person' && invoice.createdBy._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -148,28 +152,26 @@ exports.getInvoice = async (req, res) => {
   }
 };
 
-// @desc    Create new invoice
-// @route   POST /api/invoices
-// @access  Private (Admin, Manager, Sales Person)
+/**
+ * @desc    Create a new invoice.
+ * @route   POST /api/invoices
+ * @access  Private (Admin, Manager, Sales Person)
+ */
 exports.createInvoice = async (req, res) => {
   try {
     console.log('============= CREATE INVOICE REQUEST =============');
-    console.log('Invoice data:', req.body);
+    console.log('Received invoice data:', JSON.stringify(req.body, null, 2));
 
-    // Generate invoice number
     const invoiceNumber = await Invoice.generateInvoiceNumber();
     
-    // Set created by
     req.body.createdBy = req.user._id;
     req.body.invoiceNumber = invoiceNumber;
 
-    // Calculate due date based on payment terms
     if (req.body.paymentTerms && req.body.paymentTerms !== 'Due on Receipt') {
       const days = parseInt(req.body.paymentTerms.split(' ')[1]) || 30;
       req.body.dueDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
     }
 
-    // Handle empty ObjectId fields
     if (!req.body.relatedSale || req.body.relatedSale === '') {
       delete req.body.relatedSale;
     }
@@ -177,32 +179,45 @@ exports.createInvoice = async (req, res) => {
       delete req.body.relatedLead;
     }
 
-    // Ensure all required numeric fields are present
-    if (typeof req.body.subtotal === 'undefined') {
-      req.body.subtotal = req.body.items.reduce((sum, item) => sum + (item.subtotal || 0), 0);
-    }
-    if (typeof req.body.totalAmount === 'undefined') {
-      req.body.totalAmount = req.body.items.reduce((sum, item) => sum + (item.total || 0), 0);
-    }
+    // Recalculate totals on the server to ensure accuracy.
+    let subtotal = 0;
+    req.body.items.forEach(item => {
+      // Calculate the subtotal for each item.
+      const itemSubtotal = (item.unitPrice || 0) * (item.quantity || 1);
+      // Recalculate the GST for each item based on an 18% rate.
+      item.gst = parseFloat((itemSubtotal * 0.18).toFixed(2));
+      // Recalculate the total for each item.
+      item.total = itemSubtotal + item.gst;
+      // Accumulate the overall subtotal.
+      subtotal += itemSubtotal;
+    });
+
+    // Calculate the overall GST and total amounts.
+    const gstAmount = parseFloat((subtotal * 0.18).toFixed(2));
+    const totalAmount = subtotal + gstAmount;
+
+    req.body.subtotal = subtotal;
+    req.body.gstAmount = gstAmount;
+    req.body.totalAmount = totalAmount;
+
     if (typeof req.body.balanceDue === 'undefined') {
-      req.body.balanceDue = req.body.totalAmount || 0;
+      req.body.balanceDue = totalAmount || 0;
     }
     if (typeof req.body.amountPaid === 'undefined') {
       req.body.amountPaid = 0;
     }
 
-    console.log('Processed invoice data:', JSON.stringify(req.body, null, 2));
+    console.log('Processed data before creating invoice:', JSON.stringify(req.body, null, 2));
 
-    // Create invoice
     const invoice = await Invoice.create(req.body);
 
-    // Populate related data
     const populatedInvoice = await Invoice.findById(invoice._id)
       .populate('createdBy', 'fullName email')
+      .populate('updatedBy', 'fullName email')
       .populate('relatedSale', 'customerName course totalCost')
       .populate('relatedLead', 'name course');
 
-    console.log('Invoice created successfully:', populatedInvoice.invoiceNumber);
+    console.log(`Invoice created successfully with number: ${populatedInvoice.invoiceNumber}`);
 
     res.status(201).json({
       success: true,
@@ -210,7 +225,7 @@ exports.createInvoice = async (req, res) => {
     });
   } catch (err) {
     console.error('Error creating invoice:', err);
-    console.error('Request body:', JSON.stringify(req.body, null, 2));
+    console.error('Request body that caused the error:', JSON.stringify(req.body, null, 2));
     
     if (err.name === 'ValidationError') {
       const messages = Object.values(err.errors).map(val => val.message);
@@ -228,13 +243,15 @@ exports.createInvoice = async (req, res) => {
   }
 };
 
-// @desc    Update invoice
-// @route   PUT /api/invoices/:id
-// @access  Private (Admin, Manager, Sales Person)
+/**
+ * @desc    Update an existing invoice.
+ * @route   PUT /api/invoices/:id
+ * @access  Private (Admin, Manager, Sales Person)
+ */
 exports.updateInvoice = async (req, res) => {
   try {
     console.log('============= UPDATE INVOICE REQUEST =============');
-    console.log('Update data:', req.body);
+    console.log(`Updating invoice ID: ${req.params.id}`);
 
     let invoice = await Invoice.findById(req.params.id);
 
@@ -245,7 +262,6 @@ exports.updateInvoice = async (req, res) => {
       });
     }
 
-    // Check authorization
     if (req.user.role === 'Sales Person' && invoice.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -253,13 +269,28 @@ exports.updateInvoice = async (req, res) => {
       });
     }
 
-    // Set updated by
     req.body.updatedBy = req.user._id;
 
-    // Calculate due date based on payment terms
     if (req.body.paymentTerms && req.body.paymentTerms !== 'Due on Receipt') {
       const days = parseInt(req.body.paymentTerms.split(' ')[1]) || 30;
       req.body.dueDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    }
+
+    if (req.body.items) {
+      let subtotal = 0;
+      req.body.items.forEach(item => {
+        const itemSubtotal = (item.unitPrice || 0) * (item.quantity || 1);
+        item.gst = parseFloat((itemSubtotal * 0.18).toFixed(2));
+        item.total = itemSubtotal + item.gst;
+        subtotal += itemSubtotal;
+      });
+
+      const gstAmount = parseFloat((subtotal * 0.18).toFixed(2));
+      const totalAmount = subtotal + gstAmount;
+      
+      req.body.subtotal = subtotal;
+      req.body.gstAmount = gstAmount;
+      req.body.totalAmount = totalAmount;
     }
 
     invoice = await Invoice.findByIdAndUpdate(req.params.id, req.body, {
@@ -270,7 +301,7 @@ exports.updateInvoice = async (req, res) => {
       .populate('relatedSale', 'customerName course totalCost')
       .populate('relatedLead', 'name course');
 
-    console.log('Invoice updated successfully:', invoice.invoiceNumber);
+    console.log(`Invoice updated successfully: ${invoice.invoiceNumber}`);
 
     res.status(200).json({
       success: true,
@@ -294,50 +325,39 @@ exports.updateInvoice = async (req, res) => {
   }
 };
 
-// @desc    Delete invoice (soft delete)
-// @route   DELETE /api/invoices/:id
-// @access  Private (Admin, Manager)
+/**
+ * @desc    Soft delete an invoice. This marks it as deleted but doesn't remove it from the database.
+ * @route   DELETE /api/invoices/:id
+ * @access  Private (Admin, Manager)
+ */
 exports.deleteInvoice = async (req, res) => {
   try {
     console.log('============= DELETE INVOICE REQUEST =============');
-    console.log('Invoice ID to delete:', req.params.id);
-    console.log('User making request:', {
-      id: req.user._id,
-      role: req.user.role,
-      name: req.user.fullName
-    });
-
+    console.log(`Attempting to soft-delete invoice ID: ${req.params.id}`);
+    
     const invoice = await Invoice.findById(req.params.id);
 
     if (!invoice || invoice.isDeleted) {
-      console.log('Invoice not found or already deleted');
+      console.log('Invoice not found or already deleted.');
       return res.status(404).json({
         success: false,
         message: 'Invoice not found'
       });
     }
 
-    console.log('Found invoice:', {
-      id: invoice._id,
-      invoiceNumber: invoice.invoiceNumber,
-      isDeleted: invoice.isDeleted
-    });
-
-    // Check authorization
     if (!['Admin', 'Manager'].includes(req.user.role)) {
-      console.log('User not authorized to delete invoices');
+      console.log('User not authorized to delete invoices.');
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete invoices'
       });
     }
 
-    // Soft delete
     invoice.isDeleted = true;
     invoice.updatedBy = req.user._id;
     await invoice.save();
 
-    console.log('Invoice soft deleted successfully:', invoice.invoiceNumber);
+    console.log(`Invoice ${invoice.invoiceNumber} soft-deleted successfully.`);
 
     res.status(200).json({
       success: true,
@@ -352,9 +372,11 @@ exports.deleteInvoice = async (req, res) => {
   }
 };
 
-// @desc    Generate PDF invoice
-// @route   GET /api/invoices/:id/pdf
-// @access  Private (Admin, Manager, Sales Person)
+/**
+ * @desc    Generate a PDF for an invoice to be viewed in the browser.
+ * @route   GET /api/invoices/:id/pdf
+ * @access  Private (Admin, Manager, Sales Person)
+ */
 exports.generatePDF = async (req, res) => {
   try {
     console.log('============= GENERATE PDF REQUEST =============');
@@ -371,7 +393,6 @@ exports.generatePDF = async (req, res) => {
       });
     }
 
-    // Check authorization
     if (req.user.role === 'Sales Person' && invoice.createdBy._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -379,26 +400,21 @@ exports.generatePDF = async (req, res) => {
       });
     }
 
-    // Create PDF document
     const doc = new PDFDocument({
       size: 'A4',
       margin: 50
     });
 
-    // Set response headers
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="Invoice-${invoice.invoiceNumber}.pdf"`);
 
-    // Pipe PDF to response
     doc.pipe(res);
 
-    // Generate PDF content
     generatePDFContent(doc, invoice);
 
-    // Finalize PDF
     doc.end();
 
-    console.log('PDF generated successfully for invoice:', invoice.invoiceNumber);
+    console.log(`PDF generated successfully for invoice: ${invoice.invoiceNumber}`);
 
   } catch (err) {
     console.error('Error generating PDF:', err);
@@ -409,9 +425,11 @@ exports.generatePDF = async (req, res) => {
   }
 };
 
-// @desc    Download PDF invoice
-// @route   GET /api/invoices/:id/download
-// @access  Private (Admin, Manager, Sales Person)
+/**
+ * @desc    Generate a PDF for an invoice to be downloaded.
+ * @route   GET /api/invoices/:id/download
+ * @access  Private (Admin, Manager, Sales Person)
+ */
 exports.downloadPDF = async (req, res) => {
   try {
     console.log('============= DOWNLOAD PDF REQUEST =============');
@@ -428,7 +446,6 @@ exports.downloadPDF = async (req, res) => {
       });
     }
 
-    // Check authorization
     if (req.user.role === 'Sales Person' && invoice.createdBy._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -436,26 +453,21 @@ exports.downloadPDF = async (req, res) => {
       });
     }
 
-    // Create PDF document
     const doc = new PDFDocument({
       size: 'A4',
       margin: 50
     });
 
-    // Set response headers for download
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="Invoice-${invoice.invoiceNumber}.pdf"`);
 
-    // Pipe PDF to response
     doc.pipe(res);
 
-    // Generate PDF content
     generatePDFContent(doc, invoice);
 
-    // Finalize PDF
     doc.end();
 
-    console.log('PDF downloaded successfully for invoice:', invoice.invoiceNumber);
+    console.log(`PDF downloaded successfully for invoice: ${invoice.invoiceNumber}`);
 
   } catch (err) {
     console.error('Error downloading PDF:', err);
@@ -466,13 +478,15 @@ exports.downloadPDF = async (req, res) => {
   }
 };
 
-// @desc    Record payment
-// @route   POST /api/invoices/:id/payment
-// @access  Private (Admin, Manager, Sales Person)
+/**
+ * @desc    Record a new payment for an invoice.
+ * @route   POST /api/invoices/:id/payment
+ * @access  Private (Admin, Manager, Sales Person)
+ */
 exports.recordPayment = async (req, res) => {
   try {
     console.log('============= RECORD PAYMENT REQUEST =============');
-    console.log('Payment data:', req.body);
+    console.log(`Recording payment for invoice ID: ${req.params.id}`);
 
     const invoice = await Invoice.findById(req.params.id);
 
@@ -483,7 +497,6 @@ exports.recordPayment = async (req, res) => {
       });
     }
 
-    // Check authorization
     if (req.user.role === 'Sales Person' && invoice.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -493,7 +506,6 @@ exports.recordPayment = async (req, res) => {
 
     const { amount, method, reference, notes } = req.body;
 
-    // Validate payment amount
     if (!amount || amount <= 0) {
       return res.status(400).json({
         success: false,
@@ -501,7 +513,6 @@ exports.recordPayment = async (req, res) => {
       });
     }
 
-    // Add payment to invoice
     invoice.payments.push({
       date: new Date(),
       amount: parseFloat(amount),
@@ -511,11 +522,9 @@ exports.recordPayment = async (req, res) => {
       recordedBy: req.user._id
     });
 
-    // Update amount paid
     invoice.amountPaid = invoice.payments.reduce((sum, payment) => sum + payment.amount, 0);
     invoice.balanceDue = invoice.totalAmount - invoice.amountPaid;
 
-    // Update status
     if (invoice.amountPaid >= invoice.totalAmount) {
       invoice.status = 'Paid';
     } else if (invoice.amountPaid > 0) {
@@ -525,7 +534,6 @@ exports.recordPayment = async (req, res) => {
     invoice.updatedBy = req.user._id;
     await invoice.save();
 
-    // Populate related data
     const updatedInvoice = await Invoice.findById(invoice._id)
       .populate('createdBy', 'fullName email')
       .populate('updatedBy', 'fullName email')
@@ -533,7 +541,7 @@ exports.recordPayment = async (req, res) => {
       .populate('relatedSale', 'customerName course totalCost')
       .populate('relatedLead', 'name course');
 
-    console.log('Payment recorded successfully for invoice:', invoice.invoiceNumber);
+    console.log(`Payment of ${amount} recorded successfully for invoice: ${invoice.invoiceNumber}`);
 
     res.status(200).json({
       success: true,
@@ -548,14 +556,15 @@ exports.recordPayment = async (req, res) => {
   }
 };
 
-// @desc    Get invoice statistics
-// @route   GET /api/invoices/stats
-// @access  Private (Admin, Manager)
+/**
+ * @desc    Get key invoice statistics for a dashboard.
+ * @route   GET /api/invoices/stats
+ * @access  Private (Admin, Manager)
+ */
 exports.getInvoiceStats = async (req, res) => {
   try {
     console.log('============= GET INVOICE STATS REQUEST =============');
 
-    // Check authorization
     if (!['Admin', 'Manager'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
@@ -565,7 +574,6 @@ exports.getInvoiceStats = async (req, res) => {
 
     const { startDate, endDate } = req.query;
     let dateFilter = { isDeleted: false };
-
     if (startDate && endDate) {
       dateFilter.invoiceDate = {
         $gte: new Date(startDate),
@@ -573,10 +581,8 @@ exports.getInvoiceStats = async (req, res) => {
       };
     }
 
-    // Get total invoices
     const totalInvoices = await Invoice.countDocuments(dateFilter);
 
-    // Get invoices by status
     const statusStats = await Invoice.aggregate([
       { $match: dateFilter },
       {
@@ -588,7 +594,6 @@ exports.getInvoiceStats = async (req, res) => {
       }
     ]);
 
-    // Get total revenue
     const totalRevenue = await Invoice.aggregate([
       { $match: dateFilter },
       {
@@ -601,7 +606,6 @@ exports.getInvoiceStats = async (req, res) => {
       }
     ]);
 
-    // Get monthly revenue for the last 12 months
     const monthlyRevenue = await Invoice.aggregate([
       { $match: dateFilter },
       {
@@ -628,7 +632,7 @@ exports.getInvoiceStats = async (req, res) => {
       monthlyRevenue
     };
 
-    console.log('Invoice statistics generated successfully');
+    console.log('Invoice statistics generated successfully.');
 
     res.status(200).json({
       success: true,
@@ -643,162 +647,266 @@ exports.getInvoiceStats = async (req, res) => {
   }
 };
 
-// Helper function to generate PDF content
+/**
+ * @desc    Helper function to generate the content for the PDF using pdfkit.
+ * @param   {object} doc - The PDFDocument instance.
+ * @param   {object} invoice - The invoice data object.
+ */
 function generatePDFContent(doc, invoice) {
+  // Define layout dimensions for an A4 page with margins.
   const pageWidth = doc.page.width;
-  const margin = 40;
+  const pageHeight = doc.page.height;
+  const margin = 50;
   const contentWidth = pageWidth - (margin * 2);
   let y = margin;
+  const primaryColor = '#0b0f2a';
+  const secondaryColor = '#000000';
+  const tableHeaderColor = '#F2F2F2';
+  const boxBackgroundColor = '#f0ecf9';
+  const textPadding = 10;
 
-  // Colors
-  const primaryColor = '#2563eb';
-  const secondaryColor = '#64748b';
-  const textColor = '#1e293b';
+  // Set the white background for the entire page.
+  doc.rect(0, 0, pageWidth, pageHeight).fill('#ffffff');
 
-  // Helper for text
+  // Register Unicode fonts (for ₹) if available; otherwise fall back.
+  let customFontsLoaded = false;
+  let currencySymbol = 'Rs.';
+  try {
+    const fontsDir = path.join(__dirname, '../assets/fonts');
+    const regularFontPath = path.join(fontsDir, 'NotoSans-Regular.ttf');
+    const boldFontPath = path.join(fontsDir, 'NotoSans-Bold.ttf');
+    if (fs.existsSync(regularFontPath) && fs.existsSync(boldFontPath)) {
+      doc.registerFont('AppFont-Regular', regularFontPath);
+      doc.registerFont('AppFont-Bold', boldFontPath);
+      customFontsLoaded = true;
+      currencySymbol = '₹';
+    }
+  } catch (e) {
+    customFontsLoaded = false;
+    currencySymbol = 'Rs.';
+  }
+
+  // Derive the desired symbol from invoice data
+  const symbolMap = { INR: '₹', USD: '$', EUR: '€', GBP: '£', JPY: '¥', CNY: '¥', AUD: 'A$', CAD: 'C$', SGD: 'S$' };
+  const desiredSymbol = invoice.currencySymbol || symbolMap[invoice.currency];
+  if (desiredSymbol) currencySymbol = desiredSymbol;
+  if (currencySymbol === '₹' && !customFontsLoaded) currencySymbol = 'Rs.';
+
+  // Locale for number formatting
+  const numberLocale = invoice.currency === 'INR' ? 'en-IN' : 'en-US';
+
+  // Helper function for text with the new color scheme.
   const addText = (text, x, y, options = {}) => {
-    const { fontSize = 10, bold = false, color = textColor, align = 'left', width = undefined } = options;
+    const { fontSize = 10, bold = false, color = secondaryColor, align = 'left', width = undefined } = options;
     doc.fontSize(fontSize).fillColor(color);
-    if (bold) doc.font('Helvetica-Bold');
-    else doc.font('Helvetica');
+    if (customFontsLoaded) {
+      doc.font(bold ? 'AppFont-Bold' : 'AppFont-Regular');
+    } else {
+      if (bold) doc.font('Helvetica-Bold');
+      else doc.font('Helvetica');
+    }
     doc.text(text, x, y, { align, width });
   };
 
-  // --- Header: Logo + Company Info ---
-  const logoPath = path.join(__dirname, '../assets/images/traincape-logo.jpg');
-  let logoHeight = 0;
-  try {
-    if (fs.existsSync(logoPath)) {
-      doc.image(logoPath, margin, y, { width: 50, height: 40 });
-      logoHeight = 40;
+  // Helper function to add an image.
+  const addImage = (imagePath, x, y, width, options = {}) => {
+    try {
+      doc.image(imagePath, x, y, { width, ...options });
+    } catch (error) {
+      console.error('Error loading image:', error);
+      addText('Image could not be loaded.', x, y, { color: 'red' });
     }
-  } catch (error) {}
+  };
+  
+     // ✅ Utility to format numbers cleanly (removes stray symbols and adds commas)
+   const formatNumber = (num) => {
+     if (typeof num !== 'string' && typeof num !== 'number') {
+       return '0.00';
+     }
 
-  // Company Info (right side)
-  const companyX = pageWidth - margin - 220;
-  let companyY = y;
-  addText(invoice.companyInfo.name, companyX, companyY, { fontSize: 13, bold: true, color: primaryColor });
-  companyY += 16;
-  addText(invoice.companyInfo.address.street, companyX, companyY, { fontSize: 8 });
-  companyY += 12;
-  addText(`${invoice.companyInfo.address.city}, ${invoice.companyInfo.address.state}`, companyX, companyY, { fontSize: 8 });
-  companyY += 12;
-  if (invoice.companyInfo.email) {
-    addText(`Email: ${invoice.companyInfo.email}`, companyX, companyY, { fontSize: 8, color: secondaryColor });
-    companyY += 12;
-  }
-  if (invoice.companyInfo.phone) {
-    addText(`Phone: ${invoice.companyInfo.phone}`, companyX, companyY, { fontSize: 8, color: secondaryColor });
-    companyY += 12;
-  }
-  y += Math.max(logoHeight, companyY - margin, 60) + 10;
+     // Remove everything except digits, dot, minus sign
+     const cleanNum = String(num)
+       .replace(/[^\d.-]/g, '') // strip ₹, commas, superscripts, etc.
+       .trim();
 
-  // --- Invoice Title & Details ---
-  addText('INVOICE', margin, y, { fontSize: 18, bold: true, color: primaryColor });
-  const detailsX = pageWidth - margin - 200;
-  addText('Invoice #:', detailsX, y, { fontSize: 10, bold: true });
-  addText(invoice.invoiceNumber, detailsX + 70, y, { fontSize: 10, color: primaryColor });
-  addText('Date:', detailsX, y + 15, { fontSize: 10, bold: true });
-  addText(new Date(invoice.invoiceDate).toLocaleDateString(), detailsX + 70, y + 15, { fontSize: 10 });
-  addText('Status:', detailsX, y + 30, { fontSize: 10, bold: true });
-  addText(invoice.status, detailsX + 70, y + 30, { fontSize: 10, color: primaryColor });
-  y += 40;
+     const parsedNum = parseFloat(cleanNum);
+     if (isNaN(parsedNum)) {
+       return '0.00';
+     }
 
-  // --- Bill To ---
-  addText('BILL TO:', margin, y, { fontSize: 11, bold: true, color: primaryColor });
-  y += 14;
-  addText(invoice.clientInfo.name, margin, y, { fontSize: 10, bold: true });
-  y += 12;
+     // Return with commas and 2 decimal places
+     return parsedNum.toLocaleString(numberLocale, {
+       minimumFractionDigits: 2,
+       maximumFractionDigits: 2,
+     });
+   };
+
+  // --- Header Section ---
+  const logoWidth = 80;
+  const logoHeight = 50;
+  const logoX = pageWidth - margin - logoWidth;
+  const logoY = y;
+  
+  const logoPath = '../client/src/assets/traincape-logo.jpg';
+  addImage(logoPath, logoX, logoY, logoWidth, { height: logoHeight });
+
+  const invoiceDetailsX = margin;
+  addText('GST Invoice', invoiceDetailsX, logoY, { fontSize: 18, bold: true, color: primaryColor });
+  
+  let invoiceInfoY = logoY + 20;
+  addText('Invoice No#:', invoiceDetailsX, invoiceInfoY, { fontSize: 9, bold: true, color: primaryColor });
+  addText(invoice.invoiceNumber, invoiceDetailsX + 70, invoiceInfoY, { fontSize: 9, color: primaryColor });
+  invoiceInfoY += 15;
+  addText('Invoice Date:', invoiceDetailsX, invoiceInfoY, { fontSize: 9, bold: true, color: primaryColor });
+  addText(new Date(invoice.invoiceDate).toLocaleDateString(), invoiceDetailsX + 70, invoiceInfoY, { fontSize: 9, color: primaryColor });
+
+  y = Math.max(invoiceInfoY, logoY + logoHeight) + 20;
+
+  // --- Company Details Box ---
+  const boxWidth = contentWidth / 2 - 10;
+  const box1X = margin;
+  const box1Y = y;
+  
+  const companyAddressLines = [
+    invoice.companyInfo.address.street,
+    `${invoice.companyInfo.address.city}, ${invoice.companyInfo.address.state}`,
+    'India-110045'
+  ].join('\n');
+  const companyInfoText = `${invoice.companyInfo.name}\nEducation - Training\n\n${companyAddressLines}\n\n` +
+                          `GSTIN: ${invoice.companyInfo.gstin}\n` +
+                          `PAN: ${invoice.companyInfo.pan || 'Not Provided'}\n` +
+                          `Email: ${invoice.companyInfo.email}\n` +
+                          `Phone: ${invoice.companyInfo.phone}`;
+
+  const companyBoxHeight = doc.heightOfString(companyInfoText, { width: boxWidth - (textPadding * 2) }) + (textPadding * 2);
+
+  // --- Billed To Box ---
+  const box2X = pageWidth - margin - boxWidth;
+  const box2Y = y;
+
+  const clientAddressLines = [
+    invoice.clientInfo.address.street,
+    `${invoice.clientInfo.address.city}, ${invoice.clientInfo.address.state}`,
+    `${invoice.clientInfo.address.zipCode}, ${invoice.clientInfo.address.country}`
+  ].join('\n');
+  const clientInfoText = `Billed To\n\n${invoice.clientInfo.name}\n${invoice.clientInfo.company ? `${invoice.clientInfo.company}\n` : ''}${clientAddressLines}\n\n` +
+                          `GSTIN: ${invoice.clientInfo.gstin || 'Not Provided'}\n` +
+                          `Email: ${invoice.clientInfo.email}\n` +
+                          `Phone: ${invoice.clientInfo.phone}`;
+  
+  const clientBoxHeight = doc.heightOfString(clientInfoText, { width: boxWidth - (textPadding * 2) }) + (textPadding * 2) + 15;
+
+  doc.rect(box1X, box1Y, boxWidth, companyBoxHeight).fill(boxBackgroundColor);
+  doc.rect(box2X, box2Y, boxWidth, clientBoxHeight).fill(boxBackgroundColor);
+  
+  let boxY = box1Y + textPadding;
+  doc.fontSize(12).fillColor('#6539c0').text(invoice.companyInfo.name, box1X + textPadding, boxY, { bold: true });
+  boxY += 15;
+  doc.fontSize(9).fillColor(primaryColor).text('Education - Training', box1X + textPadding, boxY);
+  boxY += 15;
+  doc.fontSize(8).fillColor(primaryColor).text(invoice.companyInfo.address.street, box1X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+  doc.text(`${invoice.companyInfo.address.city}, ${invoice.companyInfo.address.state}`, { width: boxWidth - (textPadding * 2) });
+  doc.text(`India-110045`, { width: boxWidth - (textPadding * 2) });
+  boxY = doc.y + 10;
+
+  doc.text(`GSTIN: ${invoice.companyInfo.gstin}`, box1X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+  boxY += 12;
+  doc.text(`PAN: ${invoice.companyInfo.pan || 'Not Provided'}`, box1X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+  boxY += 12;
+  doc.text(`Email: ${invoice.companyInfo.email}`, box1X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+  boxY += 12;
+  doc.text(`Phone: ${invoice.companyInfo.phone}`, box1X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+
+  boxY = box2Y + textPadding;
+  doc.fontSize(10).fillColor('#6539c0').text('Billed To', box2X + textPadding, boxY, { bold: true });
+  boxY += 15;
+  doc.fontSize(9).fillColor(primaryColor).text(invoice.clientInfo.name, box2X + textPadding, boxY, { bold: true, width: boxWidth - (textPadding * 2) });
+  boxY += 12;
+  
+  // Add company name if available
   if (invoice.clientInfo.company) {
-    addText(invoice.clientInfo.company, margin, y, { fontSize: 9 });
-    y += 10;
+    doc.fontSize(8).fillColor(primaryColor).text(invoice.clientInfo.company, box2X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+    boxY += 12;
   }
-  if (invoice.clientInfo.address.street && invoice.clientInfo.address.street !== 'N/A') {
-    addText(invoice.clientInfo.address.street, margin, y, { fontSize: 8 });
-    y += 10;
-  }
-  if (invoice.clientInfo.address.city && invoice.clientInfo.address.city !== 'N/A') {
-    const cityState = [invoice.clientInfo.address.city, invoice.clientInfo.address.state].filter(Boolean).join(', ');
-    if (cityState) {
-      addText(cityState, margin, y, { fontSize: 8 });
-      y += 10;
-    }
-  }
-  if (invoice.clientInfo.email) {
-    addText(`Email: ${invoice.clientInfo.email}`, margin, y, { fontSize: 8, color: secondaryColor });
-    y += 10;
-  }
-  y += 5;
+  
+  doc.fontSize(8).fillColor(primaryColor).text(`${invoice.clientInfo.address.street}`, box2X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+  boxY += 12;
+  doc.text(`${invoice.clientInfo.address.city}, ${invoice.clientInfo.address.state}`, { width: boxWidth - (textPadding * 2) });
+  boxY += 12;
+  doc.text(`${invoice.clientInfo.address.zipCode}, ${invoice.clientInfo.address.country}`, { width: boxWidth - (textPadding * 2) });
+  boxY += 15;
+  
+  // Add client contact details
+  doc.text(`GSTIN: ${invoice.clientInfo.gstin || 'Not Provided'}`, box2X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+  boxY += 12;
+  doc.text(`Email: ${invoice.clientInfo.email}`, box2X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+  boxY += 12;
+  doc.text(`Phone: ${invoice.clientInfo.phone}`, box2X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
+
+  y = Math.max(box1Y + companyBoxHeight, box2Y + clientBoxHeight) + 20;
 
   // --- Items Table ---
-  doc.rect(margin, y, contentWidth, 16).fillAndStroke(primaryColor, primaryColor);
-  addText('Description', margin + 8, y + 3, { fontSize: 9, bold: true, color: 'white' });
-  addText('Qty', margin + 180, y + 3, { fontSize: 9, bold: true, color: 'white', align: 'center' });
-  addText('Price', margin + 200, y + 3, { fontSize: 9, bold: true, color: 'white', align: 'right' });
-  addText('Tax', margin + 260, y + 3, { fontSize: 9, bold: true, color: 'white', align: 'center' });
-  addText('Total', margin + 360, y + 3, { fontSize: 9, bold: true, color: 'white', align: 'right' });
+  const col1X = margin + 8;
+  const col2X = margin + 200;
+  const col3X = margin + 280;
+  const col4X = margin + 360;
+  const col5X = margin + 440;
+  const colWidth = pageWidth - col5X - margin;
 
-  let rowCount = 0;
+  doc.rect(margin, y, contentWidth, 20).fillAndStroke(tableHeaderColor, tableHeaderColor);
+  addText('DESCRIPTION', col1X, y + 6, { fontSize: 8, bold: true, color: primaryColor });
+  addText('UNIT PRICE', col2X, y + 6, { fontSize: 8, bold: true, color: primaryColor, align: 'right', width: 70 });
+  addText('GST', col3X, y + 6, { fontSize: 8, bold: true, color: primaryColor, align: 'right', width: 70 });
+  addText('QTY', col4X, y + 6, { fontSize: 8, bold: true, color: primaryColor, align: 'right', width: 70 });
+  addText('TOTAL', col5X, y + 6, { fontSize: 8, bold: true, color: primaryColor, align: 'right', width: colWidth });
+  y += 20;
+
   invoice.items.forEach(item => {
-    const rowColor = rowCount % 2 === 0 ? 'white' : '#f8fafc';
-    doc.rect(margin, y, contentWidth, 14).fillAndStroke(rowColor, '#e2e8f0');
-    addText(item.description, margin + 8, y + 2, { fontSize: 8 });
-    addText(item.quantity.toString(), margin + 180, y + 2, { fontSize: 8, align: 'center' });
-    addText(`${invoice.currencySymbol}${item.unitPrice.toFixed(2)}`, margin + 200, y + 2, { fontSize: 8, align: 'right' });
-    addText(`${item.taxRate}%`, margin + 260, y + 2, { fontSize: 8, align: 'center' });
-    addText(`${invoice.currencySymbol}${item.total.toFixed(2)}`, margin + 360, y + 2, { fontSize: 8, bold: true, align: 'right' });
-    y += 14;
-    rowCount++;
+    addText(item.description || '', col1X, y + 6, { fontSize: 8, color: primaryColor });
+    addText(formatNumber(item.unitPrice), col2X, y + 6, { fontSize: 8, color: primaryColor, align: 'right', width: 70 });
+    addText(formatNumber(item.gst), col3X, y + 6, { fontSize: 8, color: primaryColor, align: 'right', width: 70 });
+    addText(item.quantity.toString(), col4X, y + 6, { fontSize: 8, color: primaryColor, align: 'right', width: 70 });
+    
+    // ✅ Clean number formatting with proper currency symbol and font handling
+    addText(`${currencySymbol} ${formatNumber(item.total)}`, col5X, y + 6, { fontSize: 8, color: primaryColor, align: 'right', width: colWidth });
+    y += 20;
   });
-  y += 8;
+  y += 5;
 
-  // --- Totals ---
-  const totalsX = margin + 250;
-  let totalsY = y;
-  const totalsLineSpacing = 22;
-  doc.rect(totalsX - 20, totalsY - 8, 240, totalsLineSpacing * 3 + 16).fillAndStroke('#f8fafc', '#e2e8f0');
-  addText('Subtotal:', totalsX, totalsY, { fontSize: 9, bold: true });
-  addText(`${invoice.currencySymbol}${invoice.items.reduce((sum, item) => sum + item.subtotal, 0).toFixed(2)}`, totalsX + 170, totalsY, { fontSize: 9, align: 'right' });
-  addText('Tax:', totalsX, totalsY + totalsLineSpacing, { fontSize: 9 });
-  addText(`${invoice.currencySymbol}${invoice.items.reduce((sum, item) => sum + item.taxAmount, 0).toFixed(2)}`, totalsX + 170, totalsY + totalsLineSpacing, { fontSize: 9, align: 'right' });
-  addText('Total Amount:', totalsX, totalsY + totalsLineSpacing * 2, { fontSize: 11, bold: true, color: primaryColor });
-  addText(`${invoice.currencySymbol}${invoice.totalAmount.toFixed(2)}`, totalsX + 170, totalsY + totalsLineSpacing * 2, { fontSize: 11, bold: true, color: primaryColor, align: 'right' });
-  y = Math.max(y, totalsY + totalsLineSpacing * 2 + 20);
+  // --- Totals Section ---
+  const totalsX = pageWidth - margin - 200;
+  const totalsLineSpacing = 16;
+  const totalsValueX = totalsX + 90;
+  const totalsValueWidth = 100;
+  
+  addText('SUBTOTAL', totalsX, y, { fontSize: 9, bold: true, color: primaryColor });
+  // ✅ Clean number formatting with proper currency symbol and font handling
+  addText(`${currencySymbol} ${formatNumber(invoice.subtotal)}`, totalsValueX, y, { fontSize: 9, bold: true, color: primaryColor, align: 'right', width: totalsValueWidth });
+  y += totalsLineSpacing;
+  
+  addText('GST 18%', totalsX, y, { fontSize: 9, bold: true, color: primaryColor });
+  // ✅ Clean number formatting with proper currency symbol and font handling
+  addText(`${currencySymbol} ${formatNumber(invoice.gstAmount)}`, totalsValueX, y, { fontSize: 9, bold: true, color: primaryColor, align: 'right', width: totalsValueWidth });
+  y += totalsLineSpacing;
+  
+  addText('TOTAL', totalsX, y, { fontSize: 9, bold: true, color: primaryColor });
+  // ✅ Clean number formatting with proper currency symbol and font handling
+  addText(`${currencySymbol} ${formatNumber(invoice.totalAmount)}`, totalsValueX, y, { fontSize: 9, bold: true, color: primaryColor, align: 'right', width: totalsValueWidth });
+  y += totalsLineSpacing;
+  y += 30;
 
-  // --- Amount in Words ---
-  if (invoice.getAmountInWords) {
-    addText(`Amount in words: ${invoice.getAmountInWords()}`, margin, y + 8, { fontSize: 8, color: secondaryColor });
-    y += 18;
-  }
+  // --- Signature Section ---
+  const signaturePath = '../server/assets/images/sign.jpg';
+  const signatureWidth = 120;
+  const signatureHeight = 60;
+  const signatureX = pageWidth - margin - signatureWidth - 20;
+  
+  addImage(signaturePath, signatureX, y, signatureWidth, { height: signatureHeight });
+  y += signatureHeight + 5;
+  addText('Authorized Signature', signatureX + 10, y, { fontSize: 9, color: secondaryColor });
 
-  // --- Notes ---
-  if (invoice.notes) {
-    addText('Notes:', margin, y, { fontSize: 9, bold: true, color: primaryColor });
-    addText(invoice.notes, margin + 40, y, { fontSize: 8 });
-    y += 14;
-  }
-
-  // --- Payment Details ---
-  if (invoice.paymentDetails && (invoice.paymentDetails.bankName || invoice.paymentDetails.accountNumber)) {
-    addText('Payment Details:', margin, y, { fontSize: 9, bold: true, color: primaryColor });
-    let paymentY = y + 12;
-    if (invoice.paymentDetails.bankName) {
-      addText(`Bank: ${invoice.paymentDetails.bankName}`, margin, paymentY, { fontSize: 8 });
-      paymentY += 10;
-    }
-    if (invoice.paymentDetails.accountNumber) {
-      addText(`Account: ${invoice.paymentDetails.accountNumber}`, margin, paymentY, { fontSize: 8 });
-      paymentY += 10;
-    }
-    if (invoice.paymentDetails.ifscCode) {
-      addText(`IFSC: ${invoice.paymentDetails.ifscCode}`, margin, paymentY, { fontSize: 8 });
-      paymentY += 10;
-    }
-    y = paymentY;
-  }
-
-  // --- Footer ---
-  if (y < doc.page.height - 50) {
-    addText('Thank you for your business!', margin, y + 10, { fontSize: 10, color: secondaryColor, align: 'center', width: contentWidth });
-  }
+  // // --- Footer Logos ---
+  // const footerY = pageHeight - margin - 20;
+  // addText('TRAINCAPE', margin, footerY, { fontSize: 11, bold: true, color: primaryColor });
+  // addText('TECHNOLOGY Pvt. Ltd.', margin + 80, footerY + 1, { fontSize: 9, color: primaryColor });
 }

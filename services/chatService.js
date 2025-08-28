@@ -128,6 +128,11 @@ class ChatService {
           ? room.recipientId 
           : room.senderId;
         
+        // Check if otherUser exists before accessing its properties
+        if (!otherUser) {
+          return null;
+        }
+        
         const unreadCount = room.senderId._id.toString() === userObjectId.toString()
           ? room.unreadCount.senderId
           : room.unreadCount.recipientId;
@@ -146,7 +151,7 @@ class ChatService {
           lastMessageTime: room.lastMessageTime,
           unreadCount
         };
-      });
+      }).filter(room => room !== null); // Filter out null rooms
       
       return formattedRooms;
     } catch (error) {

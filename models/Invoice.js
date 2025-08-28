@@ -187,6 +187,11 @@ const InvoiceSchema = new mongoose.Schema({
       default: 0,
       min: 0
     },
+    gst: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
     total: {
       type: Number,
       required: true,
@@ -206,6 +211,11 @@ const InvoiceSchema = new mongoose.Schema({
     min: 0
   },
   totalTax: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  gstAmount: {
     type: Number,
     default: 0,
     min: 0
@@ -434,19 +444,18 @@ InvoiceSchema.pre('save', function(next) {
   }
 });
 
-// Static method to generate invoice number
+// Static, deletion-resilient, atomic invoice number generator using a counter collection
 InvoiceSchema.statics.generateInvoiceNumber = async function() {
+  const Counter = require('./Counter');
   const year = new Date().getFullYear();
-  const lastInvoice = await this.findOne({
-    invoiceNumber: { $regex: `^INV-${year}-` }
-  }).sort({ invoiceNumber: -1 });
-  
-  let nextNumber = 1;
-  if (lastInvoice) {
-    const lastNumber = parseInt(lastInvoice.invoiceNumber.split('-')[2]);
-    nextNumber = lastNumber + 1;
-  }
-  
+  const key = `invoice-${year}`;
+  // Atomically increment the counter so deletions or race conditions can't reuse numbers
+  const updated = await Counter.findOneAndUpdate(
+    { key },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  const nextNumber = updated.seq;
   return `INV-${year}-${nextNumber.toString().padStart(3, '0')}`;
 };
 
