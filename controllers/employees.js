@@ -314,9 +314,12 @@ exports.createEmployee = async (req, res) => {
     });
   } catch (err) {
     console.error('Error creating employee:', err);
+    console.log('Employee data being processed:', employeeData);
     res.status(400).json({
       success: false,
-      message: err.message
+      message: err.message,
+      error: err,
+      data: employeeData
     });
   }
 };

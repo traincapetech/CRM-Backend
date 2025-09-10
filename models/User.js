@@ -26,7 +26,7 @@ const UserSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['Sales Person', 'Lead Person', 'Manager', 'Admin', 'Customer', 'HR', 'Employee'],
+    enum: ['Sales Person', 'Lead Person', 'Manager', 'Admin', 'Customer', 'HR', 'Employee', 'IT Staff', 'IT Manager'],
     default: 'Sales Person'
   },
   // Employee reference for Employee role users

@@ -49,6 +49,11 @@ const employeeSchema = new mongoose.Schema({
     enum: ['ACTIVE', 'INACTIVE', 'TERMINATED'],
     default: 'ACTIVE'
   },
+  employmentType: {
+    type: String,
+    enum: ['PERMANENT', 'INTERN', 'CONTRACT'],
+    default: 'PERMANENT'
+  },
   department: {
     type: mongoose.Schema.ObjectId,
     ref: 'Department',
@@ -71,6 +76,38 @@ const employeeSchema = new mongoose.Schema({
   internshipDuration: {
     type: Number // in months
   },
+  internshipStartDate: {
+    type: Date
+  },
+  internshipEndDate: {
+    type: Date
+  },
+  techStack: [{
+    type: String,
+    trim: true
+  }],
+  projectAssignments: [{
+    projectName: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    role: {
+      type: String,
+      trim: true
+    },
+    startDate: {
+      type: Date
+    },
+    endDate: {
+      type: Date
+    },
+    status: {
+      type: String,
+      enum: ['ACTIVE', 'COMPLETED', 'ON_HOLD'],
+      default: 'ACTIVE'
+    }
+  }],
   // Document Storage (supporting both simple strings and detailed objects)
   photograph: {
     type: mongoose.Schema.Types.Mixed
@@ -133,4 +170,4 @@ employeeSchema.pre(/^find/, function(next) {
   next();
 });
 
-module.exports = mongoose.model('Employee', employeeSchema); 
+module.exports = mongoose.model('Employee', employeeSchema);

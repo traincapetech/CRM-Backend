@@ -711,7 +711,13 @@ function generatePDFContent(doc, invoice) {
   // Helper function to add an image.
   const addImage = (imagePath, x, y, width, options = {}) => {
     try {
-      doc.image(imagePath, x, y, { width, ...options });
+      // Check if file exists before trying to load it
+      if (fs.existsSync(imagePath)) {
+        doc.image(imagePath, x, y, { width, ...options });
+      } else {
+        console.error('Image file not found:', imagePath);
+        addText('Image could not be loaded.', x, y, { color: 'red' });
+      }
     } catch (error) {
       console.error('Error loading image:', error);
       addText('Image could not be loaded.', x, y, { color: 'red' });
@@ -747,7 +753,7 @@ function generatePDFContent(doc, invoice) {
   const logoX = pageWidth - margin - logoWidth;
   const logoY = y;
   
-  const logoPath = '../client/src/assets/traincape-logo.jpg';
+  const logoPath = path.join(__dirname, '../assets/images/traincape-logo.jpg');
   addImage(logoPath, logoX, logoY, logoWidth, { height: logoHeight });
 
   const invoiceDetailsX = margin;
@@ -896,7 +902,7 @@ function generatePDFContent(doc, invoice) {
   y += 30;
 
   // --- Signature Section ---
-  const signaturePath = '../server/assets/images/sign.jpg';
+  const signaturePath = path.join(__dirname, '../assets/images/sign.jpg');
   const signatureWidth = 120;
   const signatureHeight = 60;
   const signatureX = pageWidth - margin - signatureWidth - 20;
