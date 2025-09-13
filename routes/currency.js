@@ -1,11 +1,16 @@
 const express = require('express');
 const router = express.Router();
-const { getRates } = require('../controllers/currency');
+const { getRates, refreshRates } = require('../controllers/currency');
 
 // @route   GET /api/currency/rates
 // @desc    Get latest exchange rates
 // @access  Public
 router.get('/rates', getRates);
+
+// @route   POST /api/currency/refresh
+// @desc    Force refresh exchange rates (bypass cache)
+// @access  Public
+router.post('/refresh', refreshRates);
 
 // Get specific exchange rate
 router.get('/rate', async (req, res) => {
