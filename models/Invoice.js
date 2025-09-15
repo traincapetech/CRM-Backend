@@ -132,10 +132,6 @@ const InvoiceSchema = new mongoose.Schema({
         trim: true
       }
     },
-    gstin: {
-      type: String,
-      trim: true
-    },
     email: {
       type: String,
       required: true,

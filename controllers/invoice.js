@@ -796,7 +796,6 @@ function generatePDFContent(doc, invoice) {
     `${invoice.clientInfo.address.zipCode}, ${invoice.clientInfo.address.country}`
   ].join('\n');
   const clientInfoText = `Billed To\n\n${invoice.clientInfo.name}\n${invoice.clientInfo.company ? `${invoice.clientInfo.company}\n` : ''}${clientAddressLines}\n\n` +
-                          `GSTIN: ${invoice.clientInfo.gstin || 'Not Provided'}\n` +
                           `Email: ${invoice.clientInfo.email}\n` +
                           `Phone: ${invoice.clientInfo.phone}`;
   
@@ -843,8 +842,6 @@ function generatePDFContent(doc, invoice) {
   boxY += 15;
   
   // Add client contact details
-  doc.text(`GSTIN: ${invoice.clientInfo.gstin || 'Not Provided'}`, box2X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
-  boxY += 12;
   doc.text(`Email: ${invoice.clientInfo.email}`, box2X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
   boxY += 12;
   doc.text(`Phone: ${invoice.clientInfo.phone}`, box2X + textPadding, boxY, { width: boxWidth - (textPadding * 2) });
