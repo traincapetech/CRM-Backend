@@ -9,7 +9,10 @@ const attendanceSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: function() {
+      // userId is required only if it's not an admin-created record
+      return !this.isAdminCreated;
+    }
   },
   date: {
     type: Date,
@@ -46,6 +49,10 @@ const attendanceSchema = new mongoose.Schema({
   approvedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  isAdminCreated: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true

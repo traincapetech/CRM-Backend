@@ -6,7 +6,8 @@ const {
   getAttendanceHistory,
   getAllAttendance,
   updateAttendance,
-  getMonthlyAttendanceSummary
+  getMonthlyAttendanceSummary,
+  createAttendance
 } = require('../controllers/attendance');
 
 const router = express.Router();
@@ -24,6 +25,7 @@ router.get('/summary/:month/:year', getMonthlyAttendanceSummary);
 
 // Admin/HR/Manager routes
 router.get('/all', getAllAttendance);
+router.post('/', createAttendance);
 router.put('/:id', updateAttendance);
 
 module.exports = router; 

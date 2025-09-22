@@ -293,6 +293,104 @@ exports.getAllAttendance = async (req, res) => {
   }
 };
 
+// @desc    Create attendance record (Admin/HR only)
+// @route   POST /api/attendance
+// @access  Private (Admin/HR/Manager)
+exports.createAttendance = async (req, res) => {
+  try {
+    console.log('=== CREATE ATTENDANCE DEBUG ===');
+    console.log('Request body:', req.body);
+    console.log('User role:', req.user.role);
+    console.log('User ID:', req.user.id);
+    
+    // Check authorization
+    if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to create attendance records'
+      });
+    }
+
+    const { employeeId, date, status, notes, checkIn, checkOut } = req.body;
+
+    // Validate required fields
+    if (!employeeId || !date || !status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID, date, and status are required'
+      });
+    }
+
+    // Check if attendance record already exists for this employee and date
+    const existingAttendance = await Attendance.findOne({
+      employeeId,
+      date: new Date(date)
+    });
+
+    if (existingAttendance) {
+      return res.status(400).json({
+        success: false,
+        message: 'Attendance record already exists for this employee and date'
+      });
+    }
+
+    // Find the user associated with the employee
+    console.log('Looking for employee with ID:', employeeId);
+    const employee = await Employee.findById(employeeId);
+    console.log('Found employee:', employee ? 'YES' : 'NO');
+    if (employee) {
+      console.log('Employee userId:', employee.userId);
+    }
+    
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    // Create attendance record
+    const attendanceData = {
+      employeeId,
+      userId: employee.userId || null, // Can be null for admin-created records
+      date: new Date(date),
+      status,
+      notes: notes || '',
+      approvedBy: req.user.id,
+      isAdminCreated: true // Mark as admin-created
+    };
+
+    // Add check-in/check-out times if provided
+    if (checkIn) attendanceData.checkIn = new Date(checkIn);
+    if (checkOut) attendanceData.checkOut = new Date(checkOut);
+
+    console.log('Creating attendance with data:', attendanceData);
+    const attendance = new Attendance(attendanceData);
+    console.log('Attendance object created, attempting to save...');
+    await attendance.save();
+    console.log('Attendance saved successfully!');
+
+    res.status(201).json({
+      success: true,
+      data: attendance,
+      message: 'Attendance record created successfully'
+    });
+  } catch (error) {
+    console.error('=== CREATE ATTENDANCE ERROR ===');
+    console.error('Error message:', error.message);
+    console.error('Error name:', error.name);
+    console.error('Error stack:', error.stack);
+    if (error.errors) {
+      console.error('Validation errors:', error.errors);
+    }
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
 // @desc    Update attendance (Admin/HR only)
 // @route   PUT /api/attendance/:id
 // @access  Private (Admin/HR/Manager)

@@ -4,7 +4,8 @@ const {
   getTasks,
   getTask,
   updateTask,
-  deleteTask
+  deleteTask,
+  getSalesPersons
 } = require('../controllers/taskController');
 
 const router = express.Router();
@@ -18,6 +19,10 @@ router.use(protect);
 router.route('/')
   .get(getTasks)
   .post(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), createTask);
+
+// Route for getting sales persons (admin/manager only)
+router.route('/sales-persons')
+  .get(authorize('Admin', 'Manager'), getSalesPersons);
 
 router.route('/:id')
   .get(getTask)

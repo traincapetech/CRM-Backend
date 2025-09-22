@@ -42,12 +42,34 @@ exports.getTasks = asyncHandler(async (req, res, next) => {
   // For non-admin users, only show their own tasks
   let query;
   
+  // Build filter object
+  let filter = {};
+  
   // If user is not admin or manager, only show their tasks
   if (req.user.role !== 'Admin' && req.user.role !== 'Manager') {
-    query = Task.find({ salesPerson: req.user.id });
-  } else {
-    query = Task.find();
+    filter.salesPerson = req.user.id;
   }
+  
+  // Add date filtering if provided
+  if (req.query.date) {
+    const filterDate = new Date(req.query.date);
+    const startOfDay = new Date(filterDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(filterDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    filter.examDate = {
+      $gte: startOfDay,
+      $lte: endOfDay
+    };
+  }
+  
+  // Add sales person filtering for admin/manager
+  if ((req.user.role === 'Admin' || req.user.role === 'Manager') && req.query.salesPerson) {
+    filter.salesPerson = req.query.salesPerson;
+  }
+  
+  query = Task.find(filter);
   
   // Execute query with populated fields
   const tasks = await query
@@ -84,6 +106,29 @@ exports.getTasks = asyncHandler(async (req, res, next) => {
     success: true,
     count: processedTasks.length,
     data: processedTasks
+  });
+});
+
+// @desc    Get all sales persons for admin filtering
+// @route   GET /api/tasks/sales-persons
+// @access  Private (Admin/Manager only)
+exports.getSalesPersons = asyncHandler(async (req, res, next) => {
+  // Check if user is admin or manager
+  if (req.user.role !== 'Admin' && req.user.role !== 'Manager') {
+    return res.status(403).json({
+      success: false,
+      message: 'Not authorized to access this resource'
+    });
+  }
+
+  // Get only users with Sales Person role
+  const salesPersons = await User.find({
+    role: 'Sales Person'
+  }).select('fullName email role');
+
+  res.status(200).json({
+    success: true,
+    data: salesPersons
   });
 });
 

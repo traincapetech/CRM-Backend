@@ -146,7 +146,7 @@ const getAllUsersForChat = async (req, res) => {
     // Get all users except current user, including customers
     const users = await User.find({ 
       _id: { $ne: currentUserId } 
-    }).select('fullName email role chatStatus lastSeen profilePicture');
+    }).select('fullName email role chatStatus lastSeen profilePicture createdAt');
 
     res.status(200).json({
       success: true,

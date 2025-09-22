@@ -193,7 +193,7 @@ exports.getAllUsers = async (req, res) => {
       filter.role = roleFilter;
     }
 
-    const users = await User.find(filter, "fullName email role");
+    const users = await User.find(filter, "fullName email role createdAt");
 
     res.status(200).json({
       success: true,
