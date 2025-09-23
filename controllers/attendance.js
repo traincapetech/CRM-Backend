@@ -315,6 +315,7 @@ exports.createAttendance = async (req, res) => {
 
     // Validate required fields
     if (!employeeId || !date || !status) {
+      console.log('Validation failed - employeeId:', employeeId, 'date:', date, 'status:', status);
       return res.status(400).json({
         success: false,
         message: 'Employee ID, date, and status are required'
@@ -334,13 +335,8 @@ exports.createAttendance = async (req, res) => {
       });
     }
 
-    // Find the user associated with the employee
-    console.log('Looking for employee with ID:', employeeId);
+    // Find the employee
     const employee = await Employee.findById(employeeId);
-    console.log('Found employee:', employee ? 'YES' : 'NO');
-    if (employee) {
-      console.log('Employee userId:', employee.userId);
-    }
     
     if (!employee) {
       return res.status(404).json({
@@ -364,11 +360,8 @@ exports.createAttendance = async (req, res) => {
     if (checkIn) attendanceData.checkIn = new Date(checkIn);
     if (checkOut) attendanceData.checkOut = new Date(checkOut);
 
-    console.log('Creating attendance with data:', attendanceData);
     const attendance = new Attendance(attendanceData);
-    console.log('Attendance object created, attempting to save...');
     await attendance.save();
-    console.log('Attendance saved successfully!');
 
     res.status(201).json({
       success: true,
@@ -376,13 +369,7 @@ exports.createAttendance = async (req, res) => {
       message: 'Attendance record created successfully'
     });
   } catch (error) {
-    console.error('=== CREATE ATTENDANCE ERROR ===');
-    console.error('Error message:', error.message);
-    console.error('Error name:', error.name);
-    console.error('Error stack:', error.stack);
-    if (error.errors) {
-      console.error('Validation errors:', error.errors);
-    }
+    console.error('Error creating attendance:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',

@@ -244,6 +244,10 @@ exports.getSale = async (req, res) => {
 // @access  Private
 exports.createSale = async (req, res) => {
   try {
+    console.log('=== SALE CREATION REQUEST ===');
+    console.log('User:', req.user.fullName, req.user.role);
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
     // Add user to req.body
     req.body.createdBy = req.user.id;
     
@@ -254,12 +258,16 @@ exports.createSale = async (req, res) => {
     
     // Handle reference sales for Sales Person role
     if (req.user.role === 'Sales Person' && req.body.isReference) {
-      // For reference sales, if no lead person is specified, find a default one
+      // For reference sales, don't assign a default lead person
+      // Leave leadPerson as null/undefined to indicate it's a reference sale
+      console.log('Reference sale created - no lead person assigned');
+    } else {
+      // For non-reference sales, ensure lead person is provided
       if (!req.body.leadPerson) {
-        const leadPerson = await User.findOne({ role: 'Lead Person' });
-        if (leadPerson) {
-          req.body.leadPerson = leadPerson._id;
-        }
+        return res.status(400).json({
+          success: false,
+          message: 'Lead person is required for non-reference sales'
+        });
       }
     }
 
@@ -271,14 +279,22 @@ exports.createSale = async (req, res) => {
       data: sale
     });
   } catch (err) {
+    console.log('=== SALE CREATION ERROR ===');
+    console.log('Error name:', err.name);
+    console.log('Error message:', err.message);
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
     if (err.name === 'ValidationError') {
+      console.log('Validation errors:', err.errors);
       const message = Object.values(err.errors).map(val => val.message);
       return res.status(400).json({
         success: false,
-        message: message
+        message: message,
+        errors: err.errors
       });
     }
     
+    console.log('Full error:', err);
     res.status(500).json({
       success: false,
       message: 'Server Error'

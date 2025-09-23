@@ -20,7 +20,10 @@ const attendanceSchema = new mongoose.Schema({
   },
   checkIn: {
     type: Date,
-    required: true
+    required: function() {
+      // checkIn is required only if it's not an admin-created record
+      return !this.isAdminCreated;
+    }
   },
   checkOut: {
     type: Date

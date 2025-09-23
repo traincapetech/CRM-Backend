@@ -51,7 +51,7 @@ const SaleSchema = new mongoose.Schema({
   leadPerson: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: [true, 'Please assign a lead person']
+    required: false // Make it optional - we'll handle validation in the controller
   },
   leadBy: {
     type: String,
