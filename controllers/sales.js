@@ -307,6 +307,11 @@ exports.createSale = async (req, res) => {
 // @access  Private
 exports.updateSale = async (req, res) => {
   try {
+    console.log('=== SALE UPDATE REQUEST ===');
+    console.log('Sale ID:', req.params.id);
+    console.log('User:', req.user.fullName, req.user.role);
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
     let sale = await Sale.findById(req.params.id).populate('salesPerson leadPerson', 'fullName email');
 
     if (!sale) {
@@ -349,6 +354,12 @@ exports.updateSale = async (req, res) => {
     // Add updatedBy field and timestamp
     req.body.updatedBy = req.user.id;
     req.body.updatedAt = new Date();
+
+    // Handle reference sales - ensure leadPerson is null for reference sales
+    if (req.body.isReference && req.body.leadPerson) {
+      console.log('Setting leadPerson to null for reference sale update');
+      req.body.leadPerson = null;
+    }
 
     // Ensure remarks is preserved if not provided in update
     if (req.body.remarks === undefined) {
@@ -422,14 +433,22 @@ exports.updateSale = async (req, res) => {
       emailNotifications: emailResults.length > 0 ? emailResults : undefined
     });
   } catch (err) {
+    console.log('=== SALE UPDATE ERROR ===');
+    console.log('Error name:', err.name);
+    console.log('Error message:', err.message);
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
     if (err.name === 'ValidationError') {
+      console.log('Validation errors:', err.errors);
       const message = Object.values(err.errors).map(val => val.message);
       return res.status(400).json({
         success: false,
-        message: message
+        message: message,
+        errors: err.errors
       });
     }
     
+    console.log('Full error:', err);
     res.status(500).json({
       success: false,
       message: 'Server Error'
