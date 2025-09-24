@@ -255,6 +255,28 @@ exports.createSale = async (req, res) => {
     if (!req.body.salesPerson) {
       req.body.salesPerson = req.user.id;
     }
+
+    // If this is a converted lead sale, ensure we have the lead data
+    if (req.body._selectedLead || req.body.leadId) {
+      const Lead = require('../models/Lead');
+      const leadId = req.body._selectedLead?._id || req.body.leadId;
+      if (leadId) {
+        const leadData = await Lead.findById(leadId);
+        if (leadData) {
+          // Merge lead data with sale data
+          req.body = {
+            ...req.body,
+            customerName: req.body.customerName || leadData.name,
+            country: req.body.country || leadData.country,
+            countryCode: req.body.countryCode || leadData.countryCode,
+            contactNumber: req.body.contactNumber || leadData.phone || leadData.contactNumber,
+            email: req.body.email || leadData.email,
+            source: req.body.source || leadData.source,
+            clientRemark: req.body.clientRemark || leadData.client
+          };
+        }
+      }
+    }
     
     // Handle reference sales for Sales Person role
     if (req.user.role === 'Sales Person' && req.body.isReference) {
