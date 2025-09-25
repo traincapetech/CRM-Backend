@@ -28,16 +28,11 @@ const SaleSchema = new mongoose.Schema({
   },
   contactNumber: {
     type: String,
-    required: [true, 'Please add a contact number'],
     trim: true
   },
   email: {
     type: String,
-    trim: true,
-    match: [
-      /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
-      'Please add a valid email'
-    ]
+    trim: true
   },
   pseudoId: {
     type: String,

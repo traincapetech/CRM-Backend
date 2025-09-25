@@ -244,10 +244,6 @@ exports.getSale = async (req, res) => {
 // @access  Private
 exports.createSale = async (req, res) => {
   try {
-    console.log('=== SALE CREATION REQUEST ===');
-    console.log('User:', req.user.fullName, req.user.role);
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-    
     // Add user to req.body
     req.body.createdBy = req.user.id;
     
@@ -255,41 +251,15 @@ exports.createSale = async (req, res) => {
     if (!req.body.salesPerson) {
       req.body.salesPerson = req.user.id;
     }
-
-    // If this is a converted lead sale, ensure we have the lead data
-    if (req.body._selectedLead || req.body.leadId) {
-      const Lead = require('../models/Lead');
-      const leadId = req.body._selectedLead?._id || req.body.leadId;
-      if (leadId) {
-        const leadData = await Lead.findById(leadId);
-        if (leadData) {
-          // Merge lead data with sale data
-          req.body = {
-            ...req.body,
-            customerName: req.body.customerName || leadData.name,
-            country: req.body.country || leadData.country,
-            countryCode: req.body.countryCode || leadData.countryCode,
-            contactNumber: req.body.contactNumber || leadData.phone || leadData.contactNumber,
-            email: req.body.email || leadData.email,
-            source: req.body.source || leadData.source,
-            clientRemark: req.body.clientRemark || leadData.client
-          };
-        }
-      }
-    }
     
     // Handle reference sales for Sales Person role
     if (req.user.role === 'Sales Person' && req.body.isReference) {
-      // For reference sales, don't assign a default lead person
-      // Leave leadPerson as null/undefined to indicate it's a reference sale
-      console.log('Reference sale created - no lead person assigned');
-    } else {
-      // For non-reference sales, ensure lead person is provided
+      // For reference sales, if no lead person is specified, find a default one
       if (!req.body.leadPerson) {
-        return res.status(400).json({
-          success: false,
-          message: 'Lead person is required for non-reference sales'
-        });
+        const leadPerson = await User.findOne({ role: 'Lead Person' });
+        if (leadPerson) {
+          req.body.leadPerson = leadPerson._id;
+        }
       }
     }
 
@@ -301,22 +271,14 @@ exports.createSale = async (req, res) => {
       data: sale
     });
   } catch (err) {
-    console.log('=== SALE CREATION ERROR ===');
-    console.log('Error name:', err.name);
-    console.log('Error message:', err.message);
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-    
     if (err.name === 'ValidationError') {
-      console.log('Validation errors:', err.errors);
       const message = Object.values(err.errors).map(val => val.message);
       return res.status(400).json({
         success: false,
-        message: message,
-        errors: err.errors
+        message: message
       });
     }
     
-    console.log('Full error:', err);
     res.status(500).json({
       success: false,
       message: 'Server Error'
@@ -329,11 +291,6 @@ exports.createSale = async (req, res) => {
 // @access  Private
 exports.updateSale = async (req, res) => {
   try {
-    console.log('=== SALE UPDATE REQUEST ===');
-    console.log('Sale ID:', req.params.id);
-    console.log('User:', req.user.fullName, req.user.role);
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-    
     let sale = await Sale.findById(req.params.id).populate('salesPerson leadPerson', 'fullName email');
 
     if (!sale) {
@@ -376,12 +333,6 @@ exports.updateSale = async (req, res) => {
     // Add updatedBy field and timestamp
     req.body.updatedBy = req.user.id;
     req.body.updatedAt = new Date();
-
-    // Handle reference sales - ensure leadPerson is null for reference sales
-    if (req.body.isReference && req.body.leadPerson) {
-      console.log('Setting leadPerson to null for reference sale update');
-      req.body.leadPerson = null;
-    }
 
     // Ensure remarks is preserved if not provided in update
     if (req.body.remarks === undefined) {
@@ -455,22 +406,14 @@ exports.updateSale = async (req, res) => {
       emailNotifications: emailResults.length > 0 ? emailResults : undefined
     });
   } catch (err) {
-    console.log('=== SALE UPDATE ERROR ===');
-    console.log('Error name:', err.name);
-    console.log('Error message:', err.message);
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-    
     if (err.name === 'ValidationError') {
-      console.log('Validation errors:', err.errors);
       const message = Object.values(err.errors).map(val => val.message);
       return res.status(400).json({
         success: false,
-        message: message,
-        errors: err.errors
+        message: message
       });
     }
     
-    console.log('Full error:', err);
     res.status(500).json({
       success: false,
       message: 'Server Error'
