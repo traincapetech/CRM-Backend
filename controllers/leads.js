@@ -1220,4 +1220,70 @@ exports.getRepeatCustomers = async (req, res) => {
       message: err.message
     });
   }
+};
+
+// @desc    Get lead statistics
+// @route   GET /api/leads/stats
+// @access  Private
+exports.getLeadStats = async (req, res) => {
+  try {
+    const filter = {};
+    
+    // Role-based filtering
+    if (req.user.role === 'Sales Person') {
+      filter.assignedTo = req.user._id;
+    }
+
+    const stats = await Lead.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          new: { $sum: { $cond: [{ $eq: ['$status', 'New'] }, 1, 0] } },
+          contacted: { $sum: { $cond: [{ $eq: ['$status', 'Contacted'] }, 1, 0] } },
+          interested: { $sum: { $cond: [{ $eq: ['$status', 'Interested'] }, 1, 0] } },
+          qualified: { $sum: { $cond: [{ $eq: ['$status', 'Qualified'] }, 1, 0] } },
+          converted: { $sum: { $cond: [{ $eq: ['$status', 'Converted to Sale'] }, 1, 0] } },
+          lost: { $sum: { $cond: [{ $eq: ['$status', 'Lost'] }, 1, 0] } }
+        }
+      }
+    ]);
+
+    const sourceStats = await Lead.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$source',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]);
+
+    const result = {
+      overview: stats[0] || {
+        total: 0,
+        new: 0,
+        contacted: 0,
+        interested: 0,
+        qualified: 0,
+        converted: 0,
+        lost: 0
+      },
+      sources: sourceStats
+    };
+
+    res.status(200).json({
+      success: true,
+      data: result
+    });
+
+  } catch (error) {
+    console.error('Error getting lead stats:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
 }; 

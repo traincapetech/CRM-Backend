@@ -10,7 +10,8 @@ const {
   getAssignedLeads,
   importLeads,
   getAllCustomers,
-  getRepeatCustomers
+  getRepeatCustomers,
+  getLeadStats
 } = require('../controllers/leads');
 
 const { protect, authorize } = require('../middleware/auth');
@@ -25,6 +26,9 @@ router.route('/')
 
 // Import route (Admin, Manager, Lead Person)
 router.post('/import', authorize('Admin', 'Manager', 'Lead Person'), importLeads);
+
+// Stats route (Admin, Manager, Lead Person, Sales Person)
+router.get('/stats', authorize('Admin', 'Manager', 'Lead Person', 'Sales Person'), getLeadStats);
 
 // Repeat customers route (Admin/Manager only)
 router.get('/repeat-customers', authorize('Admin', 'Manager'), getRepeatCustomers);
