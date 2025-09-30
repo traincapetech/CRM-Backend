@@ -86,6 +86,10 @@ const prospectSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
+  leadBy: {
+    type: String,
+    trim: true
+  },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -106,6 +110,10 @@ const prospectSchema = new mongoose.Schema({
   
   // Notes & Communication
   notes: {
+    type: String,
+    trim: true
+  },
+  remark: {
     type: String,
     trim: true
   },

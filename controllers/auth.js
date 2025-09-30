@@ -181,7 +181,7 @@ exports.getMe = async (req, res) => {
 
 // @desc    Get all users for assignment
 // @route   GET /api/auth/users
-// @access  Private (only for Admin and Manager)
+// @access  Private (Admin, Manager, Sales Person, Lead Person)
 exports.getAllUsers = async (req, res) => {
   try {
     // Get the role filter from query params (if provided)
