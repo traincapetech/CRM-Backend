@@ -599,11 +599,19 @@ exports.getAssignedLeads = async (req, res) => {
       query = query.where('createdAt').lte(end);
     }
 
+    // OPTIMIZATION: Add pagination and limit results
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50; // Limit to 50 leads per request
+    const skip = (page - 1) * limit;
+
     const leads = await query
       .populate('leadPerson', 'fullName email')
       .populate('createdBy', 'fullName email')
       .populate('assignedTo', 'fullName email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(); // OPTIMIZATION: Use lean() for faster queries
 
     console.log(`Found ${leads.length} assigned leads for ${req.user.fullName}`);
     

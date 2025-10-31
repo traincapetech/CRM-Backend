@@ -80,6 +80,28 @@ exports.getEmployees = async (req, res) => {
     // Executing query
     const employees = await query;
 
+    // Transform employees: map individual document fields to documents object
+    const transformedEmployees = employees.map(emp => {
+      const empObj = emp.toObject();
+      // If documents object is empty but individual fields exist, map them
+      if ((!empObj.documents || Object.keys(empObj.documents).length === 0) && 
+          (empObj.photograph || empObj.aadharCard || empObj.panCard || empObj.resume)) {
+        empObj.documents = {
+          photograph: empObj.photograph,
+          tenthMarksheet: empObj.tenthMarksheet,
+          twelfthMarksheet: empObj.twelfthMarksheet,
+          bachelorDegree: empObj.bachelorDegree,
+          postgraduateDegree: empObj.postgraduateDegree,
+          aadharCard: empObj.aadharCard,
+          panCard: empObj.panCard,
+          pcc: empObj.pcc,
+          resume: empObj.resume,
+          offerLetter: empObj.offerLetter
+        };
+      }
+      return empObj;
+    });
+
     // Pagination result
     const pagination = {};
 
@@ -99,9 +121,9 @@ exports.getEmployees = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      count: employees.length,
+      count: transformedEmployees.length,
       pagination,
-      data: employees
+      data: transformedEmployees
     });
   } catch (err) {
     console.error('Error fetching employees:', err);
@@ -146,18 +168,36 @@ exports.getEmployee = async (req, res) => {
       }
     });
 
-    // Check authorization - Allow HR, Admin, Manager, and users viewing their own profile
+    // Check authorization - Allow HR, Admin, Manager, IT Manager, and users viewing their own profile
     if (req.user.role === 'HR' || req.user.role === 'Admin' || req.user.role === 'Manager' || 
-        employee.userId?.toString() === req.user.id) {
+        req.user.role === 'IT Manager' || employee.userId?.toString() === req.user.id) {
       // Authorized
     } else {
       // Allow all users to view employee data for profile purposes
       // This enables the profile page to show employee information
     }
 
+    // Transform: map individual document fields to documents object
+    const empObj = employee.toObject();
+    if ((!empObj.documents || Object.keys(empObj.documents).length === 0) && 
+        (empObj.photograph || empObj.aadharCard || empObj.panCard || empObj.resume)) {
+      empObj.documents = {
+        photograph: empObj.photograph,
+        tenthMarksheet: empObj.tenthMarksheet,
+        twelfthMarksheet: empObj.twelfthMarksheet,
+        bachelorDegree: empObj.bachelorDegree,
+        postgraduateDegree: empObj.postgraduateDegree,
+        aadharCard: empObj.aadharCard,
+        panCard: empObj.panCard,
+        pcc: empObj.pcc,
+        resume: empObj.resume,
+        offerLetter: empObj.offerLetter
+      };
+    }
+
     res.status(200).json({
       success: true,
-      data: employee
+      data: empObj
     });
   } catch (err) {
     console.error('Error fetching employee:', err);
@@ -202,17 +242,35 @@ exports.getEmployeeByUserId = async (req, res) => {
       }
     });
 
-    // Check authorization - Allow HR, Admin, Manager, and users viewing their own profile
+    // Check authorization - Allow HR, Admin, Manager, IT Manager, and users viewing their own profile
     if (req.user.role === 'HR' || req.user.role === 'Admin' || req.user.role === 'Manager' || 
-        employee.userId?.toString() === req.user.id) {
+        req.user.role === 'IT Manager' || employee.userId?.toString() === req.user.id) {
       // Authorized
     } else {
       // Allow all users to view employee data for profile purposes
     }
 
+    // Transform: map individual document fields to documents object
+    const empObj = employee.toObject();
+    if ((!empObj.documents || Object.keys(empObj.documents).length === 0) && 
+        (empObj.photograph || empObj.aadharCard || empObj.panCard || empObj.resume)) {
+      empObj.documents = {
+        photograph: empObj.photograph,
+        tenthMarksheet: empObj.tenthMarksheet,
+        twelfthMarksheet: empObj.twelfthMarksheet,
+        bachelorDegree: empObj.bachelorDegree,
+        postgraduateDegree: empObj.postgraduateDegree,
+        aadharCard: empObj.aadharCard,
+        panCard: empObj.panCard,
+        pcc: empObj.pcc,
+        resume: empObj.resume,
+        offerLetter: empObj.offerLetter
+      };
+    }
+
     res.status(200).json({
       success: true,
-      data: employee
+      data: empObj
     });
   } catch (err) {
     console.error('Error fetching employee by userId:', err);
@@ -265,6 +323,7 @@ exports.createEmployee = async (req, res) => {
     // Handle file uploads
     if (req.files) {
       console.log('Processing file uploads:', Object.keys(req.files));
+      employeeData.documents = {}; // Initialize documents object
       for (const fieldName of Object.keys(req.files)) {
         const arr = req.files[fieldName];
         if (arr && arr[0]) {
@@ -279,8 +338,9 @@ exports.createEmployee = async (req, res) => {
           try {
             const uploaded = await fileStorage.uploadEmployeeDoc(file, fieldName);
             console.log(`File ${fieldName} uploaded successfully:`, uploaded);
-            // store rich object (with url)
+            // Store in both individual field and documents object for consistency
             employeeData[fieldName] = uploaded;
+            employeeData.documents[fieldName] = uploaded;
           } catch (e) {
             console.error(`Upload failed for ${fieldName}:`, e.message);
           }
@@ -575,12 +635,11 @@ exports.uploadDocuments = async (req, res) => {
       });
     }
 
-    // Check authorization
-    if (!['HR', 'Admin', 'Manager'].includes(req.user.role) && 
-        employee.userId?.toString() !== req.user.id) {
+    // Check authorization: Only IT Manager/Admin/Manager/HR can upload (employees cannot upload even their own)
+    if (!['HR', 'Admin', 'Manager', 'IT Manager'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to upload documents'
+        message: 'Not authorized to upload documents. Please contact your manager or IT Manager.'
       });
     }
 
@@ -613,7 +672,9 @@ exports.uploadDocuments = async (req, res) => {
       }
       try {
         const uploaded = await fileStorage.uploadEmployeeDoc(file, docType);
+        // Store in both documents object and individual field for consistency
         employee.documents[docType] = uploaded;
+        employee[docType] = uploaded;
       } catch (e) {
         console.error('Upload doc failed:', e.message);
       }
@@ -648,8 +709,8 @@ exports.getDocuments = async (req, res) => {
       });
     }
 
-    // Check authorization
-    if (!['HR', 'Admin', 'Manager'].includes(req.user.role) && 
+    // Check authorization: IT Manager/Admin/Manager can view all, employees can only view their own
+    if (!['HR', 'Admin', 'Manager', 'IT Manager'].includes(req.user.role) && 
         employee.userId?.toString() !== req.user.id) {
       return res.status(403).json({
         success: false,
@@ -657,9 +718,26 @@ exports.getDocuments = async (req, res) => {
       });
     }
 
+    // Map individual document fields to documents object if needed
+    let documents = employee.documents || {};
+    if (!documents || Object.keys(documents).length === 0) {
+      documents = {
+        photograph: employee.photograph,
+        tenthMarksheet: employee.tenthMarksheet,
+        twelfthMarksheet: employee.twelfthMarksheet,
+        bachelorDegree: employee.bachelorDegree,
+        postgraduateDegree: employee.postgraduateDegree,
+        aadharCard: employee.aadharCard,
+        panCard: employee.panCard,
+        pcc: employee.pcc,
+        resume: employee.resume,
+        offerLetter: employee.offerLetter
+      };
+    }
+
     res.status(200).json({
       success: true,
-      data: employee.documents || {}
+      data: documents
     });
   } catch (err) {
     console.error('Error getting documents:', err);
@@ -684,9 +762,8 @@ exports.deleteDocument = async (req, res) => {
       });
     }
 
-    // Check authorization
-    if (!['HR', 'Admin', 'Manager'].includes(req.user.role) && 
-        employee.userId?.toString() !== req.user.id) {
+    // Check authorization: IT Manager/Admin/Manager can delete, employees cannot delete (even their own)
+    if (!['HR', 'Admin', 'Manager', 'IT Manager'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete documents'
@@ -708,8 +785,9 @@ exports.deleteDocument = async (req, res) => {
       fs.unlinkSync(filePath);
     }
 
-    // Remove document from employee record
+    // Remove document from employee record (both documents object and individual field)
     delete employee.documents[documentType];
+    delete employee[documentType];
     await employee.save();
 
     res.status(200).json({

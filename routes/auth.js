@@ -12,6 +12,7 @@ const {
   createUser,
   updateUser,
   deleteUser,
+  toggleUserActive,
   forgotPassword,
   verifyOTP,
   resetPassword,
@@ -69,6 +70,9 @@ router.route('/users')
 router.route('/users/:id')
   .put(protect, updateUser)
   .delete(protect, deleteUser);
+
+router.route('/users/:id/toggle-active')
+  .put(protect, toggleUserActive);
 
 router.route('/users/with-documents')
   .post(

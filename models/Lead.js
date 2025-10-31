@@ -110,4 +110,11 @@ const LeadSchema = new mongoose.Schema({
   }
 });
 
+// PERFORMANCE OPTIMIZATION: Add indexes for faster queries
+LeadSchema.index({ assignedTo: 1, createdAt: -1 });
+LeadSchema.index({ leadPerson: 1, createdAt: -1 });
+LeadSchema.index({ createdBy: 1, createdAt: -1 });
+LeadSchema.index({ createdAt: -1 });
+LeadSchema.index({ status: 1, createdAt: -1 });
+
 module.exports = mongoose.model('Lead', LeadSchema); 

@@ -42,4 +42,9 @@ const chatRoomSchema = new mongoose.Schema({
 // Ensure unique chat rooms between two users
 chatRoomSchema.index({ senderId: 1, recipientId: 1 }, { unique: true });
 
+// PERFORMANCE OPTIMIZATION: Add indexes for faster queries
+chatRoomSchema.index({ senderId: 1, lastMessageTime: -1 });
+chatRoomSchema.index({ recipientId: 1, lastMessageTime: -1 });
+chatRoomSchema.index({ lastMessageTime: -1 });
+
 module.exports = mongoose.model('ChatRoom', chatRoomSchema); 

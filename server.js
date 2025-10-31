@@ -36,7 +36,7 @@ const salesRoutes = require('./routes/sales');
 const leadSalesRoutes = require('./routes/leadSalesRoute');
 const leadPersonSalesRoutes = require('./routes/leadPersonSales');
 const currencyRoutes = require('./routes/currency');
-const taskRoutes = require('./routes/taskRoutes');
+const tasksRoutes = require('./routes/tasks');
 const testExamRoutes = require('./routes/testExamNotifications');
 const chatRoutes = require('./routes/chat');
 const prospectRoutes = require('./routes/prospects');
@@ -50,6 +50,7 @@ const documentationRoutes = require('./routes/documentation');
 const invoiceRoutes = require('./routes/invoices');
 const stripeInvoiceRoutes = require('./routes/stripeInvoices');
 const logs = require('./routes/logs');
+const itProjectsRoutes = require('./routes/itProjects');
 const app = express();
 const server = http.createServer(app);
 
@@ -293,7 +294,7 @@ app.use('/api/sales', salesRoutes);
 app.use('/api/lead-sales', leadSalesRoutes);
 app.use('/api/lead-person-sales', leadPersonSalesRoutes);
 app.use('/api/currency', currencyRoutes);
-app.use('/api/tasks', taskRoutes);
+app.use('/api/tasks', tasksRoutes);
 app.use('/api/test-exam', testExamRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/prospects', prospectRoutes);
@@ -307,6 +308,7 @@ app.use('/api/documentation', documentationRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/stripe-invoices', stripeInvoiceRoutes);
 app.use('/api/logs', logs);
+app.use('/api/it-projects', itProjectsRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {

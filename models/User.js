@@ -26,7 +26,19 @@ const UserSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['Sales Person', 'Lead Person', 'Manager', 'Admin', 'Customer', 'HR', 'Employee', 'IT Staff', 'IT Manager'],
+    enum: [
+      'Sales Person',
+      'Lead Person',
+      'Manager',
+      'Admin',
+      'Customer',
+      'HR',
+      'Employee',
+      'IT Staff',
+      'IT Manager',
+      'IT Intern',
+      'IT Permanent'
+    ],
     default: 'Sales Person'
   },
   // Employee reference for Employee role users
@@ -56,6 +68,10 @@ const UserSchema = new mongoose.Schema({
   verifyOtpExpireAt: { type: Number, default: 0 },
   resetOtp: { type: String, default: "" },
   resetOtpExpireAt: { type: Number, default: 0 },
+  active: {
+    type: Boolean,
+    default: true
+  },
 }, {
   // Use the existing collection
   collection: 'users'

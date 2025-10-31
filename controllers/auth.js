@@ -110,6 +110,38 @@ exports.login = async (req, res) => {
       });
     }
 
+    // Check if user account is active
+    if (user.active === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been deactivated. Please contact your administrator.'
+      });
+    }
+
+    // Check if user is an IT Intern and internship has expired
+    if (user.role === 'IT Intern') {
+      const Employee = require('../models/Employee');
+      const employee = await Employee.findOne({ userId: user._id });
+      
+      if (employee && employee.internshipEndDate) {
+        const today = new Date();
+        const endDate = new Date(employee.internshipEndDate);
+        today.setHours(0, 0, 0, 0);
+        endDate.setHours(0, 0, 0, 0);
+        
+        if (today > endDate) {
+          // Auto-deactivate account if internship expired
+          user.active = false;
+          await user.save();
+          
+          return res.status(403).json({
+            success: false,
+            message: 'Your internship has ended. Your account has been deactivated. Please contact your administrator.'
+          });
+        }
+      }
+    }
+
     // Check if password matches
     const isMatch = await user.matchPassword(password);
     console.log('Password match:', isMatch);
@@ -184,16 +216,24 @@ exports.getMe = async (req, res) => {
 // @access  Private (Admin, Manager, Sales Person, Lead Person)
 exports.getAllUsers = async (req, res) => {
   try {
-    // Get the role filter from query params (if provided)
-    const roleFilter = req.query.role || "";
+    // Get the role filter from query params (if provided). Support multiple roles.
+    const roleParam = req.query.role || "";
 
-    // Build the filter object
     const filter = {};
-    if (roleFilter) {
-      filter.role = roleFilter;
+    if (roleParam) {
+      if (Array.isArray(roleParam)) {
+        // ?role=A&role=B
+        filter.role = { $in: roleParam.filter(Boolean) };
+      } else if (typeof roleParam === 'string' && roleParam.includes(',')) {
+        // ?role=A,B
+        filter.role = { $in: roleParam.split(',').map(r => r.trim()).filter(Boolean) };
+      } else {
+        // single role string
+        filter.role = roleParam;
+      }
     }
 
-    const users = await User.find(filter, "fullName email role createdAt");
+    const users = await User.find(filter).select("fullName email role createdAt active");
 
     res.status(200).json({
       success: true,
@@ -309,6 +349,14 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
+    // Delete associated employee record if it exists
+    const Employee = require('../models/Employee');
+    const employee = await Employee.findOne({ userId: req.params.id });
+    if (employee) {
+      console.log(`Deleting associated employee record: ${employee._id}`);
+      await Employee.findByIdAndDelete(employee._id);
+    }
+
     // Delete user with the findByIdAndDelete method
     const result = await User.findByIdAndDelete(req.params.id);
 
@@ -319,13 +367,61 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
-    console.log(`User deleted successfully: ${req.params.id}`);
+    console.log(`User and associated employee deleted successfully: ${req.params.id}`);
     res.status(200).json({
       success: true,
       data: {},
     });
   } catch (err) {
     console.error(`Error deleting user: ${err.message}`);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Toggle user active status
+// @route   PUT /api/auth/users/:id/toggle-active
+// @access  Private (Admin and IT Manager)
+exports.toggleUserActive = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Prevent toggling own account
+    if (user._id.toString() === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot deactivate your own account",
+      });
+    }
+
+    // Prevent IT Manager from toggling Admin or other IT Manager accounts
+    if (req.user.role === 'IT Manager' && (user.role === 'Admin' || user.role === 'IT Manager')) {
+      return res.status(403).json({
+        success: false,
+        message: "IT Managers cannot modify Admin or other IT Manager accounts",
+      });
+    }
+
+    // Toggle active status
+    user.active = !user.active;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      data: user,
+      message: `User ${user.active ? 'activated' : 'deactivated'} successfully`,
+    });
+  } catch (err) {
+    console.error(`Error toggling user active status: ${err.message}`);
     res.status(400).json({
       success: false,
       message: err.message,
@@ -496,73 +592,72 @@ exports.createUserWithDocuments = async (req, res) => {
 
     // Prevent Managers from creating Admin accounts
     if (req.user.role === 'Manager' && role === 'Admin') {
-      return res.status(403).json({
-        success: false,
-        message: "Managers cannot create Admin accounts",
-      });
+      return res.status(403).json({ success: false, message: "Managers cannot create Admin accounts" });
+    }
+
+    // IT Manager restriction (cannot create Admin/IT Manager)
+    if (req.user.role === 'IT Manager' && (role === 'Admin' || role === 'IT Manager')) {
+      return res.status(403).json({ success: false, message: "IT Managers cannot create Admin or other IT Manager accounts" });
+    }
+
+    if (req.user.role === 'IT Manager' && !['IT Intern', 'IT Permanent'].includes(role)) {
+      return res.status(403).json({ success: false, message: "IT Managers can only create IT Interns and Permanent IT staff." });
     }
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
-
     if (existingUser) {
-      console.log(`User with email ${email} already exists`);
-      return res.status(400).json({
-        success: false,
-        message: "Email already registered",
-      });
+      return res.status(400).json({ success: false, message: "Email already registered" });
+    }
+
+    // NEW: Required documents validation for employee-like roles (including IT roles)
+    const employeeLikeRoles = ['Sales Person', 'Lead Person', 'Manager', 'Employee', 'IT Manager', 'IT Intern', 'IT Permanent'];
+    if (employeeLikeRoles.includes(role)) {
+      const requiredDocs = ['photograph', 'aadharCard', 'panCard', 'tenthMarksheet', 'twelfthMarksheet', 'resume', 'offerLetter', 'pcc'];
+      const missing = [];
+      const filesObj = req.files || {};
+      for (const doc of requiredDocs) {
+        if (!filesObj[doc] || !filesObj[doc][0]) missing.push(doc);
+      }
+      if (missing.length > 0) {
+        return res.status(400).json({ success: false, message: `Missing required documents: ${missing.join(', ')}` });
+      }
     }
 
     // Create user
     let user;
     try {
-      console.log("Creating new user...");
-      user = await User.create({
-        fullName,
-        email,
-        password,
-        role: role || 'Sales Person', // Default role if not specified
-      });
-      console.log(`User created successfully with ID: ${user._id}`);
+      user = await User.create({ fullName, email, password, role: role || 'Sales Person' });
     } catch (userError) {
       console.error("Error creating user:", userError);
       throw userError;
     }
     
-    // Handle employee creation for non-admin/non-hr roles
-    if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(role)) {
+    // Handle employee creation for roles
+    if (['Sales Person', 'Lead Person', 'Manager', 'Employee', 'IT Manager', 'IT Intern', 'IT Permanent'].includes(role)) {
       try {
         const Employee = require('../models/Employee');
         const Department = require('../models/Department');
         const Role = require('../models/EmployeeRole');
-        
-        // Find or create department
-        let department = await Department.findOne({ name: 'General' });
-        if (!department) {
-          department = await Department.create({
-            name: 'General',
-            description: 'General Department for all employees'
-          });
+
+        // Department: IT for IT roles, else General
+        let department;
+        if (['IT Manager', 'IT Intern', 'IT Permanent'].includes(role)) {
+          department = await Department.findOne({ name: 'IT' }) || await Department.create({ name: 'IT', description: 'IT Department' });
+        } else {
+          department = await Department.findOne({ name: 'General' }) || await Department.create({ name: 'General', description: 'General Department for all employees' });
         }
-        
-        // Find or create role
-        let employeeRole = await Role.findOne({ name: role });
-        if (!employeeRole) {
-          employeeRole = await Role.create({
-            name: role,
-            description: `Role for ${role}`
-          });
-        }
-        
-        // Create employee record
+
+        // Employee Role
+        let employeeRole = await Role.findOne({ name: role }) || await Role.create({ name: role, description: `Role for ${role}` });
+
+        // Build employee payload
         const employeeData = {
           fullName,
           email,
           userId: user._id,
           role: employeeRole._id,
           department: department._id,
-          
-          // Add all the new fields from the admin form
           phoneNumber: req.body.phoneNumber || '',
           whatsappNumber: req.body.whatsappNumber || '',
           linkedInUrl: req.body.linkedInUrl || '',
@@ -573,121 +668,61 @@ exports.createUserWithDocuments = async (req, res) => {
           salary: req.body.salary ? parseFloat(req.body.salary) : 0,
           status: req.body.status || 'ACTIVE',
           collegeName: req.body.collegeName || '',
-          internshipDuration: req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null
+          internshipDuration: req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null,
         };
-        
+
+        // Set employmentType for IT roles
+        if (role === 'IT Intern') {
+          employeeData.employmentType = 'INTERN';
+          // Handle internship dates
+          if (req.body.internshipStartDate) {
+            employeeData.internshipStartDate = new Date(req.body.internshipStartDate);
+          }
+          if (req.body.internshipEndDate) {
+            employeeData.internshipEndDate = new Date(req.body.internshipEndDate);
+          }
+        } else if (role === 'IT Permanent') {
+          employeeData.employmentType = 'PERMANENT';
+        }
+
+        // Handle skills field (comma-separated string to array)
+        if (req.body.skills) {
+          const skillsStr = typeof req.body.skills === 'string' ? req.body.skills : '';
+          employeeData.skills = skillsStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        }
+
         // Process uploaded documents using file storage service
         if (req.files) {
-          console.log('Processing file uploads in auth controller:', Object.keys(req.files));
-          const documentTypes = ['photograph', 'tenthMarksheet', 'twelfthMarksheet', 'bachelorDegree', 'postgraduateDegree', 'aadharCard', 'panCard', 'pcc', 'resume', 'offerLetter'];
-          
+          const documentTypes = ['photograph','tenthMarksheet','twelfthMarksheet','bachelorDegree','postgraduateDegree','aadharCard','panCard','pcc','resume','offerLetter'];
+          employeeData.documents = {}; // Initialize documents object
           for (const docType of documentTypes) {
             if (req.files[docType] && req.files[docType][0]) {
               const file = req.files[docType][0];
-              console.log(`Processing file ${docType}:`, {
-                originalName: file.originalname,
-                filename: file.filename,
-                mimetype: file.mimetype,
-                size: file.size,
-                path: file.path
-              });
-              
               try {
                 const fileStorage = require('../services/fileStorageService');
                 const uploaded = await fileStorage.uploadEmployeeDoc(file, docType);
-                console.log(`File ${docType} uploaded successfully:`, uploaded);
-                
-                // Store the uploaded file info directly in employee data
+                // Store in both individual field and documents object for consistency
                 employeeData[docType] = uploaded;
+                employeeData.documents[docType] = uploaded;
               } catch (fileError) {
                 console.error(`Error processing file ${docType}:`, fileError);
-                // Continue with other files if one fails
               }
             }
           }
-        } else {
-          console.log('No files found in auth controller request');
         }
-        
-        console.log('Employee data before creation:', JSON.stringify(employeeData, null, 2));
-        const employee = await Employee.create(employeeData);
-        console.log(`Employee created successfully with ID: ${employee._id}`);
+
+        await Employee.create(employeeData);
       } catch (employeeError) {
-        console.error("Error creating employee record:", employeeError);
-        console.error("Employee error details:", {
-          name: employeeError.name,
-          message: employeeError.message,
-          code: employeeError.code,
-          errors: employeeError.errors
-        });
-        // If employee creation fails, delete the user and throw error
         await User.findByIdAndDelete(user._id);
         throw new Error(`Failed to create employee record: ${employeeError.message}`);
       }
     }
-    
-    // Return user data without password
+
     const userData = await User.findById(user._id);
-    
-    // Also fetch and return employee data if it exists
-    let employeeData = null;
-    if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(role)) {
-      const Employee = require('../models/Employee');
-      employeeData = await Employee.findOne({ userId: user._id })
-        .populate('department', 'name')
-        .populate('role', 'name');
-    }
-    
-    res.status(201).json({
-      success: true,
-      data: userData,
-      employee: employeeData,
-      message: 'User created successfully with documents'
-    });
+    return res.status(201).json({ success: true, data: userData, message: 'User created successfully with documents' });
   } catch (err) {
-    console.error("User creation with documents error details:", {
-      name: err.name,
-      message: err.message,
-      stack: err.stack,
-      code: err.code
-    });
-    
-    // Clean up any uploaded files if there was an error
-    if (req.files) {
-      Object.values(req.files).forEach(fileArray => {
-        fileArray.forEach(file => {
-          try {
-            if (fs.existsSync(file.path)) {
-              fs.unlinkSync(file.path);
-              console.log(`Cleaned up file: ${file.path}`);
-            }
-          } catch (cleanupError) {
-            console.error(`Error cleaning up file ${file.path}:`, cleanupError);
-          }
-        });
-      });
-    }
-    
-    // Provide more specific error messages for common issues
-    if (err.name === 'ValidationError') {
-      const messages = Object.values(err.errors).map(val => val.message);
-      return res.status(400).json({
-        success: false,
-        message: messages.join(', ')
-      });
-    }
-    
-    if (err.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email already registered'
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: err.message || 'Internal server error during user creation'
-    });
+    console.error("User creation with documents error details:", { name: err.name, message: err.message, stack: err.stack, code: err.code });
+    return res.status(500).json({ success: false, message: err.message || 'Internal server error during user creation' });
   }
 };
 
@@ -768,7 +803,7 @@ exports.updateUserWithDocuments = async (req, res) => {
     
     // Handle employee update for non-admin/non-hr roles
     const userRole = updateData.role || user.role;
-    if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(userRole)) {
+    if (['Sales Person', 'Lead Person', 'Manager', 'Employee', 'IT Manager', 'IT Intern', 'IT Permanent'].includes(userRole)) {
       const Employee = require('../models/Employee');
       const Department = require('../models/Department');
       const Role = require('../models/EmployeeRole');
@@ -833,13 +868,22 @@ exports.updateUserWithDocuments = async (req, res) => {
           }
           
           // Create new employee if doesn't exist
-          employee = await Employee.create({
+          const employeeData = {
             fullName: user.fullName,
             email: user.email,
             userId: user._id,
             role: employeeRole._id,
             department: department._id
-          });
+          };
+          
+          // Set employmentType for IT roles
+          if (userRole === 'IT Intern') {
+            employeeData.employmentType = 'INTERN';
+          } else if (userRole === 'IT Permanent') {
+            employeeData.employmentType = 'PERMANENT';
+          }
+          
+          employee = await Employee.create(employeeData);
           console.log(`Created new employee record: ${employee._id}`);
         }
       } else {
@@ -866,8 +910,31 @@ exports.updateUserWithDocuments = async (req, res) => {
           });
         }
         employee.role = newEmployeeRole._id;
+        
+        // Update employmentType for IT roles
+        if (updateData.role === 'IT Intern') {
+          employee.employmentType = 'INTERN';
+        } else if (updateData.role === 'IT Permanent') {
+          employee.employmentType = 'PERMANENT';
+        }
       }
       
+      // Also check current role for employmentType if not set
+      const currentRole = updateData.role || userRole;
+      if (!employee.employmentType && currentRole === 'IT Intern') {
+        employee.employmentType = 'INTERN';
+      } else if (!employee.employmentType && currentRole === 'IT Permanent') {
+        employee.employmentType = 'PERMANENT';
+      }
+      
+      // Handle internship dates for IT Intern
+      if (req.body.internshipStartDate) {
+        employee.internshipStartDate = new Date(req.body.internshipStartDate);
+      }
+      if (req.body.internshipEndDate) {
+        employee.internshipEndDate = new Date(req.body.internshipEndDate);
+      }
+
       // Update all employee fields from form
       if (req.body.phoneNumber !== undefined) employee.phoneNumber = req.body.phoneNumber;
       if (req.body.whatsappNumber !== undefined) employee.whatsappNumber = req.body.whatsappNumber;
@@ -881,6 +948,11 @@ exports.updateUserWithDocuments = async (req, res) => {
       if (req.body.collegeName !== undefined) employee.collegeName = req.body.collegeName;
       if (req.body.internshipDuration !== undefined) employee.internshipDuration = req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null;
       
+      // Update skills if provided
+      if (req.body.skills !== undefined) {
+        employee.skills = req.body.skills ? req.body.skills.split(',').map(skill => skill.trim()) : [];
+      }
+
       // Update department if provided
       if (req.body.department !== undefined && req.body.department !== '') {
         const department = await Department.findById(req.body.department);
@@ -1008,7 +1080,7 @@ exports.updateUserWithDocuments = async (req, res) => {
 
     // Fetch updated employee data if it exists
     let updatedEmployeeData = null;
-    if (['Sales Person', 'Lead Person', 'Manager', 'Employee'].includes(userRole)) {
+    if (['Sales Person', 'Lead Person', 'Manager', 'Employee', 'IT Manager', 'IT Intern', 'IT Permanent'].includes(userRole)) {
       const Employee = require('../models/Employee');
       updatedEmployeeData = await Employee.findOne({ userId: user._id })
         .populate('department', 'name')

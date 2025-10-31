@@ -136,17 +136,38 @@ const getOnlineUsers = async (req, res) => {
   }
 };
 
-// @desc    Get all users for chat
+// Simple in-memory cache for users (expires after 5 minutes)
+let usersCache = null;
+let usersCacheExpiry = null;
+
+// @desc    Get all users for chat (OPTIMIZED with caching)
 // @route   GET /api/chat/users
 // @access  Private
 const getAllUsersForChat = async (req, res) => {
   try {
     const currentUserId = req.user._id;
     
+    // OPTIMIZATION: Check cache first
+    const now = Date.now();
+    if (usersCache && usersCacheExpiry && now < usersCacheExpiry) {
+      console.log('Returning cached users data');
+      return res.status(200).json({
+        success: true,
+        data: usersCache
+      });
+    }
+    
     // Get all users except current user, including customers
     const users = await User.find({ 
       _id: { $ne: currentUserId } 
-    }).select('fullName email role chatStatus lastSeen profilePicture createdAt');
+    })
+    .select('fullName email role chatStatus lastSeen profilePicture createdAt')
+    .lean() // OPTIMIZATION: Use lean() for faster queries
+    .limit(100); // OPTIMIZATION: Limit to 100 users max
+
+    // OPTIMIZATION: Cache the results for 5 minutes
+    usersCache = users;
+    usersCacheExpiry = now + (5 * 60 * 1000); // 5 minutes
 
     res.status(200).json({
       success: true,

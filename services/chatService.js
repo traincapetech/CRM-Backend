@@ -106,21 +106,29 @@ class ChatService {
     }
   }
 
-  // Get user's chat rooms with last message info
+  // Get user's chat rooms with last message info (OPTIMIZED)
   static async getUserChatRooms(userId) {
     try {
       // Convert userId to ObjectId if it's a string
       const userObjectId = typeof userId === 'string' ? mongoose.Types.ObjectId(userId) : userId;
 
+      // OPTIMIZATION 1: Use lean() for faster queries without full document overhead
+      // OPTIMIZATION 2: Limit to recent chat rooms (last 30 days) to reduce data
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
       const chatRooms = await ChatRoom.find({
         $or: [
           { senderId: userObjectId },
           { recipientId: userObjectId }
-        ]
+        ],
+        lastMessageTime: { $gte: thirtyDaysAgo } // Only recent chats
       })
       .populate('senderId', 'fullName email profilePicture chatStatus lastSeen')
       .populate('recipientId', 'fullName email profilePicture chatStatus lastSeen')
-      .sort({ lastMessageTime: -1 });
+      .sort({ lastMessageTime: -1 })
+      .limit(20) // OPTIMIZATION 3: Limit to 20 most recent chats
+      .lean(); // OPTIMIZATION 4: Use lean() for faster queries
       
       // Format the response to include the other user's info
       const formattedRooms = chatRooms.map(room => {

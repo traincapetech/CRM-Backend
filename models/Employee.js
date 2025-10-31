@@ -82,7 +82,7 @@ const employeeSchema = new mongoose.Schema({
   internshipEndDate: {
     type: Date
   },
-  techStack: [{
+  skills: [{
     type: String,
     trim: true
   }],
