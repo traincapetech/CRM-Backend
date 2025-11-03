@@ -7,7 +7,13 @@ const transporter = nodemailer.createTransport({
   auth: {
     user: process.env.EMAIL_USER || 'sales@traincapetech.in',
     pass: process.env.EMAIL_PASS || 'Canada@1212'
-  }
+  },
+  connectionTimeout: 10000, // 10 seconds
+  greetingTimeout: 10000, // 10 seconds
+  socketTimeout: 10000, // 10 seconds
+  pool: true, // Use connection pooling
+  maxConnections: 5,
+  maxMessages: 100
 });
 
 const sendEmail = async (to, subject, text, html) => {

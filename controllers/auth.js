@@ -928,11 +928,18 @@ exports.updateUserWithDocuments = async (req, res) => {
       }
       
       // Handle internship dates for IT Intern
-      if (req.body.internshipStartDate) {
+      if (req.body.internshipStartDate !== undefined && req.body.internshipStartDate !== '') {
         employee.internshipStartDate = new Date(req.body.internshipStartDate);
       }
-      if (req.body.internshipEndDate) {
+      if (req.body.internshipEndDate !== undefined && req.body.internshipEndDate !== '') {
         employee.internshipEndDate = new Date(req.body.internshipEndDate);
+      }
+      // Allow clearing dates if empty string is sent
+      if (req.body.internshipStartDate === '') {
+        employee.internshipStartDate = null;
+      }
+      if (req.body.internshipEndDate === '') {
+        employee.internshipEndDate = null;
       }
 
       // Update all employee fields from form
@@ -1038,6 +1045,24 @@ exports.updateUserWithDocuments = async (req, res) => {
       if (req.body.status !== undefined) employeeUpdateData.status = req.body.status;
       if (req.body.collegeName !== undefined) employeeUpdateData.collegeName = req.body.collegeName;
       if (req.body.internshipDuration !== undefined) employeeUpdateData.internshipDuration = req.body.internshipDuration ? parseInt(req.body.internshipDuration) : null;
+      
+      // Add internship dates
+      if (req.body.internshipStartDate !== undefined) {
+        employeeUpdateData.internshipStartDate = req.body.internshipStartDate ? new Date(req.body.internshipStartDate) : null;
+      }
+      if (req.body.internshipEndDate !== undefined) {
+        employeeUpdateData.internshipEndDate = req.body.internshipEndDate ? new Date(req.body.internshipEndDate) : null;
+      }
+      
+      // Add skills
+      if (req.body.skills !== undefined) {
+        employeeUpdateData.skills = req.body.skills ? req.body.skills.split(',').map(skill => skill.trim()).filter(skill => skill.length > 0) : [];
+      }
+      
+      // Ensure employmentType is set correctly
+      if (employee.employmentType) {
+        employeeUpdateData.employmentType = employee.employmentType;
+      }
       
       // Add document fields
       if (employee.photograph) employeeUpdateData.photograph = employee.photograph;

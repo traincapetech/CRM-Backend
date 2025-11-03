@@ -54,6 +54,10 @@ exports.getEmployees = async (req, res) => {
       query = Employee.find(JSON.parse(queryStr));
     }
 
+    // Populate role and department for all queries
+    query = query.populate('role', 'name description')
+                 .populate('department', 'name description');
+
     // Select Fields
     if (req.query.select) {
       const fields = req.query.select.split(',').join(' ');
@@ -79,6 +83,30 @@ exports.getEmployees = async (req, res) => {
 
     // Executing query
     const employees = await query;
+
+    // Fix employmentType for IT Interns if incorrect (auto-fix on fetch)
+    // Since role is already populated, we can check directly
+    const employeesToFix = [];
+    for (const emp of employees) {
+      if (emp.role && typeof emp.role === 'object' && emp.role.name) {
+        if (emp.role.name === 'IT Intern' && emp.employmentType !== 'INTERN') {
+          employeesToFix.push({ id: emp._id, type: 'INTERN' });
+          emp.employmentType = 'INTERN'; // Update in memory immediately
+        } else if (emp.role.name === 'IT Permanent' && emp.employmentType !== 'PERMANENT') {
+          employeesToFix.push({ id: emp._id, type: 'PERMANENT' });
+          emp.employmentType = 'PERMANENT'; // Update in memory immediately
+        }
+      }
+    }
+    
+    // Batch update in database (more efficient)
+    if (employeesToFix.length > 0) {
+      console.log(`Auto-fixing employmentType for ${employeesToFix.length} employees`);
+      const updatePromises = employeesToFix.map(({ id, type }) => 
+        Employee.findByIdAndUpdate(id, { employmentType: type }, { new: false })
+      );
+      await Promise.all(updatePromises);
+    }
 
     // Transform employees: map individual document fields to documents object
     const transformedEmployees = employees.map(emp => {
@@ -408,6 +436,17 @@ exports.updateEmployee = async (req, res) => {
 
     // Parse employee data from form
     const employeeData = req.body.employee ? JSON.parse(req.body.employee) : req.body;
+
+    // If role is being updated, ensure employmentType is correct
+    if (employeeData.role) {
+      const EmployeeRole = require('../models/EmployeeRole');
+      const role = await EmployeeRole.findById(employeeData.role);
+      if (role && role.name === 'IT Intern') {
+        employeeData.employmentType = 'INTERN';
+      } else if (role && role.name === 'IT Permanent') {
+        employeeData.employmentType = 'PERMANENT';
+      }
+    }
 
     // Handle file uploads
     if (req.files) {
