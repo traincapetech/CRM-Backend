@@ -88,20 +88,35 @@ exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    console.log('Login attempt for:', email);
+    // Normalize email to lowercase for case-insensitive search
+    const normalizedEmail = email ? email.toLowerCase().trim() : '';
+
+    console.log('Login attempt for:', normalizedEmail);
+    console.log('Original email provided:', email);
 
     // Validate email & password
-    if (!email || !password) {
+    if (!normalizedEmail || !password) {
       return res.status(400).json({
         success: false,
         message: 'Please provide email and password'
       });
     }
 
-    // Check for user and explicitly select password field
-    const user = await User.findOne({ email }).select('+password -__v');
+    // Check for user and explicitly select password field (case-insensitive)
+    // Try exact match first, then lowercase match
+    let user = await User.findOne({ email: normalizedEmail }).select('+password -__v');
     
-    console.log('Found user:', user ? user._id : 'Not found');
+    // If not found, try case-insensitive search
+    if (!user) {
+      user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, 'i') } }).select('+password -__v');
+    }
+    
+    console.log('Found user:', user ? {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      active: user.active
+    } : 'Not found');
 
     if (!user) {
       return res.status(401).json({
@@ -1187,17 +1202,40 @@ exports.forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
 
-    console.log('Forgot password request for:', email);
+    // Normalize email to lowercase for case-insensitive search
+    const normalizedEmail = email ? email.toLowerCase().trim() : '';
 
-    // Find user by email
-    const user = await User.findOne({ email });
+    console.log('Forgot password request for:', normalizedEmail);
+    console.log('Original email provided:', email);
 
-    if (!user) {
-      return res.status(404).json({
+    if (!normalizedEmail) {
+      return res.status(400).json({
         success: false,
-        message: 'User not found'
+        message: 'Please provide an email address'
       });
     }
+
+    // Find user by email (case-insensitive)
+    let user = await User.findOne({ email: normalizedEmail });
+    
+    // If not found, try case-insensitive regex search
+    if (!user) {
+      user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
+    }
+
+    if (!user) {
+      console.log('User not found for email:', normalizedEmail);
+      return res.status(404).json({
+        success: false,
+        message: 'User not found with that email address'
+      });
+    }
+
+    console.log('Found user for password reset:', {
+      id: user._id,
+      email: user.email,
+      role: user.role
+    });
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -1208,7 +1246,7 @@ exports.forgotPassword = async (req, res) => {
     user.verifyOtpExpireAt = otpExpiry;
     await user.save();
 
-    // Send OTP via email
+    // Send OTP via email - use the user's email from database (not the normalized one)
     const emailText = `Your OTP for password reset is: ${otp}. This OTP will expire in 10 minutes.`;
     const emailHtml = `
       <h2>Password Reset OTP</h2>
@@ -1217,23 +1255,48 @@ exports.forgotPassword = async (req, res) => {
       <p>If you did not request this password reset, please ignore this email.</p>
     `;
     
-    await sendEmail(
-      email,
-      'Password Reset OTP - Traincape CRM',
-      emailText,
-      emailHtml
-    );
+    try {
+      await sendEmail(
+        user.email, // Use the actual email from database
+        'Password Reset OTP - Traincape CRM',
+        emailText,
+        emailHtml
+      );
 
-    res.status(200).json({
-      success: true,
-      message: 'OTP sent to your email'
-    });
+      res.status(200).json({
+        success: true,
+        message: 'OTP sent to your email'
+      });
+    } catch (emailError) {
+      console.error('Failed to send password reset email:', emailError);
+      
+      // Still clear the OTP if email failed so user can try again
+      user.verifyOtp = undefined;
+      user.verifyOtpExpireAt = undefined;
+      await user.save();
+      
+      return res.status(500).json({
+        success: false,
+        message: emailError.message || 'Failed to send OTP email. Please try again later or contact support.',
+        error: process.env.NODE_ENV === 'development' ? emailError.message : undefined
+      });
+    }
   } catch (error) {
-    console.error('Forgot password error:', error);
+    console.error('Forgot password error:', {
+      message: error.message,
+      stack: error.stack,
+      originalError: error.originalError
+    });
+    
+    // Don't expose internal error details in production
+    const errorMessage = error.originalError 
+      ? error.message 
+      : 'Error processing password reset request. Please try again later.';
+    
     res.status(500).json({
       success: false,
-      message: 'Error sending OTP',
-      error: error.message
+      message: errorMessage,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -1245,10 +1308,25 @@ exports.verifyOTP = async (req, res) => {
   try {
     const { email, otp } = req.body;
 
-    console.log('OTP verification request:', { email, otp });
+    // Normalize email to lowercase for case-insensitive search
+    const normalizedEmail = email ? email.toLowerCase().trim() : '';
 
-    // Find user by email
-    const user = await User.findOne({ email });
+    console.log('OTP verification request:', { email: normalizedEmail, otp });
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an email address'
+      });
+    }
+
+    // Find user by email (case-insensitive)
+    let user = await User.findOne({ email: normalizedEmail });
+    
+    // If not found, try case-insensitive regex search
+    if (!user) {
+      user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
+    }
 
     if (!user) {
       return res.status(404).json({
@@ -1304,13 +1382,23 @@ exports.resetPassword = async (req, res) => {
   try {
     const { email, resetOtp, newPassword } = req.body;
 
+    // Normalize email to lowercase for case-insensitive search
+    const normalizedEmail = email ? email.toLowerCase().trim() : '';
+
     console.log('Password reset request:', {
-      email,
+      email: normalizedEmail,
       resetOtp,
       hasPassword: !!newPassword,
       passwordLength: newPassword ? newPassword.length : 0,
       body: req.body
     });
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an email address'
+      });
+    }
 
     // Validate password
     if (!newPassword || newPassword.length < 6) {
@@ -1320,8 +1408,13 @@ exports.resetPassword = async (req, res) => {
       });
     }
 
-    // Find user by email
-    const user = await User.findOne({ email });
+    // Find user by email (case-insensitive)
+    let user = await User.findOne({ email: normalizedEmail });
+    
+    // If not found, try case-insensitive regex search
+    if (!user) {
+      user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
+    }
 
     if (!user) {
       return res.status(404).json({
