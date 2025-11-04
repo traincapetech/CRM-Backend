@@ -158,15 +158,36 @@ exports.login = async (req, res) => {
     }
 
     // Check if password matches
+    console.log('=== PASSWORD VERIFICATION ===');
+    console.log('User ID:', user._id.toString());
+    console.log('Email:', user.email);
+    console.log('Role:', user.role);
+    console.log('Active:', user.active);
+    console.log('Password provided:', password ? 'Yes (length: ' + password.length + ')' : 'No');
+    console.log('Stored password hash exists:', !!user.password);
+    console.log('Stored password hash length:', user.password ? user.password.length : 0);
+    
     const isMatch = await user.matchPassword(password);
-    console.log('Password match:', isMatch);
+    console.log('Password match result:', isMatch);
+    console.log('=== END PASSWORD VERIFICATION ===');
 
     if (!isMatch) {
+      console.log('❌ LOGIN FAILED: Password mismatch for user:', {
+        id: user._id.toString(),
+        email: user.email,
+        role: user.role
+      });
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
+    
+    console.log('✅ LOGIN SUCCESS: Password matched for user:', {
+      id: user._id.toString(),
+      email: user.email,
+      role: user.role
+    });
 
     // Create token
     const token = user.getSignedJwtToken();
@@ -625,19 +646,8 @@ exports.createUserWithDocuments = async (req, res) => {
       return res.status(400).json({ success: false, message: "Email already registered" });
     }
 
-    // NEW: Required documents validation for employee-like roles (including IT roles)
-    const employeeLikeRoles = ['Sales Person', 'Lead Person', 'Manager', 'Employee', 'IT Manager', 'IT Intern', 'IT Permanent'];
-    if (employeeLikeRoles.includes(role)) {
-      const requiredDocs = ['photograph', 'aadharCard', 'panCard', 'tenthMarksheet', 'twelfthMarksheet', 'resume', 'offerLetter', 'pcc'];
-      const missing = [];
-      const filesObj = req.files || {};
-      for (const doc of requiredDocs) {
-        if (!filesObj[doc] || !filesObj[doc][0]) missing.push(doc);
-      }
-      if (missing.length > 0) {
-        return res.status(400).json({ success: false, message: `Missing required documents: ${missing.join(', ')}` });
-      }
-    }
+    // Documents are now optional - users can be created without documents
+    // Documents will be processed if provided, but are not required
 
     // Create user
     let user;
