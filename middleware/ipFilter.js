@@ -59,13 +59,20 @@ const getClientIP = (req) => {
 
 // Get allowed IPs/ranges from environment or use defaults
 const getAllowedNetworks = () => {
-  // Check environment variable first
+  const networks = [];
+  
+  // Check environment variable for office network ranges (private IPs)
   if (process.env.ALLOWED_IP_RANGES) {
-    return process.env.ALLOWED_IP_RANGES.split(',').map(ip => ip.trim());
+    networks.push(...process.env.ALLOWED_IP_RANGES.split(',').map(ip => ip.trim()));
+  }
+  
+  // Check environment variable for public IPs (for cloud deployments)
+  // This allows specific public IPs that your office uses when accessing internet
+  if (process.env.ALLOWED_PUBLIC_IPS) {
+    networks.push(...process.env.ALLOWED_PUBLIC_IPS.split(',').map(ip => ip.trim()));
   }
 
-  // Default: empty array means disabled (will be handled in middleware)
-  return [];
+  return networks;
 };
 
 // Check if IP filtering is enabled
@@ -105,6 +112,11 @@ const ipFilter = (req, res, next) => {
   // Check if IP matches any allowed network
   const isAllowed = allowedNetworks.some(network => {
     try {
+      // For single IP addresses (no / in it), do exact match
+      if (!network.includes('/')) {
+        return clientIP === network;
+      }
+      // For CIDR ranges, use the range check
       return isIPInRange(clientIP, network);
     } catch (error) {
       console.error(`Error checking IP range ${network}:`, error);
@@ -117,9 +129,13 @@ const ipFilter = (req, res, next) => {
     return next();
   }
 
-  // Log blocked attempt
-  console.warn(`🚫 Blocked access attempt from IP: ${clientIP} (not in allowed networks)`);
-  console.warn(`Allowed networks: ${allowedNetworks.join(', ')}`);
+  // Log blocked attempt with more details
+  const privateRanges = process.env.ALLOWED_IP_RANGES || 'None';
+  const publicIPs = process.env.ALLOWED_PUBLIC_IPS || 'None';
+  console.warn(`🚫 Blocked access attempt from IP: ${clientIP}`);
+  console.warn(`Allowed private networks: ${privateRanges}`);
+  console.warn(`Allowed public IPs: ${publicIPs}`);
+  console.warn(`All allowed networks/IPs: ${allowedNetworks.join(', ')}`);
 
   // Return 403 Forbidden
   return res.status(403).json({
