@@ -4,7 +4,7 @@ const morgan = require('morgan');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const { corsMiddleware, ensureCorsHeaders, handleOptions } = require('./middleware/cors');
-// const ipFilter = require('./middleware/ipFilter');
+const ipFilter = require('./middleware/ipFilter');
 const http = require('http');
 const socketIo = require('socket.io');
 // Load env vars
@@ -277,6 +277,10 @@ app.use(corsMiddleware);
 
 // Add a pre-flight route handler for OPTIONS requests
 app.options('*', handleOptions);
+
+// IP Filter - Restrict access to office network only
+// Enable via ENABLE_IP_FILTER=true and configure ALLOWED_IP_RANGES in .env
+app.use(ipFilter);
 
 // Add second layer of CORS protection to ensure headers are set
 app.use(ensureCorsHeaders);
