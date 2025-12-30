@@ -10,8 +10,8 @@ const createTransporter = () => {
     secure: false, // false for STARTTLS on port 587
     requireTLS: true, // Require TLS encryption
     auth: {
-      user: process.env.EMAIL_USER || 'sales@traincapetech.in',
-      pass: process.env.EMAIL_PASS || 'Canada@1212'
+      user: process.env.EMAIL_USER || 'crm@traincapetech.in',
+      pass: process.env.EMAIL_PASS
     },
     connectionTimeout: 30000,
     greetingTimeout: 30000,
@@ -31,7 +31,7 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
   console.log('Attempting to send email:', {
     to,
     subject,
-    from: process.env.EMAIL_USER || 'sales@traincapetech.in',
+    from: process.env.EMAIL_USER || 'crm@traincapetech.in',
     retries: retries,
     smtpConfig: {
       host: 'smtp.hostinger.com',
@@ -46,7 +46,7 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const mailOptions = {
-        from: `"Traincape CRM" <${process.env.EMAIL_USER || 'sales@traincapetech.in'}>`,
+        from: `"Traincape CRM" <${process.env.EMAIL_USER || 'crm@traincapetech.in'}>`,
         to,
         subject,
         text,

@@ -1256,41 +1256,15 @@ exports.forgotPassword = async (req, res) => {
     user.verifyOtpExpireAt = otpExpiry;
     await user.save();
 
-    // Send OTP via email - use the user's email from database (not the normalized one)
-    const emailText = `Your OTP for password reset is: ${otp}. This OTP will expire in 10 minutes.`;
-    const emailHtml = `
-      <h2>Password Reset OTP</h2>
-      <p>Your OTP for password reset is: <strong>${otp}</strong></p>
-      <p>This OTP will expire in 10 minutes.</p>
-      <p>If you did not request this password reset, please ignore this email.</p>
-    `;
-    
-    try {
-      await sendEmail(
-        user.email, // Use the actual email from database
-        'Password Reset OTP - Traincape CRM',
-        emailText,
-        emailHtml
-      );
+    console.log('OTP generated and saved for user:', user.email);
 
-      res.status(200).json({
-        success: true,
-        message: 'OTP sent to your email'
-      });
-    } catch (emailError) {
-      console.error('Failed to send password reset email:', emailError);
-      
-      // Still clear the OTP if email failed so user can try again
-      user.verifyOtp = undefined;
-      user.verifyOtpExpireAt = undefined;
-      await user.save();
-      
-      return res.status(500).json({
-        success: false,
-        message: emailError.message || 'Failed to send OTP email. Please try again later or contact support.',
-        error: process.env.NODE_ENV === 'development' ? emailError.message : undefined
-      });
-    }
+    // Return OTP to frontend for EmailJS sending
+    // Note: Frontend will handle email sending via EmailJS
+    res.status(200).json({
+      success: true,
+      message: 'OTP generated successfully',
+      otp: otp // Return OTP for frontend to send via EmailJS
+    });
   } catch (error) {
     console.error('Forgot password error:', {
       message: error.message,
