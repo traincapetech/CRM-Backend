@@ -182,3 +182,168 @@ exports.deleteTask = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
+
+// @desc    Log time to task
+// @route   POST /api/tasks/:id/time
+// @access  Private
+exports.logTime = async (req, res) => {
+  try {
+    const { hours, description, date } = req.body;
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    // Validate user can log time (assignee or admin/manager)
+    const isAssignee = task.assignedTo.toString() === req.user.id.toString();
+    const isAdmin = req.user.role === 'Admin';
+    const isManager = req.user.role === 'IT Manager' && task.department === 'IT';
+
+    if (!isAssignee && !isAdmin && !isManager) {
+      return res.status(403).json({ success: false, message: 'Not authorized to log time for this task' });
+    }
+
+    if (!hours || hours <= 0) {
+      return res.status(400).json({ success: false, message: 'Hours must be greater than 0' });
+    }
+
+    // Add time entry
+    const timeEntry = {
+      date: date ? new Date(date) : new Date(),
+      hours: parseFloat(hours),
+      description: description || '',
+      loggedBy: req.user.id
+    };
+
+    task.timeEntries = task.timeEntries || [];
+    task.timeEntries.push(timeEntry);
+    
+    // Update total logged hours
+    task.loggedHours = (task.loggedHours || 0) + parseFloat(hours);
+    
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      data: task
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Update task estimated hours and story points
+// @route   PUT /api/tasks/:id/estimate
+// @access  Private (Admin, Manager)
+exports.updateEstimate = async (req, res) => {
+  try {
+    const { estimatedHours, storyPoints, priority } = req.body;
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    const isAdmin = req.user.role === 'Admin';
+    const isManager = req.user.role === 'IT Manager' && task.department === 'IT';
+
+    if (!isAdmin && !isManager) {
+      return res.status(403).json({ success: false, message: 'Not authorized to update estimates' });
+    }
+
+    if (estimatedHours !== undefined) task.estimatedHours = estimatedHours;
+    if (storyPoints !== undefined) task.storyPoints = storyPoints;
+    if (priority !== undefined) task.priority = priority;
+
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      data: task
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Add task dependency
+// @route   POST /api/tasks/:id/dependencies
+// @access  Private (Admin, Manager)
+exports.addDependency = async (req, res) => {
+  try {
+    const { dependsOnTaskId } = req.body;
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    const dependsOnTask = await Task.findById(dependsOnTaskId);
+    if (!dependsOnTask) {
+      return res.status(404).json({ success: false, message: 'Dependency task not found' });
+    }
+
+    // Prevent circular dependencies
+    if (dependsOnTask.dependencies && dependsOnTask.dependencies.includes(task._id)) {
+      return res.status(400).json({ success: false, message: 'Circular dependency detected' });
+    }
+
+    if (dependsOnTaskId === task._id.toString()) {
+      return res.status(400).json({ success: false, message: 'Task cannot depend on itself' });
+    }
+
+    task.dependencies = task.dependencies || [];
+    if (!task.dependencies.includes(dependsOnTaskId)) {
+      task.dependencies.push(dependsOnTaskId);
+    }
+
+    // Update blocking relationship
+    dependsOnTask.blocks = dependsOnTask.blocks || [];
+    if (!dependsOnTask.blocks.includes(task._id)) {
+      dependsOnTask.blocks.push(task._id);
+    }
+
+    await task.save();
+    await dependsOnTask.save();
+
+    res.status(200).json({
+      success: true,
+      data: task
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Remove task dependency
+// @route   DELETE /api/tasks/:id/dependencies/:dependsOnId
+// @access  Private (Admin, Manager)
+exports.removeDependency = async (req, res) => {
+  try {
+    const { id, dependsOnId } = req.params;
+    const task = await Task.findById(id);
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    task.dependencies = (task.dependencies || []).filter(depId => depId.toString() !== dependsOnId);
+    
+    // Remove from blocking relationship
+    const dependsOnTask = await Task.findById(dependsOnId);
+    if (dependsOnTask) {
+      dependsOnTask.blocks = (dependsOnTask.blocks || []).filter(blockId => blockId.toString() !== id);
+      await dependsOnTask.save();
+    }
+
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      data: task
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

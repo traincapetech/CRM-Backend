@@ -64,10 +64,10 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
-  verifyOtp: { type: String, default: "123456" },
-  verifyOtpExpireAt: { type: Number, default: 0 },
-  resetOtp: { type: String, default: "" },
-  resetOtpExpireAt: { type: Number, default: 0 },
+  verifyOtp: { type: String },
+  verifyOtpExpireAt: { type: Number },
+  resetOtp: { type: String },
+  resetOtpExpireAt: { type: Number },
   active: {
     type: Boolean,
     default: true
@@ -94,20 +94,17 @@ UserSchema.pre('save', async function(next) {
 
 // Sign JWT and return
 UserSchema.methods.getSignedJwtToken = function() {
-  console.log('Generating JWT token for user:', {
-    id: this._id,
-    role: this.role,
-    JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
-    JWT_EXPIRE: process.env.JWT_EXPIRE
-  });
+  // Security: JWT_SECRET must be set in environment variables
+  if (!process.env.JWT_SECRET) {
+    throw new Error('FATAL: JWT_SECRET environment variable is required');
+  }
 
   const token = jwt.sign(
     { id: this._id, role: this.role },
-    process.env.JWT_SECRET || 'your-super-secure-32-character-jwt-secret-here',
+    process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRE || '30d' }
   );
 
-  console.log('Generated token:', token);
   return token;
 };
 

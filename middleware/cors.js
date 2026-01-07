@@ -27,20 +27,18 @@ const corsMiddleware = cors({
       return callback(null, true);
     }
     
-    // For development, allow all origins
+    // For development, allow localhost origins only
     if (process.env.NODE_ENV === 'development') {
-      console.log('Development mode - allowing all origins');
-      return callback(null, true);
+      if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+        console.log('Development mode - allowing localhost origin:', origin);
+        return callback(null, true);
+      }
     }
     
-    // For production but in debugging mode, allow all origins temporarily
-    const debugCORS = process.env.DEBUG_CORS === 'true';
-    if (debugCORS) {
-      console.log('Debug CORS enabled - allowing origin:', origin);
-      return callback(null, true);
-    }
+    // Security: DEBUG_CORS removed - use allowedOrigins list only
+    // If you need to add a new origin, add it to the allowedOrigins array above
     
-    // Otherwise, block the request
+    // Block all other requests
     console.log('CORS blocked request from:', origin);
     return callback(new Error('Not allowed by CORS'));
   },

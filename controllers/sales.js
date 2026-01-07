@@ -51,8 +51,15 @@ exports.getSales = async (req, res) => {
     // If user is a lead person, show sales where they are assigned as leadPerson OR their name is in leadBy field
     else if (req.user.role === 'Lead Person') {
       const leadPersonName = req.user.fullName;
-      // Escape special regex characters in the name
-      const escapedName = leadPersonName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      
+      // Security: Use exact string match instead of regex to prevent ReDoS attacks
+      // Validate name length to prevent abuse
+      if (!leadPersonName || leadPersonName.length > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid user name'
+        });
+      }
       
       // Combine parsedQuery with lead person filter using $and
       const leadPersonQuery = {
@@ -60,7 +67,7 @@ exports.getSales = async (req, res) => {
           {
             $or: [
               { leadPerson: req.user.id },
-              { leadBy: { $regex: new RegExp(escapedName, 'i') } } // Case-insensitive match
+              { leadBy: leadPersonName } // Exact match, case-sensitive
             ]
           },
           parsedQuery
@@ -278,6 +285,17 @@ exports.createSale = async (req, res) => {
     // Create sale
     const sale = await Sale.create(req.body);
 
+    // Trigger workflows for sale_created
+    try {
+      const workflowService = require('../services/workflowService');
+      await workflowService.executeWorkflows('sale_created', {
+        ...sale.toObject(),
+        saleId: sale._id
+      });
+    } catch (workflowError) {
+      console.error('Workflow execution error (non-blocking):', workflowError);
+    }
+
     res.status(201).json({
       success: true,
       data: sale
@@ -399,6 +417,19 @@ exports.updateSale = async (req, res) => {
       new: true,
       runValidators: true
     }).populate('salesPerson leadPerson', 'fullName email');
+
+    // Trigger workflows for sale_updated
+    try {
+      const workflowService = require('../services/workflowService');
+      await workflowService.executeWorkflows('sale_updated', {
+        ...sale.toObject(),
+        saleId: sale._id,
+        originalStatus: originalStatus,
+        newStatus: sale.status
+      });
+    } catch (workflowError) {
+      console.error('Workflow execution error (non-blocking):', workflowError);
+    }
 
     // Email logic - send emails when certain conditions are met
     let emailResults = [];

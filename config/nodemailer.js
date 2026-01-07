@@ -3,6 +3,11 @@ const nodemailer = require('nodemailer');
 // Try port 587 with STARTTLS first (more compatible with Render/firewalls)
 // Fallback to 465 with SSL if 587 doesn't work
 const createTransporter = () => {
+  // Security: Email credentials must be set in environment variables
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    throw new Error('FATAL: EMAIL_USER and EMAIL_PASS environment variables are required');
+  }
+
   // Primary: Port 587 with STARTTLS (recommended for Hostinger, better firewall compatibility)
   const config587 = {
     host: 'smtp.hostinger.com',
@@ -10,7 +15,7 @@ const createTransporter = () => {
     secure: false, // false for STARTTLS on port 587
     requireTLS: true, // Require TLS encryption
     auth: {
-      user: process.env.EMAIL_USER || 'crm@traincapetech.in',
+      user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
     },
     connectionTimeout: 30000,
@@ -31,7 +36,7 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
   console.log('Attempting to send email:', {
     to,
     subject,
-    from: process.env.EMAIL_USER || 'crm@traincapetech.in',
+    from: process.env.EMAIL_USER,
     retries: retries,
     smtpConfig: {
       host: 'smtp.hostinger.com',
@@ -46,7 +51,7 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const mailOptions = {
-        from: `"Traincape CRM" <${process.env.EMAIL_USER || 'crm@traincapetech.in'}>`,
+        from: `"Traincape CRM" <${process.env.EMAIL_USER}>`,
         to,
         subject,
         text,

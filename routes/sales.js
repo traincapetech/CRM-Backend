@@ -11,6 +11,7 @@ const {
 } = require('../controllers/sales');
 
 const { protect, authorize } = require('../middleware/auth');
+const { cacheMiddleware, invalidateCache } = require('../middleware/cache');
 const Sale = require('../models/Sale');
 
 // All routes below this line require authentication
@@ -18,8 +19,8 @@ router.use(protect);
 
 // Routes specific to roles
 router.route('/')
-  .get(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSales)
-  .post(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), createSale);
+  .get(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), cacheMiddleware(300), getSales)
+  .post(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/sales*']), createSale);
 
 // Sales data route for dashboard
 router.get('/data', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), async (req, res) => {

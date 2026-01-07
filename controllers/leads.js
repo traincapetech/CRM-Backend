@@ -303,6 +303,17 @@ exports.createLead = async (req, res) => {
     
     const lead = await Lead.create(leadData);
     
+    // Trigger workflows for lead_created
+    try {
+      const workflowService = require('../services/workflowService');
+      await workflowService.executeWorkflows('lead_created', {
+        ...lead.toObject(),
+        leadId: lead._id
+      });
+    } catch (workflowError) {
+      console.error('Workflow execution error (non-blocking):', workflowError);
+    }
+    
     // Verify the created lead
     const createdLead = await Lead.findById(lead._id).populate('assignedTo').populate('createdBy');
     console.log('Created lead successfully:', {
@@ -498,6 +509,21 @@ exports.updateLead = async (req, res) => {
       new: true,
       runValidators: true
     });
+
+    // Trigger workflows for lead_status_changed if status was updated
+    if (req.body.status && req.body.status !== lead.status) {
+      try {
+        const workflowService = require('../services/workflowService');
+        await workflowService.executeWorkflows('lead_status_changed', {
+          ...lead.toObject(),
+          leadId: lead._id,
+          oldStatus: lead.status,
+          newStatus: req.body.status
+        });
+      } catch (workflowError) {
+        console.error('Workflow execution error (non-blocking):', workflowError);
+      }
+    }
     
     res.status(200).json({
       success: true,

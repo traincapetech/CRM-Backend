@@ -31,6 +31,51 @@ const TaskSchema = new mongoose.Schema({
     enum: ['Pending', 'In Progress', 'Partially Completed', 'Employee Completed', 'Manager Confirmed', 'Not Completed'],
     default: 'Pending'
   },
+  // Agile fields
+  storyPoints: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  priority: {
+    type: String,
+    enum: ['Low', 'Medium', 'High', 'Critical'],
+    default: 'Medium'
+  },
+  // Time tracking
+  estimatedHours: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  loggedHours: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  timeEntries: [{
+    date: Date,
+    hours: Number,
+    description: String,
+    loggedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }
+  }],
+  // Task dependencies
+  dependencies: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Task'
+  }],
+  blocks: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Task'
+  }],
+  // Project association
+  project: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ITProject'
+  },
   createdAt: {
     type: Date,
     default: Date.now

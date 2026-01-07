@@ -7,24 +7,30 @@ const { corsMiddleware, ensureCorsHeaders, handleOptions } = require('./middlewa
 const ipFilter = require('./middleware/ipFilter');
 const http = require('http');
 const socketIo = require('socket.io');
+
 // Load env vars
 dotenv.config();
 
-// Debug environment variables
-console.log('Environment:', {
-  NODE_ENV: process.env.NODE_ENV,
-  JWT_SECRET: process.env.JWT_SECRET ? 'Set' : 'Not set',
-  JWT_EXPIRE: process.env.JWT_EXPIRE
-});
-
-// Set DEBUG_CORS in development for testing
-if (process.env.NODE_ENV === 'development') {
-  process.env.DEBUG_CORS = 'true';
-}
+// Validate environment variables (CRITICAL SECURITY)
+const validateEnvironment = require('./utils/validateEnv');
+validateEnvironment();
 
 // Connect to database
 console.log('Connecting to CRM database...');
 connectDB();
+
+// Connect to Redis (optional - for caching)
+const { connectRedis } = require('./config/redis');
+connectRedis();
+
+// Initialize Email Queue (if Redis is available)
+const { initEmailQueue } = require('./services/emailQueue');
+try {
+  initEmailQueue();
+} catch (error) {
+  console.warn('⚠️ Email queue not initialized (Redis may not be available):', error.message);
+  console.log('📧 Emails will be sent synchronously (fallback mode)');
+}
 
 // Use the IP filter middleware
 // app.use(ipFilter);
@@ -51,8 +57,14 @@ const invoiceRoutes = require('./routes/invoices');
 const stripeInvoiceRoutes = require('./routes/stripeInvoices');
 const logs = require('./routes/logs');
 const itProjectsRoutes = require('./routes/itProjects');
+const emailCampaignRoutes = require('./routes/emailCampaigns');
+const emailTemplateRoutes = require('./routes/emailTemplates');
+const workflowRoutes = require('./routes/workflows');
 const app = express();
 const server = http.createServer(app);
+
+// Make app available to other modules
+module.exports.app = app;
 
 // Socket.IO setup with CORS
 const io = socketIo(server, {
@@ -69,6 +81,7 @@ const io = socketIo(server, {
 
 // Make io available to other modules
 app.set('io', io);
+module.exports.io = io;
 
 // Chat service for Socket.IO
 const ChatService = require('./services/chatService');
@@ -263,9 +276,73 @@ io.on('connection', (socket) => {
 const { processExamReminders } = require('./utils/reminderService');
 const { startExamNotificationScheduler } = require('./utils/examNotificationService');
 
+// Security middleware
+const helmet = require('helmet');
+const xss = require('xss-clean');
+const mongoSanitize = require('express-mongo-sanitize');
+const hpp = require('hpp');
+const rateLimit = require('express-rate-limit');
+const cookieParser = require('cookie-parser');
+const compression = require('compression');
+
 // Body parser
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Cookie parser for JWT cookies
+app.use(cookieParser());
+
+// Compression middleware - reduces response size by ~70%
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  },
+  level: 6 // Balanced compression level
+}));
+
+// Set security HTTP headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", process.env.CLIENT_URL || "http://localhost:5173"],
+      fontSrc: ["'self'", "https:", "data:"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
+
+// Prevent XSS attacks
+app.use(xss());
+
+// Prevent NoSQL injection
+app.use(mongoSanitize());
+
+// Prevent HTTP Parameter Pollution
+app.use(hpp());
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later'
+});
+app.use('/api/', limiter);
+
+// Stricter rate limiting for auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Too many authentication attempts, please try again after 15 minutes'
+});
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
 
 // Dev logging middleware
 if (process.env.NODE_ENV === 'development') {
@@ -287,6 +364,12 @@ app.use(ensureCorsHeaders);
 
 // Add a specific route for CORS preflight that always succeeds
 app.options('/api/*', handleOptions);
+
+// API Documentation (Swagger) - Only in development or if enabled
+if (process.env.NODE_ENV === 'development' || process.env.ENABLE_API_DOCS === 'true') {
+  const swaggerSetup = require('./config/swagger');
+  swaggerSetup(app);
+}
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static('uploads'));
@@ -313,6 +396,9 @@ app.use('/api/invoices', invoiceRoutes);
 app.use('/api/stripe-invoices', stripeInvoiceRoutes);
 app.use('/api/logs', logs);
 app.use('/api/it-projects', itProjectsRoutes);
+app.use('/api/email-campaigns', emailCampaignRoutes);
+app.use('/api/email-templates', emailTemplateRoutes);
+app.use('/api/workflows', workflowRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {

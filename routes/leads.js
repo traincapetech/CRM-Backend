@@ -15,14 +15,15 @@ const {
 } = require('../controllers/leads');
 
 const { protect, authorize } = require('../middleware/auth');
+const { cacheMiddleware, invalidateCache } = require('../middleware/cache');
 
 // All routes below this line require authentication
 router.use(protect);
 
 // Routes specific to roles
 router.route('/')
-  .get(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin'), getLeads)
-  .post(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin'), createLead);
+  .get(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin'), cacheMiddleware(300), getLeads)
+  .post(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/leads*']), createLead);
 
 // Import route (Admin, Manager, Lead Person)
 router.post('/import', authorize('Admin', 'Manager', 'Lead Person'), importLeads);
