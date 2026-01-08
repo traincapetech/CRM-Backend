@@ -45,6 +45,7 @@ const corsMiddleware = cors({
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   credentials: true,
   optionsSuccessStatus: 204,
+  preflightContinue: false, // Let cors handle preflight
   allowedHeaders: [
     'Content-Type', 
     'Authorization', 
@@ -55,7 +56,8 @@ const corsMiddleware = cors({
     'Access-Control-Allow-Headers',
     'Access-Control-Allow-Methods'
   ],
-  exposedHeaders: ['Content-Length', 'X-Content-Type-Options']
+  exposedHeaders: ['Content-Length', 'X-Content-Type-Options'],
+  maxAge: 86400 // Cache preflight for 24 hours
 });
 
 // Secondary middleware to ensure headers are always set
@@ -86,13 +88,18 @@ module.exports = {
     console.log('Explicit OPTIONS handler called for:', req.url);
     const origin = req.headers.origin;
     
+    // Always allow preflight for allowed origins
     if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development' || process.env.DEBUG_CORS === 'true') {
       res.header('Access-Control-Allow-Origin', origin || '*');
       res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
       res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept');
       res.header('Access-Control-Allow-Credentials', 'true');
+      res.header('Access-Control-Max-Age', '86400'); // Cache for 24 hours
+      return res.status(204).send();
     }
     
-    res.status(204).send();
+    // Block if origin not allowed
+    console.log('CORS preflight blocked for origin:', origin);
+    res.status(403).json({ success: false, message: 'CORS policy: Origin not allowed' });
   }
 }; 

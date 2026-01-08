@@ -349,21 +349,25 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
 
-// Enable CORS with our custom middleware
+// Enable CORS with our custom middleware (MUST BE FIRST)
 app.use(corsMiddleware);
-
-// Add a pre-flight route handler for OPTIONS requests
-app.options('*', handleOptions);
-
-// IP Filter - Restrict access to office network only
-// Enable via ENABLE_IP_FILTER=true and configure ALLOWED_IP_RANGES in .env
-app.use(ipFilter);
 
 // Add second layer of CORS protection to ensure headers are set
 app.use(ensureCorsHeaders);
 
-// Add a specific route for CORS preflight that always succeeds
-app.options('/api/*', handleOptions);
+// Handle preflight OPTIONS requests BEFORE any other middleware
+app.options('*', handleOptions);
+
+// IP Filter - Restrict access to office network only
+// Enable via ENABLE_IP_FILTER=true and configure ALLOWED_IP_RANGES in .env
+// NOTE: IP filter should NOT block OPTIONS requests (preflight)
+app.use((req, res, next) => {
+  // Skip IP filter for OPTIONS requests (preflight)
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+  ipFilter(req, res, next);
+});
 
 // API Documentation (Swagger) - Only in development or if enabled
 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_API_DOCS === 'true') {
