@@ -13,12 +13,18 @@ const {
   getCampaignAnalytics,
   deleteCampaign,
   getAvailableCourses,
-  previewCourseRecipients
+  previewCourseRecipients,
+  trackOpen,
+  trackClick
 } = require('../controllers/emailCampaigns');
 const { getQueueStatus, getQueueStats } = require('../services/emailQueue');
 
 const { protect, authorize } = require('../middleware/auth');
 const { cacheMiddleware, invalidateCache } = require('../middleware/cache');
+
+// Tracking routes (public)
+router.get('/track/open', trackOpen);
+router.get('/track/click', trackClick);
 
 // All routes require authentication
 router.use(protect);

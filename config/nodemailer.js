@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const axios = require('axios');
 
 // Try port 465 (SSL) first, fallback to 587 (STARTTLS)
 const createTransporter = (config) => {
@@ -44,18 +45,61 @@ const smtpConfigs = [
   }
 ];
 
+const sendViaBrevo = async ({ to, subject, text, html }) => {
+  if (!process.env.BREVO_API_KEY) return false;
+
+  const fromEmail = process.env.FROM_EMAIL || process.env.EMAIL_USER;
+  const fromName = process.env.FROM_NAME || 'Traincape CRM';
+
+  if (!fromEmail) {
+    throw new Error('FATAL: FROM_EMAIL or EMAIL_USER is required for Brevo');
+  }
+
+  const payload = {
+    sender: { email: fromEmail, name: fromName },
+    to: [{ email: to }],
+    subject,
+    textContent: text,
+    htmlContent: html
+  };
+
+  await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
+    headers: {
+      'api-key': process.env.BREVO_API_KEY,
+      'Content-Type': 'application/json'
+    },
+    timeout: 30000
+  });
+
+  return true;
+};
+
 const sendEmail = async (to, subject, text, html, retries = 2) => {
   console.log('Attempting to send email:', {
     to,
     subject,
-    from: process.env.EMAIL_USER,
+    from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
     retries: retries,
+    provider: process.env.BREVO_API_KEY ? 'brevo' : 'smtp',
     smtpConfig: {
       host: 'smtp.hostinger.com',
       port: smtpConfigs[0].port,
       secure: smtpConfigs[0].secure
     }
   });
+
+  if (process.env.BREVO_API_KEY) {
+    try {
+      await sendViaBrevo({ to, subject, text, html });
+      console.log('✅ Email sent successfully via Brevo');
+      return true;
+    } catch (error) {
+      console.error('❌ Brevo send failed, falling back to SMTP:', {
+        message: error.response?.data || error.message
+      });
+      // Fall back to SMTP below
+    }
+  }
   
   // Create fresh transporter for each email to avoid connection issues
   let currentTransporter = createTransporter(smtpConfigs[0]);
@@ -63,7 +107,7 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const mailOptions = {
-        from: `"Traincape CRM" <${process.env.EMAIL_USER}>`,
+        from: `"${process.env.FROM_NAME || 'Traincape CRM'}" <${process.env.FROM_EMAIL || process.env.EMAIL_USER}>`,
         to,
         subject,
         text,

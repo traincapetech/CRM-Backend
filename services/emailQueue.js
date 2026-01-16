@@ -14,6 +14,7 @@ try {
 
 const EmailCampaign = require('../models/EmailCampaign');
 const { sendEmail } = require('../config/nodemailer');
+const { addEmailTracking } = require('../utils/emailTracking');
 const { buildTemplateVariables, replaceTemplateVariables } = require('../utils/templateVariables');
 
 // Initialize queue with Redis connection
@@ -141,7 +142,11 @@ const queueEmails = async (recipients, campaignId, subject, htmlContent, plainTe
     for (const recipient of batch) {
       const variables = buildTemplateVariables(recipient);
       const personalizedSubject = replaceTemplateVariables(subject, variables);
-      const personalizedHtml = replaceTemplateVariables(htmlContent, variables);
+      const personalizedHtml = addEmailTracking(
+        replaceTemplateVariables(htmlContent, variables),
+        campaignId,
+        recipient.email
+      );
       const personalizedPlainText = replaceTemplateVariables(plainText, variables);
 
       await emailQueue.add(

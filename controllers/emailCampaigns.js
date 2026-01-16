@@ -10,6 +10,7 @@ const Lead = require('../models/Lead');
 const Sale = require('../models/Sale');
 const { sendEmail } = require('../config/nodemailer');
 const { buildTemplateVariables, replaceTemplateVariables } = require('../utils/templateVariables');
+const { addEmailTracking } = require('../utils/emailTracking');
 
 const isAdminOrManager = (user) => ['Admin', 'Manager'].includes(user.role);
 
@@ -457,7 +458,11 @@ exports.sendCampaign = async (req, res) => {
             const variables = buildTemplateVariables(recipient, {
               fromName: req.user?.fullName
             });
-            const htmlContent = replaceTemplateVariables(campaign.template, variables);
+            const htmlContent = addEmailTracking(
+              replaceTemplateVariables(campaign.template, variables),
+              campaign._id.toString(),
+              recipient.email
+            );
             const subject = replaceTemplateVariables(campaign.subject, variables);
 
             await sendEmail(
@@ -582,6 +587,56 @@ exports.getCampaignAnalytics = async (req, res) => {
       message: error.message
     });
   }
+};
+
+// @desc    Track email open
+// @route   GET /api/email-campaigns/track/open
+// @access  Public
+exports.trackOpen = async (req, res) => {
+  try {
+    const campaignId = req.query.c;
+    if (campaignId) {
+      await EmailCampaign.findByIdAndUpdate(campaignId, {
+        $inc: { 'stats.opened': 1 }
+      });
+    }
+  } catch (error) {
+    // Swallow errors to avoid breaking email clients
+  } finally {
+    const img = Buffer.from(
+      'R0lGODlhAQABAPAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==',
+      'base64'
+    );
+    res.setHeader('Content-Type', 'image/gif');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.send(img);
+  }
+};
+
+// @desc    Track email click and redirect
+// @route   GET /api/email-campaigns/track/click
+// @access  Public
+exports.trackClick = async (req, res) => {
+  const campaignId = req.query.c;
+  const redirectUrl = req.query.u;
+
+  try {
+    if (campaignId) {
+      await EmailCampaign.findByIdAndUpdate(campaignId, {
+        $inc: { 'stats.clicked': 1 }
+      });
+    }
+  } catch (error) {
+    // ignore tracking errors
+  }
+
+  if (!redirectUrl) {
+    return res.status(400).send('Missing redirect URL');
+  }
+
+  return res.redirect(redirectUrl);
 };
 
 // @desc    Delete campaign
