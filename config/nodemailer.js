@@ -1,19 +1,20 @@
 const nodemailer = require('nodemailer');
 
-// Try port 587 with STARTTLS first (more compatible with Render/firewalls)
-// Fallback to 465 with SSL if 587 doesn't work
-const createTransporter = () => {
+// Try port 465 (SSL) first, fallback to 587 (STARTTLS)
+const createTransporter = (config) => {
   // Security: Email credentials must be set in environment variables
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     throw new Error('FATAL: EMAIL_USER and EMAIL_PASS environment variables are required');
   }
 
-  // Primary: Port 587 with STARTTLS (recommended for Hostinger, better firewall compatibility)
-  const config587 = {
+  return nodemailer.createTransport(config);
+};
+
+const smtpConfigs = [
+  {
     host: 'smtp.hostinger.com',
-    port: 587,
-    secure: false, // false for STARTTLS on port 587
-    requireTLS: true, // Require TLS encryption
+    port: 465,
+    secure: true, // SSL for port 465
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
@@ -22,15 +23,26 @@ const createTransporter = () => {
     greetingTimeout: 30000,
     socketTimeout: 30000,
     tls: {
-      rejectUnauthorized: false // Allow self-signed certificates
+      rejectUnauthorized: false
     }
-  };
-
-  // Try port 587 first (better for cloud deployments)
-  return nodemailer.createTransport(config587);
-};
-
-const transporter = createTransporter();
+  },
+  {
+    host: 'smtp.hostinger.com',
+    port: 587,
+    secure: false, // STARTTLS for port 587
+    requireTLS: true,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    },
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
+    tls: {
+      rejectUnauthorized: false
+    }
+  }
+];
 
 const sendEmail = async (to, subject, text, html, retries = 2) => {
   console.log('Attempting to send email:', {
@@ -40,13 +52,13 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
     retries: retries,
     smtpConfig: {
       host: 'smtp.hostinger.com',
-      port: 587,
-      secure: false
+      port: smtpConfigs[0].port,
+      secure: smtpConfigs[0].secure
     }
   });
   
   // Create fresh transporter for each email to avoid connection issues
-  let currentTransporter = createTransporter();
+  let currentTransporter = createTransporter(smtpConfigs[0]);
   
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -58,7 +70,8 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
         html
       };
 
-      console.log(`📧 Email send attempt ${attempt + 1}/${retries + 1}...`);
+      const smtpConfig = smtpConfigs[attempt % smtpConfigs.length];
+      console.log(`📧 Email send attempt ${attempt + 1}/${retries + 1} (port ${smtpConfig.port})...`);
       
       // Let nodemailer handle its own timeouts - don't race with custom timeout
       const info = await currentTransporter.sendMail(mailOptions);
@@ -114,8 +127,9 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
         throw emailError;
       }
       
-      // Create new transporter for next attempt
-      currentTransporter = createTransporter();
+      // Create new transporter for next attempt (rotate ports)
+      const nextConfig = smtpConfigs[(attempt + 1) % smtpConfigs.length];
+      currentTransporter = createTransporter(nextConfig);
       
       // Wait before retrying (exponential backoff)
       const delay = Math.min(2000 * Math.pow(2, attempt), 10000); // Start with 2s, max 10s
