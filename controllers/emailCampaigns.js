@@ -17,7 +17,10 @@ const isAdminOrManager = (user) => ['Admin', 'Manager'].includes(user.role);
 const canAccessCampaign = (req, campaign) => {
   if (isAdminOrManager(req.user)) return true;
   if (req.user.role === 'Lead Person') {
-    return campaign.createdBy?.toString() === req.user.id;
+    const createdById = campaign.createdBy?._id
+      ? campaign.createdBy._id.toString()
+      : campaign.createdBy?.toString();
+    return createdById === req.user.id;
   }
   return false;
 };
