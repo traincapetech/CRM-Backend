@@ -45,8 +45,18 @@ const smtpConfigs = [
   }
 ];
 
+const getBrevoApiKey = () => {
+  const rawKey =
+    process.env.BREVO_API_KEY ||
+    process.env.SENDINBLUE_API_KEY ||
+    process.env.SIB_API_KEY ||
+    '';
+  return rawKey.trim();
+};
+
 const sendViaBrevo = async ({ to, subject, text, html }) => {
-  if (!process.env.BREVO_API_KEY) return false;
+  const apiKey = getBrevoApiKey();
+  if (!apiKey) return false;
 
   const fromEmail = process.env.FROM_EMAIL || process.env.EMAIL_USER;
   const fromName = process.env.FROM_NAME || 'Traincape CRM';
@@ -65,7 +75,7 @@ const sendViaBrevo = async ({ to, subject, text, html }) => {
 
   await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
     headers: {
-      'api-key': process.env.BREVO_API_KEY,
+      'api-key': apiKey,
       'Content-Type': 'application/json'
     },
     timeout: 30000
@@ -80,7 +90,7 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
     subject,
     from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
     retries: retries,
-    provider: process.env.BREVO_API_KEY ? 'brevo' : 'smtp',
+    provider: getBrevoApiKey() ? 'brevo' : 'smtp',
     smtpConfig: {
       host: 'smtp.hostinger.com',
       port: smtpConfigs[0].port,
@@ -88,12 +98,17 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
     }
   });
 
-  if (process.env.BREVO_API_KEY) {
+  if (getBrevoApiKey()) {
     try {
       await sendViaBrevo({ to, subject, text, html });
       console.log('✅ Email sent successfully via Brevo');
       return true;
     } catch (error) {
+      const brevoStatus = error.response?.status;
+      const brevoCode = error.response?.data?.code;
+      if (brevoStatus === 401 || brevoStatus === 403 || brevoCode === 'unauthorized') {
+        throw new Error('Brevo authorization failed. Check BREVO_API_KEY.');
+      }
       console.error('❌ Brevo send failed, falling back to SMTP:', {
         message: error.response?.data || error.message
       });
