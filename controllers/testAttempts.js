@@ -88,10 +88,13 @@ exports.startAttempt = async (req, res) => {
   }
 
   const now = new Date();
-  if (test.scheduleStart && now < test.scheduleStart) {
+  const effectiveStart = assignment.startAt || test.scheduleStart || null;
+  const effectiveEnd = assignment.endAt || test.scheduleEnd || null;
+
+  if (effectiveStart && now < effectiveStart) {
     return res.status(403).json({ success: false, message: 'Test not yet available' });
   }
-  if (test.scheduleEnd && now > test.scheduleEnd) {
+  if (effectiveEnd && now > effectiveEnd) {
     return res.status(403).json({ success: false, message: 'Test window closed' });
   }
 
@@ -119,9 +122,13 @@ exports.startAttempt = async (req, res) => {
     status: { $in: ['submitted', 'auto_submitted'] }
   });
   if (previousAttempt) {
-    return res.status(403).json({
-      success: false,
-      message: 'You have already completed this test'
+    return res.status(200).json({
+      success: true,
+      data: {
+        attempt: sanitizeAttempt(previousAttempt, { includeToken: false }),
+        questions: sanitizeQuestions(previousAttempt.questionSnapshots),
+        alreadyCompleted: true
+      }
     });
   }
 
