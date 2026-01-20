@@ -5,6 +5,7 @@ const path = require('path'); // Added for path.join
 const { UPLOAD_PATHS } = require('../config/storage');
 const { sendEmail } = require('../config/nodemailer');
 const asyncHandler = require('../middleware/async'); // Added for asyncHandler
+const { getUserPermissions } = require('../utils/rbac');
 
 // @desc    Register user
 // @route   POST /api/auth/register
@@ -193,6 +194,8 @@ exports.login = async (req, res) => {
     const token = user.getSignedJwtToken();
     console.log('Generated token:', token);
 
+    const permissionPayload = await getUserPermissions(user);
+
     res.status(200).json({
       success: true,
       token,
@@ -200,7 +203,9 @@ exports.login = async (req, res) => {
         id: user._id,
         fullName: user.fullName,
         email: user.email,
-        role: user.role
+        role: user.role,
+        roles: permissionPayload.roleNames,
+        permissions: permissionPayload.permissions
       }
     });
   } catch (error) {
@@ -240,10 +245,15 @@ exports.login = async (req, res) => {
 // @access  Private
 exports.getMe = async (req, res) => {
   const user = await User.findById(req.user.id);
+  const permissionPayload = await getUserPermissions(user);
 
   res.status(200).json({
     success: true,
-    data: user,
+    data: {
+      ...user.toObject(),
+      roles: permissionPayload.roleNames,
+      permissions: permissionPayload.permissions
+    },
   });
 };
 
@@ -269,7 +279,7 @@ exports.getAllUsers = async (req, res) => {
       }
     }
 
-    const users = await User.find(filter).select("fullName email role createdAt active");
+    const users = await User.find(filter).select("fullName email role roles createdAt active");
 
     res.status(200).json({
       success: true,
@@ -290,7 +300,7 @@ exports.getAllUsers = async (req, res) => {
 exports.updateUser = async (req, res) => {
   try {
     console.log(`Attempting to update user with ID: ${req.params.id}`);
-    const { fullName, email, role } = req.body;
+    const { fullName, email, role, roles } = req.body;
 
     // Check if user exists
     let user = await User.findById(req.params.id);
@@ -323,6 +333,9 @@ exports.updateUser = async (req, res) => {
     user.fullName = fullName || user.fullName;
     user.email = email || user.email;
     user.role = role || user.role;
+    if (Array.isArray(roles)) {
+      user.roles = roles;
+    }
 
     // If password is provided, update it
     if (req.body.password && req.body.password.trim() !== "") {

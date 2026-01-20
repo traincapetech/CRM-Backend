@@ -46,7 +46,11 @@ const isValidEmail = (email) => {
 // @access  Private (Admin, Manager)
 exports.getCampaigns = async (req, res) => {
   try {
-    const campaigns = await EmailCampaign.find({ createdBy: req.user.id })
+    const filter = isAdminOrManager(req.user)
+      ? {}
+      : { createdBy: req.user.id };
+
+    const campaigns = await EmailCampaign.find(filter)
       .populate('createdBy', 'fullName email')
       .sort({ createdAt: -1 });
 

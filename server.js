@@ -8,6 +8,7 @@ const ipFilter = require('./middleware/ipFilter');
 const http = require('http');
 const socketIo = require('socket.io');
 const { seedDefaultEmailTemplates } = require('./utils/seedDefaultEmailTemplates');
+const { seedAccessRoles } = require('./utils/seedAccessRoles');
 
 // Load env vars
 dotenv.config();
@@ -20,6 +21,7 @@ validateEnvironment();
 console.log('Connecting to CRM database...');
 connectDB();
 seedDefaultEmailTemplates();
+seedAccessRoles();
 
 // Connect to Redis (optional - for caching)
 const { connectRedis } = require('./config/redis');
@@ -64,6 +66,13 @@ const emailTemplateRoutes = require('./routes/emailTemplates');
 const workflowRoutes = require('./routes/workflows');
 const payoutRoutes = require('./routes/payouts');
 const paytmRoutes = require('./routes/paytm');
+const testRolesRoutes = require('./routes/testRoles');
+const testGroupsRoutes = require('./routes/testGroups');
+const testQuestionsRoutes = require('./routes/testQuestions');
+const testsRoutes = require('./routes/tests');
+const testAssignmentsRoutes = require('./routes/testAssignments');
+const testAttemptsRoutes = require('./routes/testAttempts');
+const testReportsRoutes = require('./routes/testReports');
 const app = express();
 const server = http.createServer(app);
 
@@ -417,6 +426,13 @@ app.use('/api/it-projects', itProjectsRoutes);
 app.use('/api/email-campaigns', emailCampaignRoutes);
 app.use('/api/email-templates', emailTemplateRoutes);
 app.use('/api/workflows', workflowRoutes);
+app.use('/api/test-roles', testRolesRoutes);
+app.use('/api/test-groups', testGroupsRoutes);
+app.use('/api/test-questions', testQuestionsRoutes);
+app.use('/api/tests', testsRoutes);
+app.use('/api/test-assignments', testAssignmentsRoutes);
+app.use('/api/test-attempts', testAttemptsRoutes);
+app.use('/api/test-reports', testReportsRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
