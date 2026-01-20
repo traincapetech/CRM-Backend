@@ -37,6 +37,12 @@ const sanitizeAttempt = (attempt, { includeToken } = { includeToken: false }) =>
   return payload;
 };
 
+const sanitizeAttemptForReview = (attempt) => {
+  const payload = attempt.toObject();
+  delete payload.attemptToken;
+  return payload;
+};
+
 const evaluateAttempt = (attempt) => {
   let score = 0;
   attempt.answers.forEach((answer) => {
@@ -205,6 +211,29 @@ exports.getAttempt = async (req, res) => {
       attempt: sanitizeAttempt(attempt, { includeToken: true }),
       questions: sanitizeQuestions(attempt.questionSnapshots)
     }
+  });
+};
+
+// @desc    Get attempt review (with correct answers)
+// @route   GET /api/test-attempts/:id/review
+// @access  Permission: test.take
+exports.getAttemptReview = async (req, res) => {
+  const attempt = await TestAttempt.findById(req.params.id);
+  if (!attempt) {
+    return res.status(404).json({ success: false, message: 'Attempt not found' });
+  }
+
+  if (attempt.user.toString() !== req.user._id.toString()) {
+    return res.status(403).json({ success: false, message: 'Not allowed' });
+  }
+
+  if (attempt.status === 'in_progress') {
+    return res.status(400).json({ success: false, message: 'Attempt still in progress' });
+  }
+
+  res.status(200).json({
+    success: true,
+    data: sanitizeAttemptForReview(attempt)
   });
 };
 
