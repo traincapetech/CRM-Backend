@@ -66,6 +66,7 @@ const emailTemplateRoutes = require('./routes/emailTemplates');
 const workflowRoutes = require('./routes/workflows');
 const payoutRoutes = require('./routes/payouts');
 const paytmRoutes = require('./routes/paytm');
+const biometricRoutes = require('./routes/biometric');
 const testRolesRoutes = require('./routes/testRoles');
 const testGroupsRoutes = require('./routes/testGroups');
 const testQuestionsRoutes = require('./routes/testQuestions');
@@ -291,6 +292,7 @@ io.on('connection', (socket) => {
 // Reminder service
 const { processExamReminders } = require('./utils/reminderService');
 const { startExamNotificationScheduler } = require('./utils/examNotificationService');
+const { startBiometricScheduler } = require('./services/biometricScheduler');
 
 // Security middleware
 const helmet = require('helmet');
@@ -433,6 +435,7 @@ app.use('/api/tests', testsRoutes);
 app.use('/api/test-assignments', testAssignmentsRoutes);
 app.use('/api/test-attempts', testAttemptsRoutes);
 app.use('/api/test-reports', testReportsRoutes);
+app.use('/api/biometric', biometricRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
@@ -457,16 +460,30 @@ app.use((err, req, res, next) => {
   
   // Set CORS headers even on errors to ensure frontend can receive error responses
   const origin = req.headers.origin;
+  const envAllowedOrigins = [
+    process.env.CLIENT_URL,
+    process.env.FRONTEND_URL,
+    process.env.ALLOWED_ORIGINS
+  ]
+    .filter(Boolean)
+    .flatMap((value) => value.split(',').map((origin) => origin.trim()))
+    .filter(Boolean);
+
   const allowedOrigins = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'https://traincapecrm.traincapetech.in',
     'http://traincapecrm.traincapetech.in',
     'https://crm-backend-o36v.onrender.com',
+    ...envAllowedOrigins
   ];
   
   // Always set CORS headers for allowed origins or in development
-  if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+  const isTraincapeSubdomain = origin
+    ? /^https?:\/\/([a-z0-9-]+\.)?traincapetech\.in$/i.test(origin)
+    : false;
+
+  if (!origin || allowedOrigins.includes(origin) || isTraincapeSubdomain || process.env.NODE_ENV === 'development') {
     res.header('Access-Control-Allow-Origin', origin || '*');
     res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept');
@@ -502,6 +519,7 @@ server.listen(PORT, () => {
   
   // Start the exam notification scheduler
   startExamNotificationScheduler(io);
+  startBiometricScheduler();
 });
 
 // Set up the reminder scheduler - run every 10 minutes

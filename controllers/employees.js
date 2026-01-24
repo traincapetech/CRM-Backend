@@ -314,6 +314,7 @@ exports.getEmployeeByUserId = async (req, res) => {
 // @route   POST /api/employees
 // @access  Private
 exports.createEmployee = async (req, res) => {
+  let employeeData = null;
   try {
     console.log('Create employee request received:', {
       body: req.body,
@@ -322,7 +323,11 @@ exports.createEmployee = async (req, res) => {
     });
     
     // Parse employee data from form
-    const employeeData = typeof req.body.employee === 'string' ? JSON.parse(req.body.employee) : req.body;
+    employeeData = typeof req.body.employee === 'string' ? JSON.parse(req.body.employee) : req.body;
+
+    if (employeeData.paymentMode === '' || employeeData.paymentMode === null) {
+      delete employeeData.paymentMode;
+    }
     
     // Check if user is trying to create their own profile
     const isCreatingOwnProfile = employeeData.userId === req.user.id || 
@@ -377,6 +382,18 @@ exports.createEmployee = async (req, res) => {
       }
     } else {
       console.log('No files found in request');
+    }
+
+    if (employeeData.biometricCode) {
+      const existingBiometric = await Employee.findOne({
+        biometricCode: employeeData.biometricCode
+      });
+      if (existingBiometric) {
+        return res.status(400).json({
+          success: false,
+          message: 'Biometric code already assigned to another employee'
+        });
+      }
     }
 
     // Create employee
@@ -446,6 +463,19 @@ exports.updateEmployee = async (req, res) => {
         employeeData.employmentType = 'INTERN';
       } else if (role && role.name === 'IT Permanent') {
         employeeData.employmentType = 'PERMANENT';
+      }
+    }
+
+    if (employeeData.biometricCode) {
+      const existingBiometric = await Employee.findOne({
+        biometricCode: employeeData.biometricCode,
+        _id: { $ne: employee._id }
+      });
+      if (existingBiometric) {
+        return res.status(400).json({
+          success: false,
+          message: 'Biometric code already assigned to another employee'
+        });
       }
     }
 

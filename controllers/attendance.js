@@ -41,7 +41,8 @@ exports.checkIn = async (req, res) => {
       userId: req.user.id,
       date: today,
       checkIn: new Date(),
-      notes: notes || ''
+      notes: notes || '',
+      source: 'MANUAL'
     });
 
     res.status(201).json({
@@ -101,6 +102,7 @@ exports.checkOut = async (req, res) => {
     // Update attendance with check-out time
     attendance.checkOut = new Date();
     if (notes) attendance.notes = notes;
+    attendance.source = attendance.source || 'MANUAL';
     
     await attendance.save();
 
@@ -353,7 +355,8 @@ exports.createAttendance = async (req, res) => {
       status,
       notes: notes || '',
       approvedBy: req.user.id,
-      isAdminCreated: true // Mark as admin-created
+      isAdminCreated: true, // Mark as admin-created
+      source: 'MANUAL'
     };
 
     // Add check-in/check-out times if provided
@@ -398,6 +401,13 @@ exports.updateAttendance = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Attendance record not found'
+      });
+    }
+
+    if (attendance.source === 'BIOMETRIC' && req.user.role !== 'Admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Biometric attendance is read-only for non-admins'
       });
     }
 

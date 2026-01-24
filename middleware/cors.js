@@ -1,6 +1,6 @@
 const cors = require('cors');
 
-const allowedOrigins = [
+const staticAllowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'https://traincapecrm.traincapetech.in',
@@ -9,11 +9,27 @@ const allowedOrigins = [
   // Add any additional origins here
 ];
 
+const envAllowedOrigins = [
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL,
+  process.env.ALLOWED_ORIGINS
+]
+  .filter(Boolean)
+  .flatMap((value) => value.split(',').map((origin) => origin.trim()))
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([...staticAllowedOrigins, ...envAllowedOrigins]));
+
 // Helper function to check if origin is allowed
 const isOriginAllowed = (origin) => {
   if (!origin) return true; // Allow requests with no origin
   
   if (allowedOrigins.includes(origin)) return true;
+
+  // Allow any subdomain on traincapetech.in
+  if (/^https?:\/\/([a-z0-9-]+\.)?traincapetech\.in$/i.test(origin)) {
+    return true;
+  }
   
   // For development, allow localhost origins
   if (process.env.NODE_ENV === 'development') {

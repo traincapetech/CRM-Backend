@@ -7,6 +7,13 @@ exports.getQuestions = async (req, res) => {
   const filters = {};
   if (req.query.type) filters.type = req.query.type;
   if (req.query.difficulty) filters.difficulty = req.query.difficulty;
+  if (req.query.topic) {
+    if (req.query.topic === '__uncategorized__') {
+      filters.$or = [{ topic: { $exists: false } }, { topic: '' }];
+    } else {
+      filters.topic = req.query.topic;
+    }
+  }
 
   const questions = await TestQuestion.find(filters)
     .sort({ createdAt: -1 })

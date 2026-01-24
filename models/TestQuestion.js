@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const testQuestionSchema = new mongoose.Schema({
+  topic: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   type: {
     type: String,
     enum: ['MCQ', 'DESCRIPTIVE'],
@@ -38,6 +43,7 @@ const testQuestionSchema = new mongoose.Schema({
   timestamps: true
 });
 
+testQuestionSchema.index({ topic: 1 });
 testQuestionSchema.index({ type: 1, difficulty: 1 });
 testQuestionSchema.index({ createdBy: 1 });
 

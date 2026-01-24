@@ -150,12 +150,25 @@ const employeeSchema = new mongoose.Schema({
     type: mongoose.Schema.ObjectId,
     ref: 'User'
   },
+
+  // Biometric device mapping (empCode)
+  biometricCode: {
+    type: String,
+    trim: true,
+    unique: true,
+    sparse: true,
+    default: null
+  },
+  biometricEnabled: {
+    type: Boolean,
+    default: false
+  },
   
   // Payment Details for Paytm Payouts (migrated from Razorpay)
   // Payment mode: "bank" for bank transfers, "upi" for UPI payments
   paymentMode: {
     type: String,
-    enum: ['bank', 'upi'],
+    enum: ['bank', 'upi', null],
     default: null
   },
   
@@ -246,5 +259,8 @@ employeeSchema.pre(/^find/, function(next) {
   });
   next();
 });
+
+// Ensure biometric codes are unique when provided
+employeeSchema.index({ biometricCode: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('Employee', employeeSchema);
