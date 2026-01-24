@@ -10,14 +10,46 @@ const startOfDay = (value) => {
   return date;
 };
 
-const parseIstDateTime = (dateTimeString) => {
-  if (!dateTimeString || typeof dateTimeString !== 'string') return null;
-  const normalized = dateTimeString.trim().replace(' ', 'T');
+const normalizeDatePart = (value) => {
+  if (!value) return null;
+  const raw = String(value).trim();
+  const match = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (!match) return raw;
+  const day = match[1].padStart(2, '0');
+  const month = match[2].padStart(2, '0');
+  let year = match[3];
+  if (year.length === 2) year = `20${year}`;
+  return `${year}-${month}-${day}`;
+};
+
+const parseIstDateTime = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === 'number') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  // Try standard ISO-like inputs first.
+  const normalized = raw.replace(' ', 'T');
   const withOffset = normalized.includes('+') || normalized.endsWith('Z')
     ? normalized
     : `${normalized}+05:30`;
   const parsed = new Date(withOffset);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+
+  // Fallback for dd/mm/yyyy or dd-mm-yyyy formats.
+  const [datePart, timePart] = raw.split(' ');
+  const normalizedDate = normalizeDatePart(datePart);
+  if (!normalizedDate) return null;
+  const fallback = `${normalizedDate}T${timePart || '00:00:00'}+05:30`;
+  const fallbackParsed = new Date(fallback);
+  return Number.isNaN(fallbackParsed.getTime()) ? null : fallbackParsed;
 };
 
 const normalizeEventType = (value) => {
@@ -30,16 +62,52 @@ const normalizeEventType = (value) => {
   return null;
 };
 
+const getFieldValue = (log, keys) => {
+  for (const key of keys) {
+    if (log[key] !== undefined && log[key] !== null && log[key] !== '') {
+      return log[key];
+    }
+  }
+  return null;
+};
+
 const extractEventTime = (log) => {
-  if (log.log_datetime) return parseIstDateTime(log.log_datetime);
-  if (log.logDateTime) return parseIstDateTime(log.logDateTime);
-  if (log.log_time && log.log_date) {
-    return parseIstDateTime(`${log.log_date} ${log.log_time}`);
+  const directDateTime = getFieldValue(log, [
+    'log_datetime',
+    'log_date_time',
+    'logDateTime',
+    'LogDateTime',
+    'LOGDATETIME',
+    'date_time',
+    'dateTime',
+    'DateTime',
+    'timestamp'
+  ]);
+  if (directDateTime) return parseIstDateTime(directDateTime);
+
+  const logDate = getFieldValue(log, [
+    'log_date',
+    'logDate',
+    'LogDate',
+    'LOGDATE',
+    'date',
+    'Date'
+  ]);
+  const logTime = getFieldValue(log, [
+    'log_time',
+    'logTime',
+    'LogTime',
+    'LOGTIME',
+    'time',
+    'Time'
+  ]);
+  if (logDate && logTime) {
+    return parseIstDateTime(`${logDate} ${logTime}`);
   }
-  if (log.logTime && log.logDate) {
-    return parseIstDateTime(`${log.logDate} ${log.logTime}`);
-  }
-  if (log.timestamp) return new Date(log.timestamp);
+
+  const fallbackDate = getFieldValue(log, ['download_date_time', 'downloadDateTime']);
+  if (fallbackDate) return parseIstDateTime(fallbackDate);
+
   return null;
 };
 
@@ -47,16 +115,70 @@ const normalizeLogs = (payload) => {
   if (!payload) return [];
   const logs = Array.isArray(payload)
     ? payload
-    : (payload.logs || payload.data || payload.events || []);
+    : (
+      payload.logs ||
+      payload.data ||
+      payload.events ||
+      payload.attendance ||
+      payload.attendanceLogs ||
+      payload.attendance_log ||
+      payload.Logs ||
+      payload.Data ||
+      payload.Events ||
+      payload.Attendance ||
+      payload.AttendanceLogs ||
+      []
+    );
 
   if (!Array.isArray(logs)) return [];
 
   return logs.map((log) => {
-    const biometricCode = log.employee_code || log.empCode || log.emp_code || log.emp_id || log.employeeCode;
+    const biometricCode = getFieldValue(log, [
+      'employee_code',
+      'empCode',
+      'emp_code',
+      'emp_id',
+      'employeeCode',
+      'EmployeeCode',
+      'EmpCode',
+      'EmpID',
+      'empId',
+      'employee_id'
+    ]);
     const eventTime = extractEventTime(log);
-    const eventType = normalizeEventType(log.in_out || log.inOut || log.inout || log.direction || log.status || log.type) || 'PUNCH';
-    const vendorLogId = log.log_id || log.logId || log.id || log.attendance_id || log.attendanceId || null;
-    const deviceSerial = log.device_sn || log.deviceSerial || log.device_serial || null;
+    const eventType = normalizeEventType(getFieldValue(log, [
+      'in_out',
+      'inOut',
+      'inout',
+      'direction',
+      'status',
+      'type',
+      'io',
+      'ioType',
+      'checkType',
+      'attendanceType',
+      'InOut',
+      'Direction',
+      'Status'
+    ])) || 'PUNCH';
+    const vendorLogId = getFieldValue(log, [
+      'log_id',
+      'logId',
+      'id',
+      'attendance_id',
+      'attendanceId',
+      'LogId',
+      'AttendanceId'
+    ]);
+    const deviceSerial = getFieldValue(log, [
+      'device_sn',
+      'deviceSerial',
+      'device_serial',
+      'DeviceSerialNo',
+      'DeviceSerial',
+      'deviceNo',
+      'device_no'
+    ]);
 
     return {
       biometricCode: biometricCode ? String(biometricCode).trim() : null,
@@ -67,6 +189,14 @@ const normalizeLogs = (payload) => {
       rawPayload: log
     };
   }).filter((log) => log.biometricCode && log.eventTime && log.eventType);
+};
+
+const normalizeBiometricCode = (value) => {
+  if (value === undefined || value === null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const numeric = raw.replace(/^0+/, '');
+  return numeric ? numeric : raw;
 };
 
 const ensureEmployeeMap = async (biometricCodes) => {
@@ -161,8 +291,18 @@ const syncAttendanceLogs = async (payload) => {
   const preparedLogs = [];
   let unmatched = 0;
 
+  const normalizedEmployeeMap = Object.values(employeeMap).reduce((acc, employee) => {
+    const normalizedCode = normalizeBiometricCode(employee.biometricCode);
+    if (!normalizedCode) return acc;
+    if (!acc[normalizedCode]) {
+      acc[normalizedCode] = employee;
+    }
+    return acc;
+  }, {});
+
   normalizedLogs.forEach((log) => {
-    const employee = employeeMap[log.biometricCode];
+    const employee = employeeMap[log.biometricCode]
+      || normalizedEmployeeMap[normalizeBiometricCode(log.biometricCode)];
     if (!employee) {
       unmatched += 1;
       return;
