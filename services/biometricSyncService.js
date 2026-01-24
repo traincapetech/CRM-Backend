@@ -266,7 +266,7 @@ const updateAttendanceForDay = async (employee, attendanceDate) => {
     return { updated: true };
   }
 
-  await Attendance.create({
+  const newAttendance = await Attendance.create({
     employeeId: employee._id,
     userId: employee.userId || null,
     date: attendanceDate,
@@ -274,6 +274,14 @@ const updateAttendanceForDay = async (employee, attendanceDate) => {
     checkOut,
     source: 'BIOMETRIC',
     notes: 'Synced from biometric logs'
+  });
+
+  console.log('Biometric attendance created:', {
+    attendanceId: newAttendance._id,
+    employeeId: employee._id,
+    date: newAttendance.date.toISOString(),
+    checkIn: newAttendance.checkIn?.toISOString(),
+    checkOut: newAttendance.checkOut?.toISOString()
   });
 
   return { created: true };
@@ -325,6 +333,13 @@ const syncAttendanceLogs = async (payload) => {
   preparedLogs.forEach((log) => {
     const key = `${log.employeeId}_${log.attendanceDate.toISOString()}`;
     dayKeys.set(key, { employeeId: log.employeeId, attendanceDate: log.attendanceDate });
+    console.log('Biometric log prepared:', {
+      biometricCode: log.biometricCode,
+      employeeId: log.employeeId,
+      attendanceDate: log.attendanceDate.toISOString(),
+      eventTime: log.eventTime?.toISOString(),
+      eventType: log.eventType
+    });
   });
 
   let created = 0;

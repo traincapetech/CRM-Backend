@@ -1061,22 +1061,23 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    // Check Paytm configuration before proceeding
-    if (!process.env.PAYTM_MERCHANT_ID || !process.env.PAYTM_MERCHANT_KEY) {
-      return res.status(500).json({
-        success: false,
-        message: 'Paytm configuration missing. Please configure PAYTM_MERCHANT_ID and PAYTM_MERCHANT_KEY in environment variables.'
-      });
-    }
-
-    // Import Paytm service (replaces Razorpay service)
-    const paytmService = require('../services/paytmService');
-    const { decrypt } = require('../utils/encryption');
-
     // Create or get Paytm Beneficiary (replaces Razorpay Contact + Fund Account)
     let beneficiaryId = employee.paytmBeneficiaryId;
 
     if (!beneficiaryId) {
+      // Paytm creds are only required when we need to create a beneficiary.
+      // If a beneficiary already exists, we can just mark verified without calling Paytm.
+      if (!process.env.PAYTM_MERCHANT_ID || !process.env.PAYTM_MERCHANT_KEY) {
+        return res.status(500).json({
+          success: false,
+          message:
+            'Paytm configuration missing. Please configure PAYTM_MERCHANT_ID and PAYTM_MERCHANT_KEY in environment variables.'
+        });
+      }
+
+      // Import Paytm service (replaces Razorpay service)
+      const paytmService = require('../services/paytmService');
+
       // Prepare beneficiary data
       const beneficiaryData = {
         name: employee.fullName,

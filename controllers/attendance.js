@@ -246,9 +246,38 @@ exports.getAllAttendance = async (req, res) => {
     let query = {};
     
     if (date) {
-      const queryDate = new Date(date);
+      // Handle date in various formats (ISO, dd/mm/yyyy, etc.)
+      let queryDate;
+      if (typeof date === 'string' && date.includes('/')) {
+        // Handle dd/mm/yyyy or mm/dd/yyyy format
+        const parts = date.split('/');
+        if (parts.length === 3) {
+          // Assume dd/mm/yyyy format (common in India/UK)
+          queryDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+        } else {
+          queryDate = new Date(date);
+        }
+      } else {
+        queryDate = new Date(date);
+      }
+      
+      // Set to start of day in local timezone
       queryDate.setHours(0, 0, 0, 0);
-      query.date = queryDate;
+      
+      // Query for the entire day (handle timezone differences)
+      const nextDay = new Date(queryDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      
+      query.date = {
+        $gte: queryDate,
+        $lt: nextDay
+      };
+      
+      console.log('Attendance query date range:', {
+        from: queryDate.toISOString(),
+        to: nextDay.toISOString(),
+        input: date
+      });
     }
 
     if (employeeId) {
