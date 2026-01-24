@@ -1,8 +1,70 @@
 const Payroll = require('../models/Payroll');
 const Employee = require('../models/Employee');
+const Attendance = require('../models/Attendance');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
+
+// Helper function to calculate attendance stats from stored records for a month
+const calculateAttendanceForMonth = async (employeeId, month, year) => {
+  try {
+    // Calculate date range for the month
+    const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)); // Last day of month
+
+    // Fetch all attendance records for this employee in this month
+    const attendanceRecords = await Attendance.find({
+      employeeId,
+      date: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    }).sort({ date: 1 });
+
+    // Calculate stats
+    let presentDays = 0;
+    let absentDays = 0;
+    let halfDays = 0;
+    let overtimeHours = 0;
+    const workingDays = endDate.getDate(); // Total days in month
+
+    attendanceRecords.forEach(record => {
+      if (record.status === 'PRESENT') {
+        presentDays++;
+        if (record.overtimeHours) {
+          overtimeHours += record.overtimeHours;
+        }
+      } else if (record.status === 'HALF_DAY') {
+        halfDays++;
+      } else if (record.status === 'ABSENT') {
+        absentDays++;
+      }
+    });
+
+    // Calculate absent days (working days - present - half days)
+    const totalAttended = presentDays + halfDays;
+    absentDays = Math.max(0, workingDays - totalAttended);
+
+    return {
+      presentDays,
+      absentDays,
+      halfDays,
+      overtimeHours: Math.round(overtimeHours * 100) / 100, // Round to 2 decimals
+      workingDays,
+      totalRecords: attendanceRecords.length
+    };
+  } catch (error) {
+    console.error('Error calculating attendance for month:', error);
+    return {
+      presentDays: 0,
+      absentDays: 0,
+      halfDays: 0,
+      overtimeHours: 0,
+      workingDays: 30, // Default
+      totalRecords: 0
+    };
+  }
+};
 
 // @desc    Generate payroll for a specific month
 // @route   POST /api/payroll/generate
@@ -57,12 +119,33 @@ exports.generatePayroll = async (req, res) => {
       });
     }
 
+    // Calculate attendance stats from stored attendance records if requested
+    let attendanceStats = null;
+    if (req.body.calculateFromAttendance !== false) {
+      attendanceStats = await calculateAttendanceForMonth(employeeId, month, year);
+      console.log('📊 Attendance stats calculated:', attendanceStats);
+    }
+
     // Create payroll record with both employeeId and userId
     const payrollData = {
       ...req.body,
       employeeId: employee._id,
-      userId: employee.userId._id // Make sure to set the userId from the employee record
+      userId: employee.userId._id, // Make sure to set the userId from the employee record
+      // Auto-fill from attendance if available
+      ...(attendanceStats && {
+        presentDays: attendanceStats.presentDays,
+        absentDays: attendanceStats.absentDays,
+        halfDays: attendanceStats.halfDays,
+        overtimeHours: attendanceStats.overtimeHours,
+        daysPresent: attendanceStats.presentDays + (attendanceStats.halfDays * 0.5),
+        workingDays: attendanceStats.workingDays
+      })
     };
+
+    // Auto-calculate salary if baseSalary and daysPresent are available
+    if (payrollData.baseSalary && payrollData.daysPresent) {
+      payrollData.calculatedSalary = (payrollData.baseSalary / payrollData.workingDays) * payrollData.daysPresent;
+    }
 
     const payroll = await Payroll.create(payrollData);
     await payroll.save();

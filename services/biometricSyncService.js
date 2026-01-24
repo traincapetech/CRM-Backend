@@ -6,8 +6,13 @@ const BiometricSettings = require('../models/BiometricSettings');
 
 const startOfDay = (value) => {
   const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
+  // Use UTC to avoid timezone issues when storing dates
+  return new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    0, 0, 0, 0
+  ));
 };
 
 const normalizeDatePart = (value) => {
@@ -372,26 +377,105 @@ const buildAuthHeaders = (settings) => {
   return { 'x-api-key': settings.apiKey };
 };
 
-const fetchVendorLogs = async (settings) => {
+const fetchVendorLogs = async (settings, options = {}) => {
   if (!settings?.apiBaseUrl) {
     throw new Error('Biometric API base URL is not configured');
   }
+  
   const headers = buildAuthHeaders(settings);
-  const response = await axios.get(settings.apiBaseUrl, { headers });
+  headers['Content-Type'] = 'application/json';
+  
+  // Build query parameters for date range (if vendor supports it)
+  const params = {};
+  
+  // Historical sync: fetch from a specific start date
+  if (options.historicalSync && options.startDate) {
+    params.from_date = options.startDate; // Format: YYYY-MM-DD or vendor format
+    params.to_date = options.endDate || new Date().toISOString().split('T')[0];
+    console.log('Historical sync requested:', { from: params.from_date, to: params.to_date });
+  } else if (options.fromDate) {
+    params.from_date = options.fromDate;
+  }
+  
+  if (options.toDate) {
+    params.to_date = options.toDate;
+  }
+  
+  // Regular sync: fetch since last sync
+  if (!options.historicalSync && !options.fromDate && options.lastSyncAt && settings.lastSyncAt) {
+    const lastSync = new Date(settings.lastSyncAt);
+    params.from_date = lastSync.toISOString().split('T')[0];
+  }
+  
+  // Add common vendor API parameters
+  if (options.page) {
+    params.page = options.page;
+  }
+  if (options.limit) {
+    params.limit = options.limit;
+  }
+  
+  console.log('Fetching vendor logs:', {
+    url: settings.apiBaseUrl,
+    params,
+    hasAuth: !!settings.apiKey,
+    historicalSync: options.historicalSync || false
+  });
+  
+  const response = await axios.get(settings.apiBaseUrl, { 
+    headers,
+    params,
+    timeout: 30000 // 30 second timeout for large historical fetches
+  });
+  
+  console.log('Vendor API response:', {
+    status: response.status,
+    dataType: typeof response.data,
+    isArray: Array.isArray(response.data),
+    keys: response.data && !Array.isArray(response.data) ? Object.keys(response.data) : 'N/A',
+    logCount: Array.isArray(response.data) ? response.data.length : 
+              (response.data?.logs?.length || response.data?.data?.length || 'N/A')
+  });
+  
   return response.data;
 };
 
-const runBiometricPullSync = async () => {
+const runBiometricPullSync = async (options = {}) => {
   const settings = await BiometricSettings.findOne();
   if (!settings || !settings.enabled) {
     return { skipped: true, reason: 'Biometric integration disabled' };
   }
 
-  const payload = await fetchVendorLogs(settings);
-  const result = await syncAttendanceLogs(payload);
-  settings.lastSyncAt = new Date();
-  await settings.save();
-  return result;
+  if (!settings.apiBaseUrl) {
+    return { skipped: true, reason: 'API Base URL not configured. Webhook will still work.' };
+  }
+
+  try {
+    console.log('Starting biometric pull sync...', {
+      lastSyncAt: settings.lastSyncAt,
+      syncInterval: settings.syncIntervalMinutes
+    });
+
+    // Fetch logs from vendor (with date range if supported)
+    const payload = await fetchVendorLogs(settings, {
+      lastSyncAt: !options.forceFullSync && settings.lastSyncAt,
+      ...options
+    });
+
+    // Process all logs (for all employees)
+    const result = await syncAttendanceLogs(payload);
+    
+    // Update last sync time
+    settings.lastSyncAt = new Date();
+    await settings.save();
+
+    console.log('Biometric pull sync completed:', result);
+
+    return result;
+  } catch (error) {
+    console.error('Biometric pull sync error:', error.message);
+    throw error;
+  }
 };
 
 module.exports = {

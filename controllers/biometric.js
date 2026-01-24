@@ -98,21 +98,39 @@ exports.webhook = async (req, res) => {
   }
 };
 
-// @desc    Manual sync trigger (skeleton)
+// @desc    Manual sync trigger (fetches all employees)
 // @route   POST /api/biometric/sync
 // @access  Private (Admin/HR/Manager)
 exports.sync = async (req, res) => {
   if (!ensureAdminAccess(req, res)) return;
 
   try {
-    console.log('Biometric manual sync requested by:', req.user.id);
-    const result = await runBiometricPullSync();
+    const { forceFullSync = false, historicalSync = false, startDate = '2026-01-01' } = req.body;
+    console.log('Biometric manual sync requested by:', req.user.id, {
+      forceFullSync,
+      historicalSync,
+      startDate,
+      timestamp: new Date().toISOString()
+    });
+    
+    const options = {
+      forceFullSync,
+      historicalSync,
+      startDate: historicalSync ? startDate : undefined,
+      endDate: historicalSync ? new Date().toISOString().split('T')[0] : undefined
+    };
+    
+    const result = await runBiometricPullSync(options);
+    
     return res.status(200).json({
       success: true,
       data: result,
-      message: 'Sync completed'
+      message: result.skipped 
+        ? `Sync skipped: ${result.reason}`
+        : `Sync completed: ${result.processed || 0} logs processed, ${result.created || 0} created, ${result.updated || 0} updated`
     });
   } catch (error) {
+    console.error('Biometric manual sync error:', error);
     return res.status(500).json({
       success: false,
       message: 'Sync failed',
@@ -121,7 +139,7 @@ exports.sync = async (req, res) => {
   }
 };
 
-// @desc    Test biometric connection (mock)
+// @desc    Test biometric connection
 // @route   POST /api/biometric/test-connection
 // @access  Private (Admin/HR/Manager)
 exports.testConnection = async (req, res) => {
@@ -135,15 +153,51 @@ exports.testConnection = async (req, res) => {
         message: 'API Base URL is required for test connection'
       });
     }
-    await fetchVendorLogs(settings);
+
+    if (!settings.apiKey) {
+      return res.status(400).json({
+        success: false,
+        message: 'API Key/Token is required for test connection'
+      });
+    }
+
+    console.log('Testing biometric connection:', {
+      url: settings.apiBaseUrl,
+      authType: settings.authType,
+      hasApiKey: !!settings.apiKey
+    });
+
+    // Try to fetch logs (just test the connection, don't process)
+    const data = await fetchVendorLogs(settings, { limit: 1 }); // Only fetch 1 record for testing
+    
     return res.status(200).json({
       success: true,
-      message: 'Test connection successful'
+      message: 'Test connection successful',
+      data: {
+        recordsFound: Array.isArray(data) ? data.length : 
+                     (data?.logs?.length || data?.data?.length || 0),
+        dataType: Array.isArray(data) ? 'array' : typeof data
+      }
     });
   } catch (error) {
+    console.error('Test connection error:', error);
+    
+    let errorMessage = 'Test connection failed';
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      errorMessage = 'Cannot reach API server. Check if the API Base URL is correct.';
+    } else if (error.response?.status === 401 || error.response?.status === 403) {
+      errorMessage = 'Authentication failed. Check if API Key/Token is correct.';
+    } else if (error.response?.status === 404) {
+      errorMessage = 'API endpoint not found. Check if the API Base URL is correct.';
+    } else if (error.response?.status) {
+      errorMessage = `API returned error ${error.response.status}: ${error.response.statusText}`;
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+
     return res.status(500).json({
       success: false,
-      message: 'Test connection failed',
+      message: errorMessage,
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

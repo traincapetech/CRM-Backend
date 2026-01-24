@@ -253,29 +253,40 @@ exports.getAllAttendance = async (req, res) => {
         const parts = date.split('/');
         if (parts.length === 3) {
           // Assume dd/mm/yyyy format (common in India/UK)
-          queryDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+          queryDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00.000Z`);
         } else {
           queryDate = new Date(date);
         }
+      } else if (typeof date === 'string' && date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        // ISO date format (YYYY-MM-DD) - treat as UTC midnight
+        queryDate = new Date(`${date}T00:00:00.000Z`);
       } else {
         queryDate = new Date(date);
       }
       
-      // Set to start of day in local timezone
-      queryDate.setHours(0, 0, 0, 0);
+      // Ensure we're working with UTC dates to avoid timezone issues
+      const startOfDay = new Date(Date.UTC(
+        queryDate.getUTCFullYear(),
+        queryDate.getUTCMonth(),
+        queryDate.getUTCDate(),
+        0, 0, 0, 0
+      ));
       
-      // Query for the entire day (handle timezone differences)
-      const nextDay = new Date(queryDate);
-      nextDay.setDate(nextDay.getDate() + 1);
+      const endOfDay = new Date(Date.UTC(
+        queryDate.getUTCFullYear(),
+        queryDate.getUTCMonth(),
+        queryDate.getUTCDate() + 1,
+        0, 0, 0, 0
+      ));
       
       query.date = {
-        $gte: queryDate,
-        $lt: nextDay
+        $gte: startOfDay,
+        $lt: endOfDay
       };
       
       console.log('Attendance query date range:', {
-        from: queryDate.toISOString(),
-        to: nextDay.toISOString(),
+        from: startOfDay.toISOString(),
+        to: endOfDay.toISOString(),
         input: date
       });
     }
