@@ -293,13 +293,21 @@ const updateAttendanceForDay = async (employee, attendanceDate) => {
 };
 
 const syncAttendanceLogs = async (payload) => {
+  console.log('📥 Raw webhook payload received:', JSON.stringify(payload, null, 2));
+  
   const normalizedLogs = normalizeLogs(payload);
+  console.log('✅ Normalized logs:', normalizedLogs.length, 'records');
+  
   if (!normalizedLogs.length) {
+    console.warn('⚠️ No valid logs found in payload');
     return { processed: 0, created: 0, updated: 0, skipped: 0, unmatched: 0 };
   }
 
   const biometricCodes = [...new Set(normalizedLogs.map((log) => log.biometricCode))];
+  console.log('🔍 Looking for employees with codes:', biometricCodes);
+  
   const employeeMap = await ensureEmployeeMap(biometricCodes);
+  console.log('👥 Found employees:', Object.keys(employeeMap).length, 'matched out of', biometricCodes.length, 'codes');
 
   const preparedLogs = [];
   let unmatched = 0;
@@ -318,6 +326,12 @@ const syncAttendanceLogs = async (payload) => {
       || normalizedEmployeeMap[normalizeBiometricCode(log.biometricCode)];
     if (!employee) {
       unmatched += 1;
+      console.warn('⚠️ Unmatched biometric log:', {
+        biometricCode: log.biometricCode,
+        normalizedCode: normalizeBiometricCode(log.biometricCode),
+        eventTime: log.eventTime?.toISOString(),
+        availableCodes: Object.keys(employeeMap).slice(0, 5) // Show first 5 for debugging
+      });
       return;
     }
     preparedLogs.push({

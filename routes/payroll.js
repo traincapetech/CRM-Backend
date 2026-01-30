@@ -8,7 +8,8 @@ const {
   deletePayroll,
   generateSalarySlip,
   downloadSalarySlip,
-  approvePayroll
+  approvePayroll,
+  exportPayrollReport
 } = require('../controllers/payroll');
 
 // Debug middleware
@@ -28,6 +29,10 @@ const debugMiddleware = (req, res, next) => {
 
 // Apply debug middleware to all routes
 router.use(debugMiddleware);
+
+// Export payroll report - must be before /:id routes
+router.route('/export-report')
+  .get(protect, exportPayrollReport);
 
 // Get payroll records and download salary slip - accessible to all authenticated users
 router.route('/')

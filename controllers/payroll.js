@@ -892,3 +892,211 @@ exports.deletePayroll = async (req, res) => {
     });
   }
 };
+
+// @desc    Export payroll report for a month as PDF
+// @route   GET /api/payroll/export-report
+// @access  Private (Admin/HR/Manager)
+exports.exportPayrollReport = async (req, res) => {
+  try {
+    // Check authorization
+    if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to export payroll report'
+      });
+    }
+
+    const { month, year } = req.query;
+    
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        message: 'Month and year are required'
+      });
+    }
+
+    // Fetch all payroll records for the specified month/year
+    const payrolls = await Payroll.find({
+      month: parseInt(month),
+      year: parseInt(year)
+    }).populate({
+      path: 'employeeId',
+      select: 'fullName email department role',
+      populate: [
+        { path: 'department', select: 'name' },
+        { path: 'role', select: 'name' }
+      ]
+    }).sort({ 'employeeId.fullName': 1 });
+
+    if (payrolls.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No payroll records found for the specified month'
+      });
+    }
+
+    // Create PDF
+    const doc = new PDFDocument({ 
+      margin: 30,
+      size: 'A4',
+      layout: 'landscape'
+    });
+    
+    // Set response headers
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                        'July', 'August', 'September', 'October', 'November', 'December'];
+    const monthName = monthNames[parseInt(month) - 1];
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="payroll-report-${monthName}-${year}.pdf"`);
+    
+    // Pipe the PDF directly to the response
+    doc.pipe(res);
+
+    // Company Logo
+    const logoPath = path.join(__dirname, '../assets/images/traincape-logo.jpg');
+    if (fs.existsSync(logoPath)) {
+      doc.image(logoPath, 30, 30, { width: 60 });
+    }
+
+    // Header
+    doc.fontSize(20).text('PAYROLL SUMMARY REPORT', 100, 40, { align: 'center' });
+    doc.fontSize(12).text('Traincape Technology', { align: 'center' });
+    doc.fontSize(10).text('Khandolia Plaza, 118C, Dabri - Palam Rd, Delhi 110045', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(14).text(`${monthName} ${year}`, { align: 'center' });
+    doc.moveDown();
+    
+    // Draw line
+    doc.strokeColor('#333333').lineWidth(1)
+       .moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
+    doc.moveDown();
+
+    // Summary Statistics
+    const totalGross = payrolls.reduce((sum, p) => sum + (p.grossSalary || 0), 0);
+    const totalDeductions = payrolls.reduce((sum, p) => sum + (p.totalDeductions || 0), 0);
+    const totalNet = payrolls.reduce((sum, p) => sum + (p.netSalary || 0), 0);
+    const draftCount = payrolls.filter(p => p.status === 'DRAFT').length;
+    const approvedCount = payrolls.filter(p => p.status === 'APPROVED').length;
+    const paidCount = payrolls.filter(p => p.status === 'PAID').length;
+
+    doc.fontSize(11);
+    doc.text(`Total Employees: ${payrolls.length}`, 30);
+    doc.text(`Status - Draft: ${draftCount} | Approved: ${approvedCount} | Paid: ${paidCount}`, 250, doc.y - 13);
+    doc.moveDown(0.5);
+    doc.text(`Total Gross Salary: ₹${totalGross.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 30);
+    doc.text(`Total Deductions: ₹${totalDeductions.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 300, doc.y - 13);
+    doc.text(`Total Net Salary: ₹${totalNet.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 550, doc.y - 13);
+    doc.moveDown();
+
+    // Draw line
+    doc.strokeColor('#333333').lineWidth(1)
+       .moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
+    doc.moveDown(0.5);
+
+    // Table Header
+    const tableTop = doc.y;
+    const colWidths = [25, 140, 100, 70, 55, 75, 75, 75, 70];
+    const headers = ['#', 'Employee Name', 'Department', 'Days', 'Status', 'Gross (₹)', 'Deductions (₹)', 'Net (₹)', 'Bonuses (₹)'];
+    
+    doc.fontSize(9).font('Helvetica-Bold');
+    let xPos = 30;
+    headers.forEach((header, i) => {
+      doc.text(header, xPos, tableTop, { width: colWidths[i], align: i === 0 ? 'center' : 'left' });
+      xPos += colWidths[i];
+    });
+    
+    doc.moveDown(0.3);
+    doc.strokeColor('#aaaaaa').lineWidth(0.5)
+       .moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
+    doc.moveDown(0.3);
+
+    // Table Rows
+    doc.font('Helvetica').fontSize(8);
+    let rowY = doc.y;
+    
+    payrolls.forEach((payroll, index) => {
+      // Check if we need a new page
+      if (rowY > doc.page.height - 60) {
+        doc.addPage({ layout: 'landscape' });
+        rowY = 50;
+      }
+
+      const bonuses = (payroll.performanceBonus || 0) + (payroll.projectBonus || 0) + 
+                      (payroll.attendanceBonus || 0) + (payroll.festivalBonus || 0);
+      
+      const statusColors = {
+        'DRAFT': '#666666',
+        'APPROVED': '#22c55e',
+        'PAID': '#3b82f6',
+        'CANCELLED': '#ef4444'
+      };
+
+      xPos = 30;
+      doc.fillColor('#333333');
+      doc.text((index + 1).toString(), xPos, rowY, { width: colWidths[0], align: 'center' });
+      xPos += colWidths[0];
+      
+      doc.text(payroll.employeeId?.fullName || 'N/A', xPos, rowY, { width: colWidths[1] - 5 });
+      xPos += colWidths[1];
+      
+      doc.text(payroll.employeeId?.department?.name || 'N/A', xPos, rowY, { width: colWidths[2] - 5 });
+      xPos += colWidths[2];
+      
+      doc.text(`${payroll.daysPresent || 0}/${payroll.workingDays || 30}`, xPos, rowY, { width: colWidths[3] });
+      xPos += colWidths[3];
+      
+      doc.fillColor(statusColors[payroll.status] || '#666666');
+      doc.text(payroll.status || 'DRAFT', xPos, rowY, { width: colWidths[4] });
+      xPos += colWidths[4];
+      
+      doc.fillColor('#333333');
+      doc.text((payroll.grossSalary || 0).toLocaleString('en-IN'), xPos, rowY, { width: colWidths[5] });
+      xPos += colWidths[5];
+      
+      doc.text((payroll.totalDeductions || 0).toLocaleString('en-IN'), xPos, rowY, { width: colWidths[6] });
+      xPos += colWidths[6];
+      
+      doc.font('Helvetica-Bold');
+      doc.text((payroll.netSalary || 0).toLocaleString('en-IN'), xPos, rowY, { width: colWidths[7] });
+      xPos += colWidths[7];
+      
+      doc.font('Helvetica');
+      doc.text(bonuses.toLocaleString('en-IN'), xPos, rowY, { width: colWidths[8] });
+      
+      rowY += 15;
+      
+      // Light separator line every row
+      if (index < payrolls.length - 1) {
+        doc.strokeColor('#eeeeee').lineWidth(0.3)
+           .moveTo(30, rowY - 3).lineTo(doc.page.width - 30, rowY - 3).stroke();
+      }
+    });
+
+    // Footer
+    doc.y = rowY + 10;
+    doc.strokeColor('#333333').lineWidth(1)
+       .moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
+    doc.moveDown();
+    
+    doc.fontSize(8).font('Helvetica');
+    doc.fillColor('#666666');
+    doc.text(`Report generated on: ${new Date().toLocaleString('en-IN')}`, 30);
+    doc.text(`Generated by: ${req.user.fullName || req.user.email}`, 30);
+    doc.moveDown();
+    doc.text('This is a computer-generated report. No signature is required.', { align: 'center' });
+
+    // Finalize PDF
+    doc.end();
+
+  } catch (error) {
+    console.error('Export payroll report error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: 'Server error while generating payroll report',
+        error: error.message
+      });
+    }
+  }
+};
