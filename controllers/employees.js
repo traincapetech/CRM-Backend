@@ -370,26 +370,23 @@ exports.createEmployee = async (req, res) => {
       delete employeeData.paymentMode;
     }
 
-    // Check if user is trying to create their own profile
-    const isCreatingOwnProfile =
-      employeeData.userId === req.user.id ||
-      !employeeData.userId ||
-      employeeData.email === req.user.email;
-
-    // Allow users to create their own profiles, but restrict admin functions
+    // Simplified logic: only link to current user if they are an Employee (e.g. self-onboarding)
+    // Or if they are creating their own profile.
+    // If an Admin/HR/Manager/IT Manager is creating an employee, we DON'T want to link it to their own creator account.
     if (
-      !isCreatingOwnProfile &&
-      !["HR", "Admin", "Manager"].includes(req.user.role)
+      !employeeData.userId &&
+      !["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role)
     ) {
-      return res.status(403).json({
-        success: false,
-        message: "Not authorized to create employee profiles for other users",
-      });
+      employeeData.userId = req.user.id;
     }
 
-    // Set the user ID for the employee
-    if (isCreatingOwnProfile) {
-      employeeData.userId = req.user.id;
+    // Safety check: if biometricCode is empty string or null, remove it to respect sparse index
+    if (!employeeData.biometricCode || employeeData.biometricCode === "") {
+      delete employeeData.biometricCode;
+    }
+
+    // Ensure fullName and email are set from user if creating own profile (fallback)
+    if (employeeData.userId === req.user.id) {
       employeeData.fullName = employeeData.fullName || req.user.fullName;
       employeeData.email = employeeData.email || req.user.email;
     }
