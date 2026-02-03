@@ -1,24 +1,24 @@
-const Employee = require('../models/Employee');
-const Department = require('../models/Department');
-const Role = require('../models/EmployeeRole');
-const User = require('../models/User');
-const fs = require('fs');
-const path = require('path');
-const fileStorage = require('../services/fileStorageService');
-const { decrypt } = require('../utils/encryption');
+const Employee = require("../models/Employee");
+const Department = require("../models/Department");
+const Role = require("../models/EmployeeRole");
+const User = require("../models/User");
+const fs = require("fs");
+const path = require("path");
+const fileStorage = require("../services/fileStorageService");
+const { decrypt } = require("../utils/encryption");
 
 // Export multer upload middleware
 exports.uploadEmployeeFiles = fileStorage.uploadMiddleware.fields([
-  { name: 'photograph', maxCount: 1 },
-  { name: 'tenthMarksheet', maxCount: 1 },
-  { name: 'twelfthMarksheet', maxCount: 1 },
-  { name: 'bachelorDegree', maxCount: 1 },
-  { name: 'postgraduateDegree', maxCount: 1 },
-  { name: 'aadharCard', maxCount: 1 },
-  { name: 'panCard', maxCount: 1 },
-  { name: 'pcc', maxCount: 1 },
-  { name: 'resume', maxCount: 1 },
-  { name: 'offerLetter', maxCount: 1 }
+  { name: "photograph", maxCount: 1 },
+  { name: "tenthMarksheet", maxCount: 1 },
+  { name: "twelfthMarksheet", maxCount: 1 },
+  { name: "bachelorDegree", maxCount: 1 },
+  { name: "postgraduateDegree", maxCount: 1 },
+  { name: "aadharCard", maxCount: 1 },
+  { name: "panCard", maxCount: 1 },
+  { name: "pcc", maxCount: 1 },
+  { name: "resume", maxCount: 1 },
+  { name: "offerLetter", maxCount: 1 },
 ]);
 
 // @desc    Get all employees
@@ -32,22 +32,25 @@ exports.getEmployees = async (req, res) => {
     const reqQuery = { ...req.query };
 
     // Fields to exclude
-    const removeFields = ['select', 'sort', 'page', 'limit'];
+    const removeFields = ["select", "sort", "page", "limit"];
 
     // Loop over removeFields and delete them from reqQuery
-    removeFields.forEach(param => delete reqQuery[param]);
+    removeFields.forEach((param) => delete reqQuery[param]);
 
     // Create query string
     let queryStr = JSON.stringify(reqQuery);
 
     // Create operators ($gt, $gte, etc)
-    queryStr = queryStr.replace(/\b(gt|gte|lt|lte|in)\b/g, match => `$${match}`);
+    queryStr = queryStr.replace(
+      /\b(gt|gte|lt|lte|in)\b/g,
+      (match) => `$${match}`,
+    );
 
     // Role-based filtering
-    if (req.user.role === 'HR') {
+    if (req.user.role === "HR") {
       // HR can see employees they manage or all if no hrId restriction
       query = Employee.find(JSON.parse(queryStr));
-    } else if (req.user.role === 'Admin' || req.user.role === 'Manager') {
+    } else if (req.user.role === "Admin" || req.user.role === "Manager") {
       // Admin and Manager can see all employees
       query = Employee.find(JSON.parse(queryStr));
     } else {
@@ -56,21 +59,22 @@ exports.getEmployees = async (req, res) => {
     }
 
     // Populate role and department for all queries
-    query = query.populate('role', 'name description')
-                 .populate('department', 'name description');
+    query = query
+      .populate("role", "name description")
+      .populate("department", "name description");
 
     // Select Fields
     if (req.query.select) {
-      const fields = req.query.select.split(',').join(' ');
+      const fields = req.query.select.split(",").join(" ");
       query = query.select(fields);
     }
 
     // Sort
     if (req.query.sort) {
-      const sortBy = req.query.sort.split(',').join(' ');
+      const sortBy = req.query.sort.split(",").join(" ");
       query = query.sort(sortBy);
     } else {
-      query = query.sort('-createdAt');
+      query = query.sort("-createdAt");
     }
 
     // Pagination
@@ -89,32 +93,46 @@ exports.getEmployees = async (req, res) => {
     // Since role is already populated, we can check directly
     const employeesToFix = [];
     for (const emp of employees) {
-      if (emp.role && typeof emp.role === 'object' && emp.role.name) {
-        if (emp.role.name === 'IT Intern' && emp.employmentType !== 'INTERN') {
-          employeesToFix.push({ id: emp._id, type: 'INTERN' });
-          emp.employmentType = 'INTERN'; // Update in memory immediately
-        } else if (emp.role.name === 'IT Permanent' && emp.employmentType !== 'PERMANENT') {
-          employeesToFix.push({ id: emp._id, type: 'PERMANENT' });
-          emp.employmentType = 'PERMANENT'; // Update in memory immediately
+      if (emp.role && typeof emp.role === "object" && emp.role.name) {
+        if (emp.role.name === "IT Intern" && emp.employmentType !== "INTERN") {
+          employeesToFix.push({ id: emp._id, type: "INTERN" });
+          emp.employmentType = "INTERN"; // Update in memory immediately
+        } else if (
+          emp.role.name === "IT Permanent" &&
+          emp.employmentType !== "PERMANENT"
+        ) {
+          employeesToFix.push({ id: emp._id, type: "PERMANENT" });
+          emp.employmentType = "PERMANENT"; // Update in memory immediately
         }
       }
     }
-    
+
     // Batch update in database (more efficient)
     if (employeesToFix.length > 0) {
-      console.log(`Auto-fixing employmentType for ${employeesToFix.length} employees`);
-      const updatePromises = employeesToFix.map(({ id, type }) => 
-        Employee.findByIdAndUpdate(id, { employmentType: type }, { new: false })
+      console.log(
+        `Auto-fixing employmentType for ${employeesToFix.length} employees`,
+      );
+      const updatePromises = employeesToFix.map(({ id, type }) =>
+        Employee.findByIdAndUpdate(
+          id,
+          { employmentType: type },
+          { new: false },
+        ),
       );
       await Promise.all(updatePromises);
     }
 
     // Transform employees: map individual document fields to documents object
-    const transformedEmployees = employees.map(emp => {
+    const transformedEmployees = employees.map((emp) => {
       const empObj = emp.toObject();
       // If documents object is empty but individual fields exist, map them
-      if ((!empObj.documents || Object.keys(empObj.documents).length === 0) && 
-          (empObj.photograph || empObj.aadharCard || empObj.panCard || empObj.resume)) {
+      if (
+        (!empObj.documents || Object.keys(empObj.documents).length === 0) &&
+        (empObj.photograph ||
+          empObj.aadharCard ||
+          empObj.panCard ||
+          empObj.resume)
+      ) {
         empObj.documents = {
           photograph: empObj.photograph,
           tenthMarksheet: empObj.tenthMarksheet,
@@ -125,7 +143,7 @@ exports.getEmployees = async (req, res) => {
           panCard: empObj.panCard,
           pcc: empObj.pcc,
           resume: empObj.resume,
-          offerLetter: empObj.offerLetter
+          offerLetter: empObj.offerLetter,
         };
       }
       return empObj;
@@ -137,14 +155,14 @@ exports.getEmployees = async (req, res) => {
     if (endIndex < total) {
       pagination.next = {
         page: page + 1,
-        limit
+        limit,
       };
     }
 
     if (startIndex > 0) {
       pagination.prev = {
         page: page - 1,
-        limit
+        limit,
       };
     }
 
@@ -152,13 +170,13 @@ exports.getEmployees = async (req, res) => {
       success: true,
       count: transformedEmployees.length,
       pagination,
-      data: transformedEmployees
+      data: transformedEmployees,
     });
   } catch (err) {
-    console.error('Error fetching employees:', err);
+    console.error("Error fetching employees:", err);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: "Server Error",
     });
   }
 };
@@ -168,21 +186,21 @@ exports.getEmployees = async (req, res) => {
 // @access  Private
 exports.getEmployee = async (req, res) => {
   try {
-    console.log('Fetching employee with ID:', req.params.id);
-    
+    console.log("Fetching employee with ID:", req.params.id);
+
     const employee = await Employee.findById(req.params.id)
-      .populate('department', 'name description')
-      .populate('role', 'name description')
-      .populate('hrId', 'fullName email');
+      .populate("department", "name description")
+      .populate("role", "name description")
+      .populate("hrId", "fullName email");
 
     if (!employee) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: "Employee not found",
       });
     }
 
-    console.log('Found employee data:', {
+    console.log("Found employee data:", {
       id: employee._id,
       fullName: employee.fullName,
       email: employee.email,
@@ -193,13 +211,18 @@ exports.getEmployee = async (req, res) => {
         panCard: !!employee.panCard,
         pcc: !!employee.pcc,
         resume: !!employee.resume,
-        offerLetter: !!employee.offerLetter
-      }
+        offerLetter: !!employee.offerLetter,
+      },
     });
 
     // Check authorization - Allow HR, Admin, Manager, IT Manager, and users viewing their own profile
-    if (req.user.role === 'HR' || req.user.role === 'Admin' || req.user.role === 'Manager' || 
-        req.user.role === 'IT Manager' || employee.userId?.toString() === req.user.id) {
+    if (
+      req.user.role === "HR" ||
+      req.user.role === "Admin" ||
+      req.user.role === "Manager" ||
+      req.user.role === "IT Manager" ||
+      employee.userId?.toString() === req.user.id
+    ) {
       // Authorized
     } else {
       // Allow all users to view employee data for profile purposes
@@ -208,8 +231,13 @@ exports.getEmployee = async (req, res) => {
 
     // Transform: map individual document fields to documents object
     const empObj = employee.toObject();
-    if ((!empObj.documents || Object.keys(empObj.documents).length === 0) && 
-        (empObj.photograph || empObj.aadharCard || empObj.panCard || empObj.resume)) {
+    if (
+      (!empObj.documents || Object.keys(empObj.documents).length === 0) &&
+      (empObj.photograph ||
+        empObj.aadharCard ||
+        empObj.panCard ||
+        empObj.resume)
+    ) {
       empObj.documents = {
         photograph: empObj.photograph,
         tenthMarksheet: empObj.tenthMarksheet,
@@ -220,19 +248,19 @@ exports.getEmployee = async (req, res) => {
         panCard: empObj.panCard,
         pcc: empObj.pcc,
         resume: empObj.resume,
-        offerLetter: empObj.offerLetter
+        offerLetter: empObj.offerLetter,
       };
     }
 
     res.status(200).json({
       success: true,
-      data: empObj
+      data: empObj,
     });
   } catch (err) {
-    console.error('Error fetching employee:', err);
+    console.error("Error fetching employee:", err);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: "Server Error",
     });
   }
 };
@@ -242,21 +270,21 @@ exports.getEmployee = async (req, res) => {
 // @access  Private
 exports.getEmployeeByUserId = async (req, res) => {
   try {
-    console.log('Fetching employee by user ID:', req.params.userId);
-    
+    console.log("Fetching employee by user ID:", req.params.userId);
+
     const employee = await Employee.findOne({ userId: req.params.userId })
-      .populate('department', 'name description')
-      .populate('role', 'name description')
-      .populate('hrId', 'fullName email');
+      .populate("department", "name description")
+      .populate("role", "name description")
+      .populate("hrId", "fullName email");
 
     if (!employee) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found for this user'
+        message: "Employee not found for this user",
       });
     }
 
-    console.log('Found employee by userId:', {
+    console.log("Found employee by userId:", {
       id: employee._id,
       fullName: employee.fullName,
       email: employee.email,
@@ -267,13 +295,18 @@ exports.getEmployeeByUserId = async (req, res) => {
         panCard: !!employee.panCard,
         pcc: !!employee.pcc,
         resume: !!employee.resume,
-        offerLetter: !!employee.offerLetter
-      }
+        offerLetter: !!employee.offerLetter,
+      },
     });
 
     // Check authorization - Allow HR, Admin, Manager, IT Manager, and users viewing their own profile
-    if (req.user.role === 'HR' || req.user.role === 'Admin' || req.user.role === 'Manager' || 
-        req.user.role === 'IT Manager' || employee.userId?.toString() === req.user.id) {
+    if (
+      req.user.role === "HR" ||
+      req.user.role === "Admin" ||
+      req.user.role === "Manager" ||
+      req.user.role === "IT Manager" ||
+      employee.userId?.toString() === req.user.id
+    ) {
       // Authorized
     } else {
       // Allow all users to view employee data for profile purposes
@@ -281,8 +314,13 @@ exports.getEmployeeByUserId = async (req, res) => {
 
     // Transform: map individual document fields to documents object
     const empObj = employee.toObject();
-    if ((!empObj.documents || Object.keys(empObj.documents).length === 0) && 
-        (empObj.photograph || empObj.aadharCard || empObj.panCard || empObj.resume)) {
+    if (
+      (!empObj.documents || Object.keys(empObj.documents).length === 0) &&
+      (empObj.photograph ||
+        empObj.aadharCard ||
+        empObj.panCard ||
+        empObj.resume)
+    ) {
       empObj.documents = {
         photograph: empObj.photograph,
         tenthMarksheet: empObj.tenthMarksheet,
@@ -293,19 +331,19 @@ exports.getEmployeeByUserId = async (req, res) => {
         panCard: empObj.panCard,
         pcc: empObj.pcc,
         resume: empObj.resume,
-        offerLetter: empObj.offerLetter
+        offerLetter: empObj.offerLetter,
       };
     }
 
     res.status(200).json({
       success: true,
-      data: empObj
+      data: empObj,
     });
   } catch (err) {
-    console.error('Error fetching employee by userId:', err);
+    console.error("Error fetching employee by userId:", err);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: "Server Error",
     });
   }
 };
@@ -316,47 +354,54 @@ exports.getEmployeeByUserId = async (req, res) => {
 exports.createEmployee = async (req, res) => {
   let employeeData = null;
   try {
-    console.log('Create employee request received:', {
+    console.log("Create employee request received:", {
       body: req.body,
-      files: req.files ? Object.keys(req.files) : 'No files',
-      contentType: req.headers['content-type']
+      files: req.files ? Object.keys(req.files) : "No files",
+      contentType: req.headers["content-type"],
     });
-    
-    // Parse employee data from form
-    employeeData = typeof req.body.employee === 'string' ? JSON.parse(req.body.employee) : req.body;
 
-    if (employeeData.paymentMode === '' || employeeData.paymentMode === null) {
+    // Parse employee data from form
+    employeeData =
+      typeof req.body.employee === "string"
+        ? JSON.parse(req.body.employee)
+        : req.body;
+
+    if (employeeData.paymentMode === "" || employeeData.paymentMode === null) {
       delete employeeData.paymentMode;
     }
-    
+
     // Check if user is trying to create their own profile
-    const isCreatingOwnProfile = employeeData.userId === req.user.id || 
-                                !employeeData.userId || 
-                                employeeData.email === req.user.email;
-    
+    const isCreatingOwnProfile =
+      employeeData.userId === req.user.id ||
+      !employeeData.userId ||
+      employeeData.email === req.user.email;
+
     // Allow users to create their own profiles, but restrict admin functions
-    if (!isCreatingOwnProfile && !['HR', 'Admin', 'Manager'].includes(req.user.role)) {
+    if (
+      !isCreatingOwnProfile &&
+      !["HR", "Admin", "Manager"].includes(req.user.role)
+    ) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to create employee profiles for other users'
+        message: "Not authorized to create employee profiles for other users",
       });
     }
-    
+
     // Set the user ID for the employee
     if (isCreatingOwnProfile) {
       employeeData.userId = req.user.id;
       employeeData.fullName = employeeData.fullName || req.user.fullName;
       employeeData.email = employeeData.email || req.user.email;
     }
-    
+
     // Add HR ID if user is HR
-    if (req.user.role === 'HR') {
+    if (req.user.role === "HR") {
       employeeData.hrId = req.user.id;
     }
 
     // Handle file uploads
     if (req.files) {
-      console.log('Processing file uploads:', Object.keys(req.files));
+      console.log("Processing file uploads:", Object.keys(req.files));
       employeeData.documents = {}; // Initialize documents object
       for (const fieldName of Object.keys(req.files)) {
         const arr = req.files[fieldName];
@@ -367,10 +412,13 @@ exports.createEmployee = async (req, res) => {
             filename: file.filename,
             mimetype: file.mimetype,
             size: file.size,
-            path: file.path
+            path: file.path,
           });
           try {
-            const uploaded = await fileStorage.uploadEmployeeDoc(file, fieldName);
+            const uploaded = await fileStorage.uploadEmployeeDoc(
+              file,
+              fieldName,
+            );
             console.log(`File ${fieldName} uploaded successfully:`, uploaded);
             // Store in both individual field and documents object for consistency
             employeeData[fieldName] = uploaded;
@@ -381,17 +429,17 @@ exports.createEmployee = async (req, res) => {
         }
       }
     } else {
-      console.log('No files found in request');
+      console.log("No files found in request");
     }
 
     if (employeeData.biometricCode) {
       const existingBiometric = await Employee.findOne({
-        biometricCode: employeeData.biometricCode
+        biometricCode: employeeData.biometricCode,
       });
       if (existingBiometric) {
         return res.status(400).json({
           success: false,
-          message: 'Biometric code already assigned to another employee'
+          message: "Biometric code already assigned to another employee",
         });
       }
     }
@@ -400,13 +448,17 @@ exports.createEmployee = async (req, res) => {
     const employee = await Employee.create(employeeData);
 
     // Create user account if username and password provided (admin function only)
-    if (req.body.username && req.body.password && ['HR', 'Admin', 'Manager'].includes(req.user.role)) {
+    if (
+      req.body.username &&
+      req.body.password &&
+      ["HR", "Admin", "Manager"].includes(req.user.role)
+    ) {
       const userData = {
         fullName: employeeData.fullName,
         email: employeeData.email,
         password: req.body.password,
-        role: 'Employee',
-        employeeId: employee._id
+        role: "Employee",
+        employeeId: employee._id,
       };
 
       const user = await User.create(userData);
@@ -416,16 +468,30 @@ exports.createEmployee = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: employee
+      data: employee,
     });
   } catch (err) {
-    console.error('Error creating employee:', err);
-    console.log('Employee data being processed:', employeeData);
+    console.error("SERVER ERROR: Error creating employee:", err);
+    if (err.name === "ValidationError") {
+      console.error(
+        "Validation Details:",
+        Object.keys(err.errors).map((key) => ({
+          field: key,
+          message: err.errors[key].message,
+          value: err.errors[key].value,
+        })),
+      );
+    }
+    console.log(
+      "Employee data being processed when error occurred:",
+      employeeData,
+    );
+
     res.status(400).json({
       success: false,
       message: err.message,
       error: err,
-      data: employeeData
+      data: employeeData,
     });
   }
 };
@@ -440,41 +506,43 @@ exports.updateEmployee = async (req, res) => {
     if (!employee) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: "Employee not found",
       });
     }
 
     // Check authorization - Allow only HR, Admin, and Manager to update employees
-    if (!['HR', 'Admin', 'Manager'].includes(req.user.role)) {
+    if (!["HR", "Admin", "Manager"].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to update employee profiles'
+        message: "Not authorized to update employee profiles",
       });
     }
 
     // Parse employee data from form
-    const employeeData = req.body.employee ? JSON.parse(req.body.employee) : req.body;
+    const employeeData = req.body.employee
+      ? JSON.parse(req.body.employee)
+      : req.body;
 
     // If role is being updated, ensure employmentType is correct
     if (employeeData.role) {
-      const EmployeeRole = require('../models/EmployeeRole');
+      const EmployeeRole = require("../models/EmployeeRole");
       const role = await EmployeeRole.findById(employeeData.role);
-      if (role && role.name === 'IT Intern') {
-        employeeData.employmentType = 'INTERN';
-      } else if (role && role.name === 'IT Permanent') {
-        employeeData.employmentType = 'PERMANENT';
+      if (role && role.name === "IT Intern") {
+        employeeData.employmentType = "INTERN";
+      } else if (role && role.name === "IT Permanent") {
+        employeeData.employmentType = "PERMANENT";
       }
     }
 
     if (employeeData.biometricCode) {
       const existingBiometric = await Employee.findOne({
         biometricCode: employeeData.biometricCode,
-        _id: { $ne: employee._id }
+        _id: { $ne: employee._id },
       });
       if (existingBiometric) {
         return res.status(400).json({
           success: false,
-          message: 'Biometric code already assigned to another employee'
+          message: "Biometric code already assigned to another employee",
         });
       }
     }
@@ -487,15 +555,18 @@ exports.updateEmployee = async (req, res) => {
           // delete old
           const oldInfo = employee[fieldName];
           if (oldInfo) {
-            if (typeof oldInfo === 'object') {
+            if (typeof oldInfo === "object") {
               await fileStorage.deleteEmployeeDoc(oldInfo);
-            } else if (typeof oldInfo === 'string' && fs.existsSync(oldInfo)) {
+            } else if (typeof oldInfo === "string" && fs.existsSync(oldInfo)) {
               fs.unlinkSync(oldInfo);
             }
           }
           const file = arr[0];
           try {
-            const uploaded = await fileStorage.uploadEmployeeDoc(file, fieldName);
+            const uploaded = await fileStorage.uploadEmployeeDoc(
+              file,
+              fieldName,
+            );
             employeeData[fieldName] = uploaded;
           } catch (e) {
             console.error(`Upload failed for ${fieldName}:`, e.message);
@@ -506,18 +577,18 @@ exports.updateEmployee = async (req, res) => {
 
     employee = await Employee.findByIdAndUpdate(req.params.id, employeeData, {
       new: true,
-      runValidators: true
+      runValidators: true,
     });
 
     res.status(200).json({
       success: true,
-      data: employee
+      data: employee,
     });
   } catch (err) {
-    console.error('Error updating employee:', err);
+    console.error("Error updating employee:", err);
     res.status(400).json({
       success: false,
-      message: err.message
+      message: err.message,
     });
   }
 };
@@ -532,23 +603,33 @@ exports.deleteEmployee = async (req, res) => {
     if (!employee) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: "Employee not found",
       });
     }
 
     // Check authorization - Allow HR, Admin, and Manager to delete employees
-    if (!['HR', 'Admin', 'Manager'].includes(req.user.role)) {
+    if (!["HR", "Admin", "Manager"].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to delete employees'
+        message: "Not authorized to delete employees",
       });
     }
 
     // Delete associated files
-    const fileFields = ['photograph', 'tenthMarksheet', 'twelfthMarksheet', 'bachelorDegree', 
-                       'postgraduateDegree', 'aadharCard', 'panCard', 'pcc', 'resume', 'offerLetter'];
-    
-    fileFields.forEach(field => {
+    const fileFields = [
+      "photograph",
+      "tenthMarksheet",
+      "twelfthMarksheet",
+      "bachelorDegree",
+      "postgraduateDegree",
+      "aadharCard",
+      "panCard",
+      "pcc",
+      "resume",
+      "offerLetter",
+    ];
+
+    fileFields.forEach((field) => {
       if (employee[field] && fs.existsSync(employee[field])) {
         fs.unlinkSync(employee[field]);
       }
@@ -563,13 +644,13 @@ exports.deleteEmployee = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: {}
+      data: {},
     });
   } catch (err) {
-    console.error('Error deleting employee:', err);
+    console.error("Error deleting employee:", err);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: "Server Error",
     });
   }
 };
@@ -579,27 +660,27 @@ exports.deleteEmployee = async (req, res) => {
 // @access  Private
 exports.getDepartments = async (req, res) => {
   try {
-    const departments = await Department.find().select('name _id');
-    
+    const departments = await Department.find().select("name _id");
+
     // If no departments exist, create a default one
     if (departments.length === 0) {
       const defaultDepartment = await Department.create({
-        name: 'General',
-        description: 'Default department'
+        name: "General",
+        description: "Default department",
       });
       departments.push(defaultDepartment);
     }
 
     res.json({
       success: true,
-      data: departments
+      data: departments,
     });
   } catch (error) {
-    console.error('Error fetching departments:', error);
+    console.error("Error fetching departments:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching departments',
-      error: error.message
+      message: "Error fetching departments",
+      error: error.message,
     });
   }
 };
@@ -609,10 +690,10 @@ exports.getDepartments = async (req, res) => {
 // @access  Private (Admin/Manager only)
 exports.createDepartment = async (req, res) => {
   try {
-    if (req.user.role !== 'Admin' && req.user.role !== 'Manager') {
+    if (req.user.role !== "Admin" && req.user.role !== "Manager") {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to create departments'
+        message: "Not authorized to create departments",
       });
     }
 
@@ -620,13 +701,13 @@ exports.createDepartment = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: department
+      data: department,
     });
   } catch (err) {
-    console.error('Error creating department:', err);
+    console.error("Error creating department:", err);
     res.status(400).json({
       success: false,
-      message: err.message
+      message: err.message,
     });
   }
 };
@@ -636,30 +717,30 @@ exports.createDepartment = async (req, res) => {
 // @access  Private
 exports.getRoles = async (req, res) => {
   try {
-    const roles = await Role.find().select('name _id');
+    const roles = await Role.find().select("name _id");
 
     // If no roles exist, create default ones
     if (roles.length === 0) {
       const defaultRoles = await Role.insertMany([
-        { name: 'Employee', description: 'Regular employee' },
-        { name: 'Manager', description: 'Department manager' },
-        { name: 'HR', description: 'Human resources' },
-        { name: 'Sales Person', description: 'Sales team member' },
-        { name: 'Lead Person', description: 'Lead generation team member' }
+        { name: "Employee", description: "Regular employee" },
+        { name: "Manager", description: "Department manager" },
+        { name: "HR", description: "Human resources" },
+        { name: "Sales Person", description: "Sales team member" },
+        { name: "Lead Person", description: "Lead generation team member" },
       ]);
       roles.push(...defaultRoles);
     }
 
     res.json({
       success: true,
-      data: roles
+      data: roles,
     });
   } catch (error) {
-    console.error('Error fetching roles:', error);
+    console.error("Error fetching roles:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching roles',
-      error: error.message
+      message: "Error fetching roles",
+      error: error.message,
     });
   }
 };
@@ -669,10 +750,10 @@ exports.getRoles = async (req, res) => {
 // @access  Private (Admin/Manager only)
 exports.createRole = async (req, res) => {
   try {
-    if (req.user.role !== 'Admin' && req.user.role !== 'Manager') {
+    if (req.user.role !== "Admin" && req.user.role !== "Manager") {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to create roles'
+        message: "Not authorized to create roles",
       });
     }
 
@@ -680,13 +761,13 @@ exports.createRole = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: role
+      data: role,
     });
   } catch (err) {
-    console.error('Error creating role:', err);
+    console.error("Error creating role:", err);
     res.status(400).json({
       success: false,
-      message: err.message
+      message: err.message,
     });
   }
 };
@@ -701,15 +782,16 @@ exports.uploadDocuments = async (req, res) => {
     if (!employee) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: "Employee not found",
       });
     }
 
     // Check authorization: Only IT Manager/Admin/Manager/HR can upload (employees cannot upload even their own)
-    if (!['HR', 'Admin', 'Manager', 'IT Manager'].includes(req.user.role)) {
+    if (!["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to upload documents. Please contact your manager or IT Manager.'
+        message:
+          "Not authorized to upload documents. Please contact your manager or IT Manager.",
       });
     }
 
@@ -717,7 +799,7 @@ exports.uploadDocuments = async (req, res) => {
     if (!req.files) {
       return res.status(400).json({
         success: false,
-        message: 'Please upload files'
+        message: "Please upload files",
       });
     }
 
@@ -734,10 +816,12 @@ exports.uploadDocuments = async (req, res) => {
       // delete old
       const oldInfo = employee.documents[docType];
       if (oldInfo) {
-        if (typeof oldInfo === 'object') {
+        if (typeof oldInfo === "object") {
           await fileStorage.deleteEmployeeDoc(oldInfo);
-        } else if (typeof oldInfo === 'string' && fs.existsSync(oldInfo)) {
-          try { fs.unlinkSync(oldInfo); } catch {}
+        } else if (typeof oldInfo === "string" && fs.existsSync(oldInfo)) {
+          try {
+            fs.unlinkSync(oldInfo);
+          } catch {}
         }
       }
       try {
@@ -746,7 +830,7 @@ exports.uploadDocuments = async (req, res) => {
         employee.documents[docType] = uploaded;
         employee[docType] = uploaded;
       } catch (e) {
-        console.error('Upload doc failed:', e.message);
+        console.error("Upload doc failed:", e.message);
       }
     }
 
@@ -754,13 +838,13 @@ exports.uploadDocuments = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: employee.documents
+      data: employee.documents,
     });
   } catch (err) {
-    console.error('Error uploading documents:', err);
+    console.error("Error uploading documents:", err);
     res.status(500).json({
       success: false,
-      message: err.message
+      message: err.message,
     });
   }
 };
@@ -775,16 +859,18 @@ exports.getDocuments = async (req, res) => {
     if (!employee) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: "Employee not found",
       });
     }
 
     // Check authorization: IT Manager/Admin/Manager can view all, employees can only view their own
-    if (!['HR', 'Admin', 'Manager', 'IT Manager'].includes(req.user.role) && 
-        employee.userId?.toString() !== req.user.id) {
+    if (
+      !["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role) &&
+      employee.userId?.toString() !== req.user.id
+    ) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to view documents'
+        message: "Not authorized to view documents",
       });
     }
 
@@ -801,19 +887,19 @@ exports.getDocuments = async (req, res) => {
         panCard: employee.panCard,
         pcc: employee.pcc,
         resume: employee.resume,
-        offerLetter: employee.offerLetter
+        offerLetter: employee.offerLetter,
       };
     }
 
     res.status(200).json({
       success: true,
-      data: documents
+      data: documents,
     });
   } catch (err) {
-    console.error('Error getting documents:', err);
+    console.error("Error getting documents:", err);
     res.status(500).json({
       success: false,
-      message: err.message
+      message: err.message,
     });
   }
 };
@@ -828,15 +914,15 @@ exports.deleteDocument = async (req, res) => {
     if (!employee) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: "Employee not found",
       });
     }
 
     // Check authorization: IT Manager/Admin/Manager can delete, employees cannot delete (even their own)
-    if (!['HR', 'Admin', 'Manager', 'IT Manager'].includes(req.user.role)) {
+    if (!["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to delete documents'
+        message: "Not authorized to delete documents",
       });
     }
 
@@ -845,7 +931,7 @@ exports.deleteDocument = async (req, res) => {
     if (!employee.documents || !employee.documents[documentType]) {
       return res.status(404).json({
         success: false,
-        message: 'Document not found'
+        message: "Document not found",
       });
     }
 
@@ -862,13 +948,13 @@ exports.deleteDocument = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: {}
+      data: {},
     });
   } catch (err) {
-    console.error('Error deleting document:', err);
+    console.error("Error deleting document:", err);
     res.status(500).json({
       success: false,
-      message: err.message
+      message: err.message,
     });
   }
 };
@@ -881,11 +967,19 @@ exports.getDocument = async (req, res) => {
     const { filename } = req.params;
 
     if (!filename) {
-      return res.status(400).json({ success: false, message: 'Filename is required' });
+      return res
+        .status(400)
+        .json({ success: false, message: "Filename is required" });
     }
 
     // Primary local uploads path: server/uploads/employees/<filename>
-    const primaryPath = path.join(__dirname, '..', 'uploads', 'employees', filename);
+    const primaryPath = path.join(
+      __dirname,
+      "..",
+      "uploads",
+      "employees",
+      filename,
+    );
 
     let filePath = null;
     if (fs.existsSync(primaryPath)) {
@@ -893,28 +987,36 @@ exports.getDocument = async (req, res) => {
     }
 
     if (!filePath) {
-      return res.status(404).json({ success: false, message: 'Document not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Document not found" });
     }
 
     const stats = fs.statSync(filePath);
     if (!stats.isFile()) {
-      return res.status(404).json({ success: false, message: 'Document not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Document not found" });
     }
 
     const ext = path.extname(filename).toLowerCase();
-    const contentType = ext === '.pdf' ? 'application/pdf'
-      : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg'
-      : ext === '.png' ? 'image/png'
-      : 'application/octet-stream';
+    const contentType =
+      ext === ".pdf"
+        ? "application/pdf"
+        : ext === ".jpg" || ext === ".jpeg"
+          ? "image/jpeg"
+          : ext === ".png"
+            ? "image/png"
+            : "application/octet-stream";
 
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Length', stats.size);
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Length", stats.size);
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
 
     fs.createReadStream(filePath).pipe(res);
   } catch (err) {
-    console.error('Error serving document:', err);
-    res.status(500).json({ success: false, message: 'Server Error' });
+    console.error("Error serving document:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
@@ -928,34 +1030,41 @@ exports.updatePaymentDetails = async (req, res) => {
     if (!employee) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: "Employee not found",
       });
     }
 
     // Check authorization - Only Admin can update payment details
-    if (req.user.role !== 'Admin') {
+    if (req.user.role !== "Admin") {
       return res.status(403).json({
         success: false,
-        message: 'Only Admin can update payment details'
+        message: "Only Admin can update payment details",
       });
     }
 
-    const { paymentMode, bankAccountNumber, ifscCode, accountHolderName, upiId } = req.body;
+    const {
+      paymentMode,
+      bankAccountNumber,
+      ifscCode,
+      accountHolderName,
+      upiId,
+    } = req.body;
 
     // Validate payment mode
-    if (paymentMode && !['bank', 'upi'].includes(paymentMode)) {
+    if (paymentMode && !["bank", "upi"].includes(paymentMode)) {
       return res.status(400).json({
         success: false,
-        message: 'Payment mode must be either "bank" or "upi"'
+        message: 'Payment mode must be either "bank" or "upi"',
       });
     }
 
     // Validate based on payment mode
-    if (paymentMode === 'bank') {
+    if (paymentMode === "bank") {
       if (!bankAccountNumber || !ifscCode || !accountHolderName) {
         return res.status(400).json({
           success: false,
-          message: 'Bank account number, IFSC code, and account holder name are required for bank payments'
+          message:
+            "Bank account number, IFSC code, and account holder name are required for bank payments",
         });
       }
 
@@ -964,7 +1073,7 @@ exports.updatePaymentDetails = async (req, res) => {
       if (!ifscPattern.test(ifscCode.toUpperCase())) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid IFSC code format'
+          message: "Invalid IFSC code format",
         });
       }
 
@@ -973,11 +1082,11 @@ exports.updatePaymentDetails = async (req, res) => {
       employee.bankAccountNumber = bankAccountNumber; // Will be encrypted in pre-save hook
       employee.ifscCode = ifscCode.toUpperCase();
       employee.accountHolderName = accountHolderName;
-    } else if (paymentMode === 'upi') {
+    } else if (paymentMode === "upi") {
       if (!upiId) {
         return res.status(400).json({
           success: false,
-          message: 'UPI ID is required for UPI payments'
+          message: "UPI ID is required for UPI payments",
         });
       }
 
@@ -986,7 +1095,8 @@ exports.updatePaymentDetails = async (req, res) => {
       if (!upiPattern.test(upiId.toLowerCase())) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid UPI ID format. Expected format: user@paytm or user@phonepe'
+          message:
+            "Invalid UPI ID format. Expected format: user@paytm or user@phonepe",
         });
       }
 
@@ -1013,19 +1123,19 @@ exports.updatePaymentDetails = async (req, res) => {
     const employeeObj = employee.toObject();
     // Don't expose encrypted bank account number in response
     if (employeeObj.bankAccountNumber) {
-      employeeObj.bankAccountNumber = '***ENCRYPTED***';
+      employeeObj.bankAccountNumber = "***ENCRYPTED***";
     }
 
     res.status(200).json({
       success: true,
       data: employeeObj,
-      message: 'Payment details updated successfully'
+      message: "Payment details updated successfully",
     });
   } catch (err) {
-    console.error('Error updating payment details:', err);
+    console.error("Error updating payment details:", err);
     res.status(500).json({
       success: false,
-      message: err.message || 'Server Error'
+      message: err.message || "Server Error",
     });
   }
 };
@@ -1041,15 +1151,15 @@ exports.verifyPayment = async (req, res) => {
     if (!employee) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: "Employee not found",
       });
     }
 
     // Check authorization - Only Admin can verify payment details
-    if (req.user.role !== 'Admin') {
+    if (req.user.role !== "Admin") {
       return res.status(403).json({
         success: false,
-        message: 'Only Admin can verify payment details'
+        message: "Only Admin can verify payment details",
       });
     }
 
@@ -1057,7 +1167,8 @@ exports.verifyPayment = async (req, res) => {
     if (!employee.paymentMode) {
       return res.status(400).json({
         success: false,
-        message: 'Payment mode must be set before verification. Please update payment details first.'
+        message:
+          "Payment mode must be set before verification. Please update payment details first.",
       });
     }
 
@@ -1071,27 +1182,32 @@ exports.verifyPayment = async (req, res) => {
         return res.status(500).json({
           success: false,
           message:
-            'Paytm configuration missing. Please configure PAYTM_MERCHANT_ID and PAYTM_MERCHANT_KEY in environment variables.'
+            "Paytm configuration missing. Please configure PAYTM_MERCHANT_ID and PAYTM_MERCHANT_KEY in environment variables.",
         });
       }
 
       // Import Paytm service (replaces Razorpay service)
-      const paytmService = require('../services/paytmService');
+      const paytmService = require("../services/paytmService");
 
       // Prepare beneficiary data
       const beneficiaryData = {
         name: employee.fullName,
         email: employee.email,
-        mobile: employee.phoneNumber || employee.whatsappNumber || '0000000000',
+        mobile: employee.phoneNumber || employee.whatsappNumber || "0000000000",
         paymentMode: employee.paymentMode,
       };
 
-      if (employee.paymentMode === 'bank') {
+      if (employee.paymentMode === "bank") {
         // Validate bank details
-        if (!employee.bankAccountNumber || !employee.ifscCode || !employee.accountHolderName) {
+        if (
+          !employee.bankAccountNumber ||
+          !employee.ifscCode ||
+          !employee.accountHolderName
+        ) {
           return res.status(400).json({
             success: false,
-            message: 'Bank account details are incomplete. Please update payment details first.'
+            message:
+              "Bank account details are incomplete. Please update payment details first.",
           });
         }
 
@@ -1099,39 +1215,43 @@ exports.verifyPayment = async (req, res) => {
         let decryptedAccountNumber;
         try {
           // Check if account number is already encrypted (format: iv:authTag:encryptedData)
-          const isEncrypted = employee.bankAccountNumber.includes(':') && 
-                            employee.bankAccountNumber.split(':').length === 3;
-          
+          const isEncrypted =
+            employee.bankAccountNumber.includes(":") &&
+            employee.bankAccountNumber.split(":").length === 3;
+
           if (isEncrypted) {
             decryptedAccountNumber = decrypt(employee.bankAccountNumber);
             if (!decryptedAccountNumber) {
-              throw new Error('Failed to decrypt bank account number');
+              throw new Error("Failed to decrypt bank account number");
             }
           } else {
             // Account number is not encrypted yet, use as-is
             // This can happen if payment details were added before encryption was implemented
             decryptedAccountNumber = employee.bankAccountNumber;
-            console.warn('Bank account number is not encrypted. Using plain text (not recommended for production).');
+            console.warn(
+              "Bank account number is not encrypted. Using plain text (not recommended for production).",
+            );
           }
         } catch (decryptError) {
-          console.error('Decryption error:', decryptError);
+          console.error("Decryption error:", decryptError);
           return res.status(400).json({
             success: false,
-            message: 'Error decrypting bank account number. Please update payment details again.'
+            message:
+              "Error decrypting bank account number. Please update payment details again.",
           });
         }
 
         beneficiaryData.bankDetails = {
           accountNumber: decryptedAccountNumber,
           ifsc: employee.ifscCode,
-          accountHolderName: employee.accountHolderName
+          accountHolderName: employee.accountHolderName,
         };
-      } else if (employee.paymentMode === 'upi') {
+      } else if (employee.paymentMode === "upi") {
         // Validate UPI details
         if (!employee.upiId) {
           return res.status(400).json({
             success: false,
-            message: 'UPI ID is missing. Please update payment details first.'
+            message: "UPI ID is missing. Please update payment details first.",
           });
         }
 
@@ -1140,23 +1260,26 @@ exports.verifyPayment = async (req, res) => {
 
       // Create Paytm beneficiary (replaces Razorpay Contact + Fund Account creation)
       try {
-        const beneficiary = await paytmService.createBeneficiary(beneficiaryData);
+        const beneficiary =
+          await paytmService.createBeneficiary(beneficiaryData);
         beneficiaryId = beneficiary.beneficiaryId;
         employee.paytmBeneficiaryId = beneficiaryId;
       } catch (beneficiaryError) {
-        console.error('Paytm beneficiary creation error:', beneficiaryError);
-        
+        console.error("Paytm beneficiary creation error:", beneficiaryError);
+
         // Return detailed error message from Paytm API
-        const errorMessage = beneficiaryError.message || 'Failed to create Paytm beneficiary';
-        
+        const errorMessage =
+          beneficiaryError.message || "Failed to create Paytm beneficiary";
+
         // Check if it's a configuration error
-        if (errorMessage.includes('PAYTM_MERCHANT')) {
+        if (errorMessage.includes("PAYTM_MERCHANT")) {
           return res.status(500).json({
             success: false,
-            message: 'Paytm configuration missing. Please configure PAYTM_MERCHANT_ID and PAYTM_MERCHANT_KEY in environment variables.'
+            message:
+              "Paytm configuration missing. Please configure PAYTM_MERCHANT_ID and PAYTM_MERCHANT_KEY in environment variables.",
           });
         }
-        
+
         // Try to parse Paytm error JSON from error message
         let paytmError = null;
         try {
@@ -1168,13 +1291,16 @@ exports.verifyPayment = async (req, res) => {
         } catch (parseError) {
           // If parsing fails, use the error message as-is
         }
-        
+
         // Return Paytm API error details
         return res.status(500).json({
           success: false,
           message: errorMessage,
           paytmError: paytmError, // Include parsed Paytm error if available
-          error: process.env.NODE_ENV === 'development' ? beneficiaryError.stack : undefined
+          error:
+            process.env.NODE_ENV === "development"
+              ? beneficiaryError.stack
+              : undefined,
         });
       }
     }
@@ -1191,29 +1317,31 @@ exports.verifyPayment = async (req, res) => {
         employeeId: employee._id,
         paymentMode: employee.paymentMode,
         paytmVerified: employee.paytmVerified,
-        paytmBeneficiaryId: employee.paytmBeneficiaryId
+        paytmBeneficiaryId: employee.paytmBeneficiaryId,
       },
-      message: 'Payment details verified successfully with Paytm'
+      message: "Payment details verified successfully with Paytm",
     });
   } catch (err) {
-    console.error('Error verifying payment details:', err);
-    console.error('Error stack:', err.stack);
-    
+    console.error("Error verifying payment details:", err);
+    console.error("Error stack:", err.stack);
+
     // Provide more detailed error information
-    let errorMessage = err.message || 'Server Error';
-    
+    let errorMessage = err.message || "Server Error";
+
     // Check for specific error types
-    if (err.message && err.message.includes('PAYTM_MERCHANT')) {
-      errorMessage = 'Paytm configuration missing. Please configure PAYTM_MERCHANT_ID and PAYTM_MERCHANT_KEY in environment variables.';
-    } else if (err.message && err.message.includes('decrypt')) {
-      errorMessage = 'Error decrypting bank account number. Please check encryption configuration.';
+    if (err.message && err.message.includes("PAYTM_MERCHANT")) {
+      errorMessage =
+        "Paytm configuration missing. Please configure PAYTM_MERCHANT_ID and PAYTM_MERCHANT_KEY in environment variables.";
+    } else if (err.message && err.message.includes("decrypt")) {
+      errorMessage =
+        "Error decrypting bank account number. Please check encryption configuration.";
     }
-    
+
     // Return error with Paytm API details if available
     res.status(500).json({
       success: false,
       message: errorMessage,
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
 };
