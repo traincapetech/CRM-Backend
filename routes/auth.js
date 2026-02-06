@@ -21,6 +21,16 @@ const {
   updateUserWithDocuments,
 } = require("../controllers/auth");
 
+// 2FA Controller
+const {
+  setup2FA,
+  verify2FA,
+  validate2FA,
+  disable2FA,
+  get2FAStatus,
+  regenerateBackupCodes,
+} = require("../controllers/twoFactor");
+
 // Debug middleware
 const debugMiddleware = (req, res, next) => {
   console.log("Auth route accessed:", {
@@ -54,6 +64,14 @@ router.route("/reset_password").post(resetPassword);
 
 // Logout route (clears httpOnly cookie)
 router.route("/logout").post(logout);
+
+// 2FA routes
+router.route("/2fa/setup").post(protect, setup2FA);
+router.route("/2fa/verify").post(protect, verify2FA);
+router.route("/2fa/validate").post(validate2FA); // Public - used during login
+router.route("/2fa/disable").post(protect, disable2FA);
+router.route("/2fa/status").get(protect, get2FAStatus);
+router.route("/2fa/backup-codes").post(protect, regenerateBackupCodes);
 
 // Protected routes
 router.route("/me").get(protect, getMe).put(protect, updateProfile);

@@ -207,6 +207,17 @@ exports.login = async (req, res) => {
       role: user.role,
     });
 
+    // Check if 2FA is enabled
+    if (user.twoFactorEnabled) {
+      console.log("🔐 2FA required for user:", user._id.toString());
+      return res.status(200).json({
+        success: true,
+        requires2FA: true,
+        userId: user._id,
+        message: "Please enter your 2FA code",
+      });
+    }
+
     // Create token
     const token = user.getSignedJwtToken();
     console.log("Generated token for user:", user._id.toString());
@@ -235,6 +246,7 @@ exports.login = async (req, res) => {
         role: user.role,
         roles: permissionPayload.roleNames,
         permissions: permissionPayload.permissions,
+        twoFactorEnabled: user.twoFactorEnabled || false,
       },
     });
   } catch (error) {

@@ -79,6 +79,21 @@ const UserSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // Two-Factor Authentication fields
+    twoFactorEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    twoFactorSecret: {
+      type: String,
+      select: false, // Don't include in queries by default
+    },
+    twoFactorBackupCodes: [
+      {
+        type: String,
+        select: false, // Hashed backup codes
+      },
+    ],
   },
   {
     // Use the existing collection
