@@ -164,7 +164,9 @@ exports.createTask = async (req, res) => {
 // @access  Private
 exports.updateTask = async (req, res) => {
   try {
-    let task = await Task.findById(req.params.id);
+    let task = await Task.findById(req.params.id)
+      .populate("assignedTo", "fullName")
+      .populate("assignedBy", "fullName");
 
     if (!task) {
       return res
@@ -172,11 +174,17 @@ exports.updateTask = async (req, res) => {
         .json({ success: false, message: "Task not found" });
     }
 
-    const isAssignee = task.assignedTo?.toString() === req.user.id.toString();
-    const isAssigner = task.assignedBy?.toString() === req.user.id.toString();
+    const isAssignee =
+      task.assignedTo?._id?.toString() === req.user.id.toString() ||
+      task.assignedTo?.toString() === req.user.id.toString();
+    const isAssigner =
+      task.assignedBy?._id?.toString() === req.user.id.toString() ||
+      task.assignedBy?.toString() === req.user.id.toString();
     const isAdmin = req.user.role === "Admin";
     const isManager =
       req.user.role === "IT Manager" && task.department === "IT";
+
+    const previousStatus = task.status;
 
     // Update completed status if provided
     if (req.body.completed !== undefined) {
@@ -225,6 +233,46 @@ exports.updateTask = async (req, res) => {
     }
 
     task = await task.save();
+
+    // Repopulate after save
+    task = await Task.findById(task._id)
+      .populate("assignedTo", "fullName")
+      .populate("assignedBy", "fullName");
+
+    // Send notification to assignedBy user when task is completed
+    if (
+      task.status === "Employee Completed" &&
+      previousStatus !== "Employee Completed"
+    ) {
+      try {
+        const io = req.app.get("io");
+        if (io && task.assignedBy) {
+          const assignedById =
+            task.assignedBy._id?.toString() || task.assignedBy.toString();
+          const assignedToName = task.assignedTo?.fullName || "An employee";
+
+          // Emit task-completed event to the assigner
+          io.to(`user-${assignedById}`).emit("task-completed", {
+            taskId: task._id.toString(),
+            taskTitle: task.title,
+            completedBy: assignedToName,
+            completedByUserId: task.assignedTo?._id?.toString(),
+            completedAt: task.completedAt,
+            status: task.status,
+          });
+
+          console.log(
+            `📋 Task completion notification sent to user-${assignedById} for task: ${task.title}`,
+          );
+        }
+      } catch (notifyError) {
+        console.error(
+          "Error sending task completion notification:",
+          notifyError,
+        );
+        // Don't fail the request if notification fails
+      }
+    }
 
     res.status(200).json({ success: true, data: task });
   } catch (error) {

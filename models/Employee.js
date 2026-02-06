@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const { encrypt, decrypt } = require("../utils/encryption");
+const { encrypt, decrypt, isEncrypted } = require("../utils/encryption");
 
 const employeeSchema = new mongoose.Schema(
   {
@@ -15,6 +15,7 @@ const employeeSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    // PII Fields - encrypted at rest
     phoneNumber: {
       type: String,
       trim: true,
@@ -36,7 +37,7 @@ const employeeSchema = new mongoose.Schema(
       trim: true,
     },
     dateOfBirth: {
-      type: Date,
+      type: String, // Stored as encrypted string
     },
     joiningDate: {
       type: Date,
@@ -48,7 +49,7 @@ const employeeSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["ACTIVE", "INACTIVE", "TERMINATED"],
+      enum: ["ACTIVE", "INACTIVE", "TERMINATED", "COMPLETED"],
       default: "ACTIVE",
     },
     employmentType: {
@@ -130,11 +131,12 @@ const employeeSchema = new mongoose.Schema(
     postgraduateDegree: {
       type: mongoose.Schema.Types.Mixed,
     },
+    // Sensitive ID Documents - encrypted
     aadharCard: {
-      type: mongoose.Schema.Types.Mixed,
+      type: String, // Encrypted
     },
     panCard: {
-      type: mongoose.Schema.Types.Mixed,
+      type: String, // Encrypted
     },
     pcc: {
       type: mongoose.Schema.Types.Mixed,
@@ -168,19 +170,17 @@ const employeeSchema = new mongoose.Schema(
       default: false,
     },
 
-    // Payment Details for Paytm Payouts (migrated from Razorpay)
-    // Payment mode: "bank" for bank transfers, "upi" for UPI payments
+    // Payment Details for Paytm Payouts
     paymentMode: {
       type: String,
       enum: ["bank", "upi", null],
       default: null,
     },
 
-    // Bank Account Details (for bank transfers)
+    // Bank Account Details (encrypted)
     bankAccountNumber: {
       type: String,
       default: null,
-      // Note: This field will be encrypted before saving (handled in pre-save hook)
     },
     ifscCode: {
       type: String,
@@ -194,22 +194,19 @@ const employeeSchema = new mongoose.Schema(
       default: null,
     },
 
-    // UPI Details (for UPI payments)
+    // UPI Details (encrypted)
     upiId: {
       type: String,
-      trim: true,
       default: null,
-      lowercase: true,
     },
 
-    // Paytm Integration Fields (replaces Razorpay fields)
-    // Migration Note: razorpayContactId and razorpayFundAccountId replaced with paytmBeneficiaryId
+    // Paytm Integration Fields
     paytmBeneficiaryId: {
       type: String,
       default: null,
     },
 
-    // Payment Verification Status (renamed from paymentVerified for clarity)
+    // Payment Verification Status
     paytmVerified: {
       type: Boolean,
       default: false,
@@ -222,27 +219,52 @@ const employeeSchema = new mongoose.Schema(
   },
 );
 
-// Encrypt bank account number before saving
+// PII fields to encrypt
+const PII_FIELDS = [
+  "phoneNumber",
+  "whatsappNumber",
+  "currentAddress",
+  "permanentAddress",
+  "dateOfBirth",
+  "aadharCard",
+  "panCard",
+  "bankAccountNumber",
+  "upiId",
+];
+
+// Encrypt PII fields before saving
 employeeSchema.pre("save", function (next) {
-  // Only encrypt if bankAccountNumber is being modified and is not already encrypted
-  if (this.isModified("bankAccountNumber") && this.bankAccountNumber) {
-    try {
-      // Check if already encrypted (encrypted format: iv:authTag:encryptedData)
-      const isEncrypted =
-        this.bankAccountNumber.includes(":") &&
-        this.bankAccountNumber.split(":").length === 3;
-      if (!isEncrypted) {
-        this.bankAccountNumber = encrypt(this.bankAccountNumber);
+  try {
+    for (const field of PII_FIELDS) {
+      if (this.isModified(field) && this[field]) {
+        // encrypt() already checks for double-encryption
+        this[field] = encrypt(this[field]);
       }
-    } catch (error) {
-      console.error("Error encrypting bank account number:", error);
-      return next(error);
     }
+    next();
+  } catch (error) {
+    console.error("Error encrypting PII fields:", error);
+    return next(error);
   }
-  next();
 });
 
-// Decrypt bank account number when retrieving (only for authorized users)
+// Decrypt all PII fields for authorized access
+employeeSchema.methods.getDecryptedPII = function () {
+  const decrypted = {};
+  for (const field of PII_FIELDS) {
+    if (this[field]) {
+      try {
+        decrypted[field] = decrypt(this[field]);
+      } catch (error) {
+        console.error(`Error decrypting ${field}:`, error);
+        decrypted[field] = null;
+      }
+    }
+  }
+  return decrypted;
+};
+
+// Decrypt bank account number (legacy method for backward compatibility)
 employeeSchema.methods.getDecryptedBankAccount = function () {
   if (!this.bankAccountNumber) return null;
   try {

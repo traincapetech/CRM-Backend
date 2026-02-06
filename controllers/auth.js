@@ -209,13 +209,24 @@ exports.login = async (req, res) => {
 
     // Create token
     const token = user.getSignedJwtToken();
-    console.log("Generated token:", token);
+    console.log("Generated token for user:", user._id.toString());
+
+    // Cookie options for security
+    const cookieOptions = {
+      expires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      httpOnly: true, // Prevents XSS attacks - cookie not accessible via JavaScript
+      secure: process.env.NODE_ENV === "production", // HTTPS only in production
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // Cross-site cookie handling
+    };
 
     const permissionPayload = await getUserPermissions(user);
 
+    // Set httpOnly cookie with JWT token
+    res.cookie("token", token, cookieOptions);
+
     res.status(200).json({
       success: true,
-      token,
+      token, // Still include token in response for backward compatibility during transition
       user: {
         _id: user._id, // Added for consistency with getMe
         id: user._id,
@@ -275,6 +286,24 @@ exports.getMe = async (req, res) => {
       roles: permissionPayload.roleNames,
       permissions: permissionPayload.permissions,
     },
+  });
+};
+
+// @desc    Logout user / clear cookie
+// @route   POST /api/auth/logout
+// @access  Private
+exports.logout = async (req, res) => {
+  // Clear the token cookie by setting it to 'none' and expiring immediately
+  res.cookie("token", "none", {
+    expires: new Date(Date.now() + 10 * 1000), // Expires in 10 seconds
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  });
+
+  res.status(200).json({
+    success: true,
+    message: "Logged out successfully",
   });
 };
 
@@ -680,12 +709,10 @@ exports.createUserWithDocuments = async (req, res) => {
 
     // Prevent Managers from creating Admin accounts
     if (req.user.role === "Manager" && role === "Admin") {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Managers cannot create Admin accounts",
-        });
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot create Admin accounts",
+      });
     }
 
     // IT Manager restriction (cannot create Admin/IT Manager)
@@ -693,26 +720,21 @@ exports.createUserWithDocuments = async (req, res) => {
       req.user.role === "IT Manager" &&
       (role === "Admin" || role === "IT Manager")
     ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message:
-            "IT Managers cannot create Admin or other IT Manager accounts",
-        });
+      return res.status(403).json({
+        success: false,
+        message: "IT Managers cannot create Admin or other IT Manager accounts",
+      });
     }
 
     if (
       req.user.role === "IT Manager" &&
       !["IT Intern", "IT Permanent"].includes(role)
     ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message:
-            "IT Managers can only create IT Interns and Permanent IT staff.",
-        });
+      return res.status(403).json({
+        success: false,
+        message:
+          "IT Managers can only create IT Interns and Permanent IT staff.",
+      });
     }
 
     // Check if user already exists
@@ -874,13 +896,11 @@ exports.createUserWithDocuments = async (req, res) => {
     }
 
     const userData = await User.findById(user._id);
-    return res
-      .status(201)
-      .json({
-        success: true,
-        data: userData,
-        message: "User created successfully with documents",
-      });
+    return res.status(201).json({
+      success: true,
+      data: userData,
+      message: "User created successfully with documents",
+    });
   } catch (err) {
     console.error("User creation with documents error details:", {
       name: err.name,
@@ -888,12 +908,10 @@ exports.createUserWithDocuments = async (req, res) => {
       stack: err.stack,
       code: err.code,
     });
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: err.message || "Internal server error during user creation",
-      });
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Internal server error during user creation",
+    });
   }
 };
 
@@ -1492,12 +1510,12 @@ exports.updateProfile = async (req, res) => {
 exports.forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
+    const { sendPasswordResetOTP } = require("../utils/emailService");
 
     // Normalize email to lowercase for case-insensitive search
     const normalizedEmail = email ? email.toLowerCase().trim() : "";
 
     console.log("Forgot password request for:", normalizedEmail);
-    console.log("Original email provided:", email);
 
     if (!normalizedEmail) {
       return res.status(400).json({
@@ -1546,28 +1564,33 @@ exports.forgotPassword = async (req, res) => {
 
     console.log("OTP generated and saved for user:", user.email);
 
-    // Return OTP to frontend for EmailJS sending
-    // Note: Frontend will handle email sending via EmailJS
+    // Send OTP via Brevo email
+    try {
+      await sendPasswordResetOTP(user.email, otp);
+      console.log("OTP email sent successfully to:", user.email);
+    } catch (emailError) {
+      console.error("Failed to send OTP email:", emailError.message);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send OTP email. Please try again later.",
+      });
+    }
+
+    // Success - don't return OTP to client for security
     res.status(200).json({
       success: true,
-      message: "OTP generated successfully",
-      otp: otp, // Return OTP for frontend to send via EmailJS
+      message: "OTP sent to your email address",
     });
   } catch (error) {
     console.error("Forgot password error:", {
       message: error.message,
       stack: error.stack,
-      originalError: error.originalError,
     });
-
-    // Don't expose internal error details in production
-    const errorMessage = error.originalError
-      ? error.message
-      : "Error processing password reset request. Please try again later.";
 
     res.status(500).json({
       success: false,
-      message: errorMessage,
+      message:
+        "Error processing password reset request. Please try again later.",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
