@@ -76,7 +76,15 @@ router.route("/2fa/backup-codes").post(protect, regenerateBackupCodes);
 // Protected routes
 router.route("/me").get(protect, getMe).put(protect, updateProfile);
 
-router.route("/profile-picture").put(protect, updateProfilePicture);
+router
+  .route("/profile-picture")
+  .put(
+    protect,
+    fileStorage.uploadMiddleware.fields([
+      { name: "profilePicture", maxCount: 1 },
+    ]),
+    updateProfilePicture,
+  );
 
 // Admin only routes
 router.route("/users").get(protect, getAllUsers).post(protect, createUser);

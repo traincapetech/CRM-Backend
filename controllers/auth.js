@@ -224,7 +224,7 @@ exports.login = async (req, res) => {
 
     // Cookie options for security
     const cookieOptions = {
-      expires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      expires: new Date(Date.now() + 9 * 60 * 60 * 1000), // 9 hours
       httpOnly: true, // Prevents XSS attacks - cookie not accessible via JavaScript
       secure: process.env.NODE_ENV === "production", // HTTPS only in production
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // Cross-site cookie handling
@@ -559,7 +559,6 @@ exports.updateProfilePicture = async (req, res) => {
   try {
     console.log("Profile picture update requested by user:", req.user.id);
     console.log("Request files:", req.files);
-    console.log("Request body:", req.body);
 
     // Check if a file was uploaded
     if (!req.files || !req.files.profilePicture) {
@@ -573,17 +572,49 @@ exports.updateProfilePicture = async (req, res) => {
     const profilePictureFile = req.files.profilePicture[0];
     console.log("Received profile picture file:", profilePictureFile.filename);
 
-    // Store the file path in the database using the new UPLOAD_PATHS
-    const profilePicturePath = path.join(
-      UPLOAD_PATHS.PROFILE_PICTURES,
-      profilePictureFile.filename,
-    );
+    // Import R2 service
+    const { uploadToR2, isR2Configured } = require("../services/r2Service");
 
-    // Update the user's profile picture
-    console.log("Updating user profile picture in database");
+    let profilePictureUrl;
+
+    if (isR2Configured) {
+      // Upload to Cloudflare R2
+      console.log("Uploading profile picture to Cloudflare R2...");
+      const uploadResult = await uploadToR2(
+        profilePictureFile,
+        "profile-pictures",
+      );
+      profilePictureUrl = uploadResult.url;
+      console.log("R2 upload successful:", profilePictureUrl);
+    } else {
+      // Fallback to local storage
+      console.log("R2 not configured, using local storage");
+      const fs = require("fs");
+      const profilePicturesDir = UPLOAD_PATHS.PROFILE_PICTURES;
+      const destPath = path.join(
+        profilePicturesDir,
+        profilePictureFile.filename,
+      );
+
+      try {
+        fs.mkdirSync(profilePicturesDir, { recursive: true });
+        fs.copyFileSync(profilePictureFile.path, destPath);
+        fs.unlinkSync(profilePictureFile.path);
+      } catch (err) {
+        console.error("Local storage error:", err);
+      }
+
+      profilePictureUrl = `/uploads/profile-pictures/${profilePictureFile.filename}`;
+    }
+
+    // Update the user's profile picture in MongoDB
+    console.log(
+      "Updating user profile picture in database:",
+      profilePictureUrl,
+    );
     const user = await User.findByIdAndUpdate(
       req.user.id,
-      { profilePicture: profilePicturePath },
+      { profilePicture: profilePictureUrl },
       { new: true, runValidators: true },
     );
 
@@ -599,7 +630,7 @@ exports.updateProfilePicture = async (req, res) => {
     res.status(200).json({
       success: true,
       data: user,
-      profilePicture: profilePicturePath,
+      profilePicture: profilePictureUrl,
     });
   } catch (err) {
     console.error(`Error updating profile picture: ${err.message}`);

@@ -1,131 +1,160 @@
-const fs = require('fs');
-const path = require('path');
-const multer = require('multer');
-const drive = require('./googleDriveService');
+const fs = require("fs");
+const path = require("path");
+const multer = require("multer");
 
-// Use Google Drive if available
-const USE_GOOGLE_DRIVE = process.env.USE_GOOGLE_DRIVE === 'true' && drive !== null;
+// Import R2 service
+const {
+  uploadToR2,
+  deleteFromR2,
+  isR2Configured,
+  getKeyFromUrl,
+} = require("./r2Service");
 
-console.log('File Storage Service Configuration:', {
-  USE_GOOGLE_DRIVE_ENV: process.env.USE_GOOGLE_DRIVE,
-  GOOGLE_APPLICATION_CREDENTIALS: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-  GOOGLE_DRIVE_FOLDER_ID: process.env.GOOGLE_DRIVE_FOLDER_ID,
-  driveModule: drive ? 'Available' : 'Not available',
-  USE_GOOGLE_DRIVE: USE_GOOGLE_DRIVE,
-  keyFileExists: fs.existsSync('./config/google-credentials.json')
+console.log("File Storage Service Configuration:", {
+  R2_CONFIGURED: isR2Configured,
+  STORAGE_MODE: isR2Configured ? "Cloudflare R2" : "Local Storage",
 });
 
-// Define upload paths
+// Define upload paths for local fallback
 const UPLOAD_PATHS = {
-  EMPLOYEES: path.join(__dirname, '..', 'uploads', 'employees'),
-  DOCUMENTS: path.join(__dirname, '..', 'uploads', 'documents'),
-  PROFILE_PICTURES: path.join(__dirname, '..', 'uploads', 'profile-pictures'),
-  INCENTIVES: path.join(__dirname, '..', 'uploads', 'incentives'),
-  TMP: path.join(__dirname, '..', 'uploads', 'tmp')
+  EMPLOYEES: path.join(__dirname, "..", "uploads", "employees"),
+  DOCUMENTS: path.join(__dirname, "..", "uploads", "documents"),
+  PROFILE_PICTURES: path.join(__dirname, "..", "uploads", "profile-pictures"),
+  INCENTIVES: path.join(__dirname, "..", "uploads", "incentives"),
+  TMP: path.join(__dirname, "..", "uploads", "tmp"),
 };
 
-// Ensure all upload directories exist
-Object.values(UPLOAD_PATHS).forEach(dir => {
+// Ensure all upload directories exist (for temp files and fallback)
+Object.values(UPLOAD_PATHS).forEach((dir) => {
   try {
     fs.mkdirSync(dir, { recursive: true });
-    console.log('Created directory:', dir);
   } catch (err) {
-    if (err.code !== 'EEXIST') {
-      console.error('Error creating directory:', dir, err);
+    if (err.code !== "EEXIST") {
+      console.error("Error creating directory:", dir, err);
     }
   }
 });
 
-// Ensure a temp upload directory exists for incoming multipart files
-function ensureTmpDir() {
-  const tmpDir = path.join(__dirname, '..', 'uploads', 'tmp');
-  try {
-    fs.mkdirSync(tmpDir, { recursive: true });
-  } catch {}
-  return tmpDir;
-}
-
-// Multer storage to save incoming files to a temp folder before we move/upload them
+// Multer storage to save incoming files to a temp folder before we upload to R2
 const multerStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = ensureTmpDir();
-    console.log(`Multer: Saving file ${file.fieldname} to temp dir: ${dir}`);
-    cb(null, dir);
+    const tmpDir = UPLOAD_PATHS.TMP;
+    try {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    } catch {}
+    cb(null, tmpDir);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     const name = `${file.fieldname}-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    console.log(`Multer: Generated filename for ${file.fieldname}: ${name}`);
     cb(null, name);
-  }
+  },
 });
 
 // Exposed upload middleware to be used by controllers
-const uploadMiddleware = multer({ 
+const uploadMiddleware = multer({
   storage: multerStorage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit
-    files: 10 // Allow up to 10 files
-  }
+    files: 10, // Allow up to 10 files
+  },
 });
 
-function publicLocalUrl(category, filename) {
-  const baseUrl = process.env.BASE_URL || 'http://localhost:8080';
-  return `${baseUrl}/uploads/${category}/${filename}`;
-}
-
+/**
+ * Upload an employee document to R2 or local storage
+ * @param {Object} file - Multer file object
+ * @param {string} docType - Document type (e.g., 'aadharCard', 'resume')
+ * @returns {Promise<Object>} Upload result with URL
+ */
 async function uploadEmployeeDoc(file, docType) {
-  const category = 'employees';
-  console.log(`Uploading employee document: ${docType}, USE_GOOGLE_DRIVE: ${USE_GOOGLE_DRIVE}`);
-  
+  console.log(
+    `Uploading employee document: ${docType}, R2 configured: ${isR2Configured}`,
+  );
+
   try {
-    if (USE_GOOGLE_DRIVE) {
-      console.log('Attempting Google Drive upload...');
+    if (isR2Configured) {
+      // Upload to Cloudflare R2
+      console.log("Uploading to Cloudflare R2...");
+      const result = await uploadToR2(file, "employees");
+
+      return {
+        storage: "cloudflare-r2",
+        fileName: file.filename,
+        url: result.url,
+        key: result.key,
+        uploadedAt: new Date(),
+        mimetype: file.mimetype,
+        size: file.size,
+        originalName: file.originalname,
+        docType: docType,
+      };
+    } else {
+      // Fallback to local storage
+      console.log("Using local storage fallback...");
+      const destDir = UPLOAD_PATHS.EMPLOYEES;
+      const destPath = path.join(destDir, file.filename);
+
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.copyFileSync(file.path, destPath);
+
       try {
-        const result = await drive.upload(file.path, file.filename, file.mimetype, 'employee', docType);
-        try { fs.unlinkSync(file.path); } catch {}
-        return {
-          storage: 'google-drive',
-          fileName: file.filename,
-          url: result.url,
-          fileId: result.fileId,
-          webViewLink: result.webViewLink,
-          webContentLink: result.webContentLink,
-          uploadedAt: new Date(),
-          mimetype: file.mimetype,
-          size: file.size,
-          originalName: file.originalname
-        };
-      } catch (driveError) {
-        console.error('Google Drive upload failed:', driveError.message);
-        throw new Error(`Google Drive upload failed: ${driveError.message}`);
-      }
+        fs.unlinkSync(file.path);
+      } catch {}
+
+      const localUrl = `/uploads/employees/${file.filename}`;
+
+      return {
+        storage: "local",
+        fileName: file.filename,
+        url: localUrl,
+        uploadedAt: new Date(),
+        mimetype: file.mimetype,
+        size: file.size,
+        originalName: file.originalname,
+        docType: docType,
+      };
     }
-    
-    // If we reach here, Google Drive is not enabled
-    throw new Error('Google Drive is not enabled. Please configure Google Drive properly.');
-  } catch (e) {
-    console.error('Upload error:', e.message);
-    throw new Error(`Failed to upload file: ${e.message}`);
+  } catch (error) {
+    console.error("Upload error:", error.message);
+    throw new Error(`Failed to upload file: ${error.message}`);
   }
 }
 
+/**
+ * Delete an employee document from R2 or local storage
+ * @param {Object} info - Document info object with storage type and url/key
+ * @returns {Promise<boolean>} Success status
+ */
 async function deleteEmployeeDoc(info) {
   try {
-    if (info?.storage === 'google-drive' && info.fileId) {
-      await drive.delete(info.fileId);
+    if (info?.storage === "cloudflare-r2" && info.key) {
+      await deleteFromR2(info.key);
       return true;
+    } else if (info?.storage === "cloudflare-r2" && info.url) {
+      const key = getKeyFromUrl(info.url);
+      if (key) {
+        await deleteFromR2(key);
+        return true;
+      }
+    } else if (info?.storage === "local" && info.fileName) {
+      const filePath = path.join(UPLOAD_PATHS.EMPLOYEES, info.fileName);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        return true;
+      }
     }
-    throw new Error('Invalid document info or missing Google Drive fileId');
-  } catch (e) {
-    console.error('Delete doc error:', e.message);
-    throw e;
+    console.warn("Could not determine how to delete document:", info);
+    return false;
+  } catch (error) {
+    console.error("Delete doc error:", error.message);
+    throw error;
   }
 }
 
-module.exports = { 
-  uploadMiddleware, 
-  uploadEmployeeDoc, 
+module.exports = {
+  uploadMiddleware,
+  uploadEmployeeDoc,
   deleteEmployeeDoc,
-  UPLOAD_PATHS
-}; 
+  UPLOAD_PATHS,
+  isR2Configured,
+};

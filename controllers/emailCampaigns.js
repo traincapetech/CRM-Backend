@@ -1,22 +1,25 @@
 /**
  * Email Campaign Controller
- * 
+ *
  * Handles email campaign operations
  */
 
-const EmailCampaign = require('../models/EmailCampaign');
-const EmailTemplate = require('../models/EmailTemplate');
-const Lead = require('../models/Lead');
-const Sale = require('../models/Sale');
-const { sendEmail } = require('../config/nodemailer');
-const { buildTemplateVariables, replaceTemplateVariables } = require('../utils/templateVariables');
-const { addEmailTracking } = require('../utils/emailTracking');
+const EmailCampaign = require("../models/EmailCampaign");
+const EmailTemplate = require("../models/EmailTemplate");
+const Lead = require("../models/Lead");
+const Sale = require("../models/Sale");
+const { sendEmail } = require("../config/nodemailer");
+const {
+  buildTemplateVariables,
+  replaceTemplateVariables,
+} = require("../utils/templateVariables");
+const { addEmailTracking } = require("../utils/emailTracking");
 
-const isAdminOrManager = (user) => ['Admin', 'Manager'].includes(user.role);
+const isAdminOrManager = (user) => ["Admin", "Manager"].includes(user.role);
 
 const canAccessCampaign = (req, campaign) => {
   if (isAdminOrManager(req.user)) return true;
-  if (req.user.role === 'Lead Person') {
+  if (req.user.role === "Lead Person") {
     const createdById = campaign.createdBy?._id
       ? campaign.createdBy._id.toString()
       : campaign.createdBy?.toString();
@@ -27,15 +30,15 @@ const canAccessCampaign = (req, campaign) => {
 
 // Helper function to normalize course value
 const normalizeCourse = (course) => {
-  if (!course) return '';
+  if (!course) return "";
   return course.trim().toLowerCase();
 };
 
 // Helper function to validate email
 const isValidEmail = (email) => {
-  if (!email || typeof email !== 'string') return false;
+  if (!email || typeof email !== "string") return false;
   const trimmed = email.trim();
-  if (trimmed === '') return false;
+  if (trimmed === "") return false;
   // Basic email validation - must contain @ and have valid format
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(trimmed);
@@ -46,23 +49,21 @@ const isValidEmail = (email) => {
 // @access  Private (Admin, Manager)
 exports.getCampaigns = async (req, res) => {
   try {
-    const filter = isAdminOrManager(req.user)
-      ? {}
-      : { createdBy: req.user.id };
+    const filter = isAdminOrManager(req.user) ? {} : { createdBy: req.user.id };
 
     const campaigns = await EmailCampaign.find(filter)
-      .populate('createdBy', 'fullName email')
+      .populate("createdBy", "fullName email")
       .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
       count: campaigns.length,
-      data: campaigns
+      data: campaigns,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -72,31 +73,33 @@ exports.getCampaigns = async (req, res) => {
 // @access  Private
 exports.getCampaign = async (req, res) => {
   try {
-    const campaign = await EmailCampaign.findById(req.params.id)
-      .populate('createdBy', 'fullName email');
+    const campaign = await EmailCampaign.findById(req.params.id).populate(
+      "createdBy",
+      "fullName email",
+    );
 
     if (!campaign) {
       return res.status(404).json({
         success: false,
-        message: 'Campaign not found'
+        message: "Campaign not found",
       });
     }
 
     if (!canAccessCampaign(req, campaign)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to access this campaign'
+        message: "Not authorized to access this campaign",
       });
     }
 
     res.status(200).json({
       success: true,
-      data: campaign
+      data: campaign,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -111,12 +114,12 @@ exports.createCampaign = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: campaign
+      data: campaign,
     });
   } catch (error) {
     res.status(400).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -132,14 +135,14 @@ exports.updateCampaign = async (req, res) => {
     if (!existingCampaign) {
       return res.status(404).json({
         success: false,
-        message: 'Campaign not found'
+        message: "Campaign not found",
       });
     }
 
     if (!canAccessCampaign(req, existingCampaign)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to update this campaign'
+        message: "Not authorized to update this campaign",
       });
     }
 
@@ -149,18 +152,18 @@ exports.updateCampaign = async (req, res) => {
     if (!campaign) {
       return res.status(404).json({
         success: false,
-        message: 'Campaign not found'
+        message: "Campaign not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      data: campaign
+      data: campaign,
     });
   } catch (error) {
     res.status(400).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -175,14 +178,14 @@ exports.sendCampaign = async (req, res) => {
     if (!campaign) {
       return res.status(404).json({
         success: false,
-        message: 'Campaign not found'
+        message: "Campaign not found",
       });
     }
 
     if (!canAccessCampaign(req, campaign)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to send this campaign'
+        message: "Not authorized to send this campaign",
       });
     }
 
@@ -195,47 +198,68 @@ exports.sendCampaign = async (req, res) => {
       leadsMatched: 0,
       leadsValidEmails: 0,
       customersMatched: 0,
-      customersValidEmails: 0
+      customersValidEmails: 0,
     };
-    
-    if (campaign.recipientType === 'all' || campaign.recipientType === 'leads') {
+
+    if (
+      campaign.recipientType === "all" ||
+      campaign.recipientType === "leads"
+    ) {
       let query = {};
-      
+
       // For "leads" type, courses are required
-      if (campaign.recipientType === 'leads') {
-        if (!campaign.selectedCourses || !Array.isArray(campaign.selectedCourses) || campaign.selectedCourses.length === 0) {
+      if (campaign.recipientType === "leads") {
+        if (
+          !campaign.selectedCourses ||
+          !Array.isArray(campaign.selectedCourses) ||
+          campaign.selectedCourses.length === 0
+        ) {
           return res.status(400).json({
             success: false,
-            message: 'Please select at least one course for "All Leads" or use Manual List.'
+            message:
+              'Please select at least one course for "All Leads" or use Manual List.',
           });
         }
       }
-      
+
       // If courses are selected, filter by courses (for both "all" and "leads")
-      if (campaign.selectedCourses && Array.isArray(campaign.selectedCourses) && campaign.selectedCourses.length > 0) {
+      if (
+        campaign.selectedCourses &&
+        Array.isArray(campaign.selectedCourses) &&
+        campaign.selectedCourses.length > 0
+      ) {
         // Normalize course values
-        const normalizedCourses = campaign.selectedCourses.map(c => normalizeCourse(c));
+        const normalizedCourses = campaign.selectedCourses.map((c) =>
+          normalizeCourse(c),
+        );
         // Build case-insensitive regex for matching
-        const courseRegex = new RegExp(normalizedCourses.map(c => `^${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`).join('|'), 'i');
+        const courseRegex = new RegExp(
+          normalizedCourses
+            .map((c) => `^${c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`)
+            .join("|"),
+          "i",
+        );
         query.course = { $regex: courseRegex };
       }
-      
+
       // For "all" type without courses, get all leads (no course filter)
 
       // Get all matching leads
-      const allLeads = await Lead.find(query).select('name email course country company').lean();
+      const allLeads = await Lead.find(query)
+        .select("name email course country company")
+        .lean();
       totalMatchedLeads = allLeads.length;
 
       // Filter leads with valid emails
       recipients = allLeads
-        .filter(lead => isValidEmail(lead.email))
-        .map(lead => ({
+        .filter((lead) => isValidEmail(lead.email))
+        .map((lead) => ({
           email: lead.email.trim(),
           name: lead.name,
           leadId: lead._id,
           course: lead.course,
           country: lead.country,
-          company: lead.company
+          company: lead.company,
         }));
 
       validEmailLeads = recipients.length;
@@ -245,49 +269,58 @@ exports.sendCampaign = async (req, res) => {
       if (recipients.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'No valid email recipients found for selected course(s).',
+          message: "No valid email recipients found for selected course(s).",
           data: {
             totalMatchedLeads,
             validEmailLeads: 0,
-            skippedNoEmailLeads
-          }
+            skippedNoEmailLeads,
+          },
         });
       }
-    } else if (campaign.recipientType === 'customers') {
-      const sales = await Sale.find({}).select('customerName email course country');
+    } else if (campaign.recipientType === "customers") {
+      const sales = await Sale.find({}).select(
+        "customerName email course country",
+      );
       recipients = sales
-        .filter(sale => isValidEmail(sale.email))
-        .map(sale => ({
+        .filter((sale) => isValidEmail(sale.email))
+        .map((sale) => ({
           email: sale.email.trim(),
           name: sale.customerName,
           course: sale.course,
-          country: sale.country
+          country: sale.country,
         }));
-      
+
       if (recipients.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'No valid email recipients found in customers.'
+          message: "No valid email recipients found in customers.",
         });
       }
-    } else if (campaign.recipientType === 'manual') {
+    } else if (campaign.recipientType === "manual") {
       // Validate manual list emails
       recipients = (campaign.recipientList || [])
-        .filter(recipient => isValidEmail(recipient.email))
-        .map(recipient => ({
+        .filter((recipient) => isValidEmail(recipient.email))
+        .map((recipient) => ({
           email: recipient.email.trim(),
-          name: recipient.name || recipient.email.split('@')[0]
+          name: recipient.name || recipient.email.split("@")[0],
         }));
-      
+
       if (recipients.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'Manual list campaigns must have at least one valid email address.'
+          message:
+            "Manual list campaigns must have at least one valid email address.",
         });
       }
-    } else if (campaign.recipientType === 'segment') {
+    } else if (campaign.recipientType === "segment") {
       const criteria = campaign.segmentCriteria || {};
-      const { statuses = [], countries = [], courses = [], includeCustomers = false, dateRange = {} } = criteria;
+      const {
+        statuses = [],
+        countries = [],
+        courses = [],
+        includeCustomers = false,
+        dateRange = {},
+      } = criteria;
 
       const hasFilters =
         statuses.length > 0 ||
@@ -300,7 +333,7 @@ exports.sendCampaign = async (req, res) => {
       if (!hasFilters) {
         return res.status(400).json({
           success: false,
-          message: 'Please add at least one filter or include customers.'
+          message: "Please add at least one filter or include customers.",
         });
       }
 
@@ -310,31 +343,47 @@ exports.sendCampaign = async (req, res) => {
         leadQuery.status = { $in: statuses };
       }
       if (countries.length > 0) {
-        leadQuery.country = { $in: countries.map(c => new RegExp(`^${c.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`, 'i')) };
+        leadQuery.country = {
+          $in: countries.map(
+            (c) =>
+              new RegExp(
+                `^${c.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}$`,
+                "i",
+              ),
+          ),
+        };
       }
       if (courses.length > 0) {
-        const normalizedCourses = courses.map(c => normalizeCourse(c));
-        const courseRegex = new RegExp(normalizedCourses.map(c => `^${c.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`).join('|'), 'i');
+        const normalizedCourses = courses.map((c) => normalizeCourse(c));
+        const courseRegex = new RegExp(
+          normalizedCourses
+            .map((c) => `^${c.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}$`)
+            .join("|"),
+          "i",
+        );
         leadQuery.course = { $regex: courseRegex };
       }
       if (dateRange.start || dateRange.end) {
         leadQuery.createdAt = {};
-        if (dateRange.start) leadQuery.createdAt.$gte = new Date(dateRange.start);
+        if (dateRange.start)
+          leadQuery.createdAt.$gte = new Date(dateRange.start);
         if (dateRange.end) leadQuery.createdAt.$lte = new Date(dateRange.end);
       }
 
-      const segmentLeads = await Lead.find(leadQuery).select('name email course country company createdAt').lean();
+      const segmentLeads = await Lead.find(leadQuery)
+        .select("name email course country company createdAt")
+        .lean();
       segmentCounts.leadsMatched = segmentLeads.length;
 
       const validLeadRecipients = segmentLeads
-        .filter(lead => isValidEmail(lead.email))
-        .map(lead => ({
+        .filter((lead) => isValidEmail(lead.email))
+        .map((lead) => ({
           email: lead.email.trim(),
           name: lead.name,
           leadId: lead._id,
           course: lead.course,
           country: lead.country,
-          company: lead.company
+          company: lead.company,
         }));
 
       segmentCounts.leadsValidEmails = validLeadRecipients.length;
@@ -343,66 +392,95 @@ exports.sendCampaign = async (req, res) => {
       if (includeCustomers) {
         const customerQuery = {};
         if (countries.length > 0) {
-          customerQuery.country = { $in: countries.map(c => new RegExp(`^${c.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`, 'i')) };
+          customerQuery.country = {
+            $in: countries.map(
+              (c) =>
+                new RegExp(
+                  `^${c.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}$`,
+                  "i",
+                ),
+            ),
+          };
         }
         if (courses.length > 0) {
-          const normalizedCourses = courses.map(c => normalizeCourse(c));
-          const courseRegex = new RegExp(normalizedCourses.map(c => `^${c.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`).join('|'), 'i');
+          const normalizedCourses = courses.map((c) => normalizeCourse(c));
+          const courseRegex = new RegExp(
+            normalizedCourses
+              .map((c) => `^${c.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}$`)
+              .join("|"),
+            "i",
+          );
           customerQuery.course = { $regex: courseRegex };
         }
         if (dateRange.start || dateRange.end) {
           customerQuery.date = {};
-          if (dateRange.start) customerQuery.date.$gte = new Date(dateRange.start);
+          if (dateRange.start)
+            customerQuery.date.$gte = new Date(dateRange.start);
           if (dateRange.end) customerQuery.date.$lte = new Date(dateRange.end);
         }
 
-        const sales = await Sale.find(customerQuery).select('customerName email course country date').lean();
+        const sales = await Sale.find(customerQuery)
+          .select("customerName email course country date")
+          .lean();
         segmentCounts.customersMatched = sales.length;
 
         customerRecipients = sales
-          .filter(sale => isValidEmail(sale.email))
-          .map(sale => ({
+          .filter((sale) => isValidEmail(sale.email))
+          .map((sale) => ({
             email: sale.email.trim(),
             name: sale.customerName,
             course: sale.course,
-            country: sale.country
+            country: sale.country,
           }));
 
         segmentCounts.customersValidEmails = customerRecipients.length;
       }
 
       recipients = [...validLeadRecipients, ...customerRecipients];
-      totalMatchedLeads = segmentCounts.leadsMatched + segmentCounts.customersMatched;
+      totalMatchedLeads =
+        segmentCounts.leadsMatched + segmentCounts.customersMatched;
       validEmailLeads = recipients.length;
       skippedNoEmailLeads = totalMatchedLeads - validEmailLeads;
 
       if (recipients.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'No valid email recipients found for the selected segment filters.',
+          message:
+            "No valid email recipients found for the selected segment filters.",
           data: {
             totalMatchedLeads,
             validEmailLeads: 0,
-            skippedNoEmailLeads
-          }
+            skippedNoEmailLeads,
+          },
         });
       }
     }
 
     // Update campaign status
-    campaign.status = 'sending';
+    campaign.status = "sending";
     campaign.stats.totalRecipients = recipients.length;
+
+    // Initialize recipient tracking for individual engagement monitoring
+    campaign.recipientTracking = recipients.map((r) => ({
+      email: r.email,
+      name: r.name,
+      status: "queued",
+      openCount: 0,
+      clickCount: 0,
+    }));
+
     await campaign.save();
 
-    const senderName = req.user?.fullName || process.env.FROM_NAME || 'Traincape Team';
+    const senderName =
+      req.user?.fullName || process.env.FROM_NAME || "Traincape Team";
     const preparedRecipients = recipients.map((recipient) => ({
       ...recipient,
-      counselor_name: senderName
+      counselor_name: senderName,
     }));
 
     // Use email queue for sending (if available) or fallback to synchronous sending
-    const { queueEmails } = require('../services/emailQueue');
-    
+    const { queueEmails } = require("../services/emailQueue");
+
     try {
       // Try to use queue system
       const queueResult = await queueEmails(
@@ -410,12 +488,14 @@ exports.sendCampaign = async (req, res) => {
         campaign._id.toString(),
         campaign.subject,
         campaign.template,
-        campaign.template.replace(/<[^>]*>/g, ''), // Plain text version
+        campaign.template.replace(/<[^>]*>/g, ""), // Plain text version
         50, // Batch size: 50 emails per batch
-        1000 // Delay: 1 second between batches (rate limiting)
+        1000, // Delay: 1 second between batches (rate limiting)
       );
 
-      console.log(`📬 Queued ${queueResult.totalQueued} emails in ${queueResult.batches} batches`);
+      console.log(
+        `📬 Queued ${queueResult.totalQueued} emails in ${queueResult.batches} batches`,
+      );
 
       // Update campaign with initial stats
       campaign.stats.sent = 0; // Will be updated by queue workers
@@ -430,23 +510,39 @@ exports.sendCampaign = async (req, res) => {
         data: {
           queued: queueResult.totalQueued,
           batches: queueResult.batches,
-          totalMatchedLeads: campaign.recipientType === 'leads' || campaign.recipientType === 'all' ? totalMatchedLeads : undefined,
-          validEmailLeads: campaign.recipientType === 'leads' || campaign.recipientType === 'all' ? validEmailLeads : undefined,
-          skippedNoEmailLeads: campaign.recipientType === 'leads' || campaign.recipientType === 'all' ? skippedNoEmailLeads : undefined,
-          segment: campaign.recipientType === 'segment'
-            ? {
-                leadsMatched: segmentCounts.leadsMatched,
-                leadsValidEmails: segmentCounts.leadsValidEmails,
-                customersMatched: segmentCounts.customersMatched,
-                customersValidEmails: segmentCounts.customersValidEmails
-              }
-            : undefined
-        }
+          totalMatchedLeads:
+            campaign.recipientType === "leads" ||
+            campaign.recipientType === "all"
+              ? totalMatchedLeads
+              : undefined,
+          validEmailLeads:
+            campaign.recipientType === "leads" ||
+            campaign.recipientType === "all"
+              ? validEmailLeads
+              : undefined,
+          skippedNoEmailLeads:
+            campaign.recipientType === "leads" ||
+            campaign.recipientType === "all"
+              ? skippedNoEmailLeads
+              : undefined,
+          segment:
+            campaign.recipientType === "segment"
+              ? {
+                  leadsMatched: segmentCounts.leadsMatched,
+                  leadsValidEmails: segmentCounts.leadsValidEmails,
+                  customersMatched: segmentCounts.customersMatched,
+                  customersValidEmails: segmentCounts.customersValidEmails,
+                }
+              : undefined,
+        },
       });
       return;
     } catch (queueError) {
-      console.warn('Queue system not available, falling back to synchronous sending:', queueError.message);
-      
+      console.warn(
+        "Queue system not available, falling back to synchronous sending:",
+        queueError.message,
+      );
+
       // Fallback to synchronous sending (for small campaigns or when queue is unavailable)
       let sent = 0;
       let delivered = 0;
@@ -458,25 +554,28 @@ exports.sendCampaign = async (req, res) => {
 
       for (let i = 0; i < preparedRecipients.length; i += batchSize) {
         const batch = preparedRecipients.slice(i, i + batchSize);
-        
+
         for (const recipient of batch) {
           try {
             // Replace template variables
             const variables = buildTemplateVariables(recipient, {
-              fromName: req.user?.fullName
+              fromName: req.user?.fullName,
             });
             const htmlContent = addEmailTracking(
               replaceTemplateVariables(campaign.template, variables),
               campaign._id.toString(),
-              recipient.email
+              recipient.email,
             );
-            const subject = replaceTemplateVariables(campaign.subject, variables);
+            const subject = replaceTemplateVariables(
+              campaign.subject,
+              variables,
+            );
 
             await sendEmail(
               recipient.email,
               subject,
-              htmlContent.replace(/<[^>]*>/g, ''), // Plain text version
-              htmlContent
+              htmlContent.replace(/<[^>]*>/g, ""), // Plain text version
+              htmlContent,
             );
 
             sent++;
@@ -490,12 +589,14 @@ exports.sendCampaign = async (req, res) => {
 
         // Delay between batches (except for the last batch)
         if (i + batchSize < recipients.length) {
-          await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+          await new Promise((resolve) =>
+            setTimeout(resolve, delayBetweenBatches),
+          );
         }
       }
 
       // Update campaign stats
-      campaign.status = 'sent';
+      campaign.status = "sent";
       campaign.stats.sent = sent;
       campaign.stats.delivered = delivered;
       campaign.stats.bounced = bounced;
@@ -510,24 +611,37 @@ exports.sendCampaign = async (req, res) => {
           sent,
           delivered,
           bounced,
-          totalMatchedLeads: campaign.recipientType === 'leads' || campaign.recipientType === 'all' ? totalMatchedLeads : undefined,
-          validEmailLeads: campaign.recipientType === 'leads' || campaign.recipientType === 'all' ? validEmailLeads : undefined,
-          skippedNoEmailLeads: campaign.recipientType === 'leads' || campaign.recipientType === 'all' ? skippedNoEmailLeads : undefined,
-          segment: campaign.recipientType === 'segment'
-            ? {
-                leadsMatched: segmentCounts.leadsMatched,
-                leadsValidEmails: segmentCounts.leadsValidEmails,
-                customersMatched: segmentCounts.customersMatched,
-                customersValidEmails: segmentCounts.customersValidEmails
-              }
-            : undefined
-        }
+          totalMatchedLeads:
+            campaign.recipientType === "leads" ||
+            campaign.recipientType === "all"
+              ? totalMatchedLeads
+              : undefined,
+          validEmailLeads:
+            campaign.recipientType === "leads" ||
+            campaign.recipientType === "all"
+              ? validEmailLeads
+              : undefined,
+          skippedNoEmailLeads:
+            campaign.recipientType === "leads" ||
+            campaign.recipientType === "all"
+              ? skippedNoEmailLeads
+              : undefined,
+          segment:
+            campaign.recipientType === "segment"
+              ? {
+                  leadsMatched: segmentCounts.leadsMatched,
+                  leadsValidEmails: segmentCounts.leadsValidEmails,
+                  customersMatched: segmentCounts.customersMatched,
+                  customersValidEmails: segmentCounts.customersValidEmails,
+                }
+              : undefined,
+        },
       });
     } // End of catch (queueError) block
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -537,35 +651,36 @@ exports.sendCampaign = async (req, res) => {
 // @access  Private
 exports.getCampaignAnalytics = async (req, res) => {
   try {
-    const campaign = await EmailCampaign.findById(req.params.id)
-      .populate('createdBy', 'fullName email');
+    const campaign = await EmailCampaign.findById(req.params.id).populate(
+      "createdBy",
+      "fullName email",
+    );
 
     if (!campaign) {
       return res.status(404).json({
         success: false,
-        message: 'Campaign not found'
+        message: "Campaign not found",
       });
     }
 
     if (!canAccessCampaign(req, campaign)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to access this campaign'
+        message: "Not authorized to access this campaign",
       });
     }
 
     const stats = campaign.stats || {};
     const openRate = campaign.calculateOpenRate();
     const clickRate = campaign.calculateClickRate();
-    const deliveryRate = stats.sent > 0 ? ((stats.delivered / stats.sent) * 100) : 0;
-    const bounceRate = stats.sent > 0 ? ((stats.bounced / stats.sent) * 100) : 0;
-    const unsubscribeRate = stats.delivered > 0 ? ((stats.unsubscribed / stats.delivered) * 100) : 0;
+    const deliveryRate =
+      stats.sent > 0 ? (stats.delivered / stats.sent) * 100 : 0;
+    const bounceRate = stats.sent > 0 ? (stats.bounced / stats.sent) * 100 : 0;
+    const unsubscribeRate =
+      stats.delivered > 0 ? (stats.unsubscribed / stats.delivered) * 100 : 0;
 
     // Calculate engagement score (weighted metric)
-    const engagementScore = (
-      (openRate * 0.4) + 
-      (clickRate * 0.6)
-    ).toFixed(2);
+    const engagementScore = (openRate * 0.4 + clickRate * 0.6).toFixed(2);
 
     res.status(200).json({
       success: true,
@@ -584,14 +699,14 @@ exports.getCampaignAnalytics = async (req, res) => {
           recipientType: campaign.recipientType,
           sentAt: campaign.sentAt,
           completedAt: campaign.completedAt,
-          createdAt: campaign.createdAt
-        }
-      }
+          createdAt: campaign.createdAt,
+        },
+      },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -602,22 +717,45 @@ exports.getCampaignAnalytics = async (req, res) => {
 exports.trackOpen = async (req, res) => {
   try {
     const campaignId = req.query.c;
+    const recipientEmail = req.query.e;
+
     if (campaignId) {
+      // Update aggregate stats
       await EmailCampaign.findByIdAndUpdate(campaignId, {
-        $inc: { 'stats.opened': 1 }
+        $inc: { "stats.opened": 1 },
       });
+
+      // Update individual recipient tracking if email is provided
+      if (recipientEmail) {
+        await EmailCampaign.findOneAndUpdate(
+          {
+            _id: campaignId,
+            "recipientTracking.email": recipientEmail,
+          },
+          {
+            $set: {
+              "recipientTracking.$.status": "opened",
+              "recipientTracking.$.openedAt": new Date(),
+            },
+            $inc: { "recipientTracking.$.openCount": 1 },
+          },
+        );
+      }
     }
   } catch (error) {
     // Swallow errors to avoid breaking email clients
   } finally {
     const img = Buffer.from(
-      'R0lGODlhAQABAPAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==',
-      'base64'
+      "R0lGODlhAQABAPAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==",
+      "base64",
     );
-    res.setHeader('Content-Type', 'image/gif');
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
+    res.setHeader("Content-Type", "image/gif");
+    res.setHeader(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate, proxy-revalidate",
+    );
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     res.send(img);
   }
 };
@@ -627,20 +765,39 @@ exports.trackOpen = async (req, res) => {
 // @access  Public
 exports.trackClick = async (req, res) => {
   const campaignId = req.query.c;
+  const recipientEmail = req.query.e;
   const redirectUrl = req.query.u;
 
   try {
     if (campaignId) {
+      // Update aggregate stats
       await EmailCampaign.findByIdAndUpdate(campaignId, {
-        $inc: { 'stats.clicked': 1 }
+        $inc: { "stats.clicked": 1 },
       });
+
+      // Update individual recipient tracking if email is provided
+      if (recipientEmail) {
+        await EmailCampaign.findOneAndUpdate(
+          {
+            _id: campaignId,
+            "recipientTracking.email": recipientEmail,
+          },
+          {
+            $set: {
+              "recipientTracking.$.status": "clicked",
+              "recipientTracking.$.clickedAt": new Date(),
+            },
+            $inc: { "recipientTracking.$.clickCount": 1 },
+          },
+        );
+      }
     }
   } catch (error) {
     // ignore tracking errors
   }
 
   if (!redirectUrl) {
-    return res.status(400).send('Missing redirect URL');
+    return res.status(400).send("Missing redirect URL");
   }
 
   return res.redirect(redirectUrl);
@@ -656,14 +813,14 @@ exports.deleteCampaign = async (req, res) => {
     if (!campaign) {
       return res.status(404).json({
         success: false,
-        message: 'Campaign not found'
+        message: "Campaign not found",
       });
     }
 
     if (!canAccessCampaign(req, campaign)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to delete this campaign'
+        message: "Not authorized to delete this campaign",
       });
     }
 
@@ -671,12 +828,12 @@ exports.deleteCampaign = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Campaign deleted successfully'
+      message: "Campaign deleted successfully",
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -686,14 +843,14 @@ exports.deleteCampaign = async (req, res) => {
 // @access  Private
 exports.getAvailableCourses = async (req, res) => {
   try {
-    console.log('📚 Fetching available courses from leads...');
-    
+    console.log("📚 Fetching available courses from leads...");
+
     // Get all unique course values from leads - simplified query
     // The course field exists and is a string, so we can query directly
     const leads = await Lead.find({
-      course: { $exists: true, $ne: null, $ne: '' }
+      course: { $exists: true, $ne: null, $ne: "" },
     })
-      .select('course')
+      .select("course")
       .lean();
 
     console.log(`📊 Found ${leads.length} leads with course information`);
@@ -701,13 +858,13 @@ exports.getAvailableCourses = async (req, res) => {
     // Create a map to store normalized -> formatted mapping
     const courseMap = new Map();
 
-    leads.forEach(lead => {
-      if (lead.course && typeof lead.course === 'string') {
+    leads.forEach((lead) => {
+      if (lead.course && typeof lead.course === "string") {
         const trimmed = lead.course.trim();
-        if (trimmed !== '') {
+        if (trimmed !== "") {
           const normalized = normalizeCourse(trimmed);
           const formatted = trimmed;
-          
+
           // Keep the most common formatted version (or first encountered)
           if (!courseMap.has(normalized)) {
             courseMap.set(normalized, formatted);
@@ -717,23 +874,28 @@ exports.getAvailableCourses = async (req, res) => {
     });
 
     // Convert map to array of { value, label } objects
-    const courses = Array.from(courseMap.entries()).map(([value, label]) => ({
-      value,
-      label
-    })).sort((a, b) => a.label.localeCompare(b.label));
+    const courses = Array.from(courseMap.entries())
+      .map(([value, label]) => ({
+        value,
+        label,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
 
-    console.log(`✅ Found ${courses.length} unique courses:`, courses.map(c => c.label).join(', '));
+    console.log(
+      `✅ Found ${courses.length} unique courses:`,
+      courses.map((c) => c.label).join(", "),
+    );
 
     res.status(200).json({
       success: true,
       count: courses.length,
-      data: courses
+      data: courses,
     });
   } catch (error) {
-    console.error('❌ Error fetching available courses:', error);
+    console.error("❌ Error fetching available courses:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -748,23 +910,30 @@ exports.previewCourseRecipients = async (req, res) => {
     if (!courses || !Array.isArray(courses) || courses.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide at least one course'
+        message: "Please provide at least one course",
       });
     }
 
     // Normalize course values
-    const normalizedCourses = courses.map(c => normalizeCourse(c));
+    const normalizedCourses = courses.map((c) => normalizeCourse(c));
 
     // Build query for case-insensitive matching
-    const courseRegex = new RegExp(normalizedCourses.map(c => `^${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`).join('|'), 'i');
-    
+    const courseRegex = new RegExp(
+      normalizedCourses
+        .map((c) => `^${c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`)
+        .join("|"),
+      "i",
+    );
+
     // Get all leads matching the courses (case-insensitive)
     const allLeads = await Lead.find({
-      course: { $regex: courseRegex }
-    }).select('name email course').lean();
+      course: { $regex: courseRegex },
+    })
+      .select("name email course")
+      .lean();
 
     // Filter leads with valid emails
-    const validEmailLeads = allLeads.filter(lead => isValidEmail(lead.email));
+    const validEmailLeads = allLeads.filter((lead) => isValidEmail(lead.email));
     const skippedNoEmail = allLeads.length - validEmailLeads.length;
 
     res.status(200).json({
@@ -772,14 +941,216 @@ exports.previewCourseRecipients = async (req, res) => {
       data: {
         totalMatchedLeads: allLeads.length,
         validEmailLeads: validEmailLeads.length,
-        skippedNoEmailLeads: skippedNoEmail
-      }
+        skippedNoEmailLeads: skippedNoEmail,
+      },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
 
+// @desc    Clone a campaign (for follow-ups)
+// @route   POST /api/email-campaigns/:id/clone
+// @access  Private
+exports.cloneCampaign = async (req, res) => {
+  try {
+    const campaign = await EmailCampaign.findById(req.params.id);
+
+    if (!campaign) {
+      return res.status(404).json({
+        success: false,
+        message: "Campaign not found",
+      });
+    }
+
+    if (!canAccessCampaign(req, campaign)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to clone this campaign",
+      });
+    }
+
+    // Create clone with modified name
+    const cloneData = campaign.toObject();
+    delete cloneData._id;
+    delete cloneData.stats;
+    delete cloneData.recipientTracking;
+    delete cloneData.sentAt;
+    delete cloneData.completedAt;
+    delete cloneData.createdAt;
+    delete cloneData.updatedAt;
+
+    const clonedCampaign = await EmailCampaign.create({
+      ...cloneData,
+      name: `${campaign.name} (Follow-up)`,
+      status: "draft",
+      parentCampaignId: campaign._id,
+      createdBy: req.user.id,
+      stats: {
+        totalRecipients: 0,
+        sent: 0,
+        delivered: 0,
+        opened: 0,
+        clicked: 0,
+        bounced: 0,
+        unsubscribed: 0,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Campaign cloned successfully",
+      data: clonedCampaign,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// @desc    Get recipient engagement for a campaign
+// @route   GET /api/email-campaigns/:id/recipients
+// @access  Private
+exports.getRecipientEngagement = async (req, res) => {
+  try {
+    const campaign = await EmailCampaign.findById(req.params.id).select(
+      "name stats recipientTracking status sentAt",
+    );
+
+    if (!campaign) {
+      return res.status(404).json({
+        success: false,
+        message: "Campaign not found",
+      });
+    }
+
+    if (!canAccessCampaign(req, campaign)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to access this campaign",
+      });
+    }
+
+    // Calculate engagement summary
+    const tracking = campaign.recipientTracking || [];
+    const summary = {
+      total: tracking.length,
+      opened: tracking.filter(
+        (r) => r.status === "opened" || r.status === "clicked",
+      ).length,
+      clicked: tracking.filter((r) => r.status === "clicked").length,
+      notOpened: tracking.filter(
+        (r) => r.status === "sent" || r.status === "delivered",
+      ).length,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        campaign: {
+          name: campaign.name,
+          status: campaign.status,
+          sentAt: campaign.sentAt,
+        },
+        summary,
+        recipients: tracking.map((r) => ({
+          email: r.email,
+          name: r.name,
+          status: r.status,
+          openedAt: r.openedAt,
+          clickedAt: r.clickedAt,
+          openCount: r.openCount,
+          clickCount: r.clickCount,
+        })),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// @desc    Send reminder to non-openers
+// @route   POST /api/email-campaigns/:id/send-reminder
+// @access  Private
+exports.sendReminder = async (req, res) => {
+  try {
+    const campaign = await EmailCampaign.findById(req.params.id);
+
+    if (!campaign) {
+      return res.status(404).json({
+        success: false,
+        message: "Campaign not found",
+      });
+    }
+
+    if (!canAccessCampaign(req, campaign)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to send reminder for this campaign",
+      });
+    }
+
+    if (campaign.status !== "sent") {
+      return res.status(400).json({
+        success: false,
+        message: "Can only send reminders for sent campaigns",
+      });
+    }
+
+    // Get non-openers from recipient tracking
+    const nonOpeners = (campaign.recipientTracking || [])
+      .filter((r) => r.status === "sent" || r.status === "delivered")
+      .map((r) => ({
+        email: r.email,
+        name: r.name,
+      }));
+
+    if (nonOpeners.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No non-openers found. Everyone has opened the campaign!",
+      });
+    }
+
+    // Create a follow-up campaign targeting non-openers
+    const reminderCampaign = await EmailCampaign.create({
+      name: `${campaign.name} (Reminder)`,
+      description: `Reminder for non-openers of "${campaign.name}"`,
+      subject: req.body.subject || `Reminder: ${campaign.subject}`,
+      template: req.body.template || campaign.template,
+      recipientType: "manual",
+      recipientList: nonOpeners,
+      status: "draft",
+      parentCampaignId: campaign._id,
+      createdBy: req.user.id,
+      stats: {
+        totalRecipients: nonOpeners.length,
+        sent: 0,
+        delivered: 0,
+        opened: 0,
+        clicked: 0,
+        bounced: 0,
+        unsubscribed: 0,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `Reminder campaign created with ${nonOpeners.length} non-openers`,
+      data: reminderCampaign,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

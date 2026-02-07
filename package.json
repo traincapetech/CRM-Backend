@@ -11,6 +11,7 @@
     "drop-indexes": "node utils/dropUniqueIndexes.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.984.0",
     "agenda": "^5.0.0",
     "axios": "^1.9.0",
     "bcrypt": "^5.1.1",
