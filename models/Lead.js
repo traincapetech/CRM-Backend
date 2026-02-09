@@ -149,6 +149,33 @@ LeadSchema.methods.getDecryptedPII = function () {
   };
 };
 
+// Automatically decrypt PII when converting to JSON
+LeadSchema.set("toJSON", {
+  transform: (doc, ret) => {
+    try {
+      if (ret.email) ret.email = decrypt(ret.email);
+      if (ret.phone) ret.phone = decrypt(ret.phone);
+    } catch (e) {
+      // If decryption fails (e.g. already plain text or invalid), keep original
+      // console.error('Decryption error in toJSON:', e.message);
+    }
+    return ret;
+  },
+});
+
+// Automatically decrypt PII when converting to Object
+LeadSchema.set("toObject", {
+  transform: (doc, ret) => {
+    try {
+      if (ret.email) ret.email = decrypt(ret.email);
+      if (ret.phone) ret.phone = decrypt(ret.phone);
+    } catch (e) {
+      // If decryption fails, keep original
+    }
+    return ret;
+  },
+});
+
 // Static method to find by email (using hash)
 LeadSchema.statics.findByEmail = function (email) {
   const hash = hashForSearch(email);

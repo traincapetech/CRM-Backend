@@ -55,6 +55,21 @@ exports.getCampaigns = async (req, res) => {
       .populate("createdBy", "fullName email")
       .sort({ createdAt: -1 });
 
+    // Self-healing: Check for stuck 'sending' campaigns
+    const updates = campaigns.map(async (campaign) => {
+      if (
+        campaign.status === "sending" &&
+        campaign.stats.totalRecipients > 0 &&
+        campaign.stats.sent >= campaign.stats.totalRecipients
+      ) {
+        campaign.status = "sent";
+        campaign.completedAt = new Date();
+        await campaign.save();
+      }
+    });
+
+    await Promise.all(updates);
+
     res.status(200).json({
       success: true,
       count: campaigns.length,
@@ -90,6 +105,17 @@ exports.getCampaign = async (req, res) => {
         success: false,
         message: "Not authorized to access this campaign",
       });
+    }
+
+    // Self-healing: Check if stuck 'sending'
+    if (
+      campaign.status === "sending" &&
+      campaign.stats.totalRecipients > 0 &&
+      campaign.stats.sent >= campaign.stats.totalRecipients
+    ) {
+      campaign.status = "sent";
+      campaign.completedAt = new Date();
+      await campaign.save();
     }
 
     res.status(200).json({
