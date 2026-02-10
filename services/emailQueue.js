@@ -31,9 +31,14 @@ const initEmailQueue = () => {
   }
 
   const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  const isRedisSsl = redisUrl.startsWith("rediss://");
+
+  console.log(
+    `📡 Connecting to Redis for Email Queue (${isRedisSsl ? "SSL enabled" : "Non-SSL"})...`,
+  );
 
   try {
-    emailQueue = new Queue("email-campaigns", {
+    const queueOptions = {
       redis: redisUrl,
       defaultJobOptions: {
         attempts: 3,
@@ -49,7 +54,21 @@ const initEmailQueue = () => {
           age: 7 * 24 * 3600, // Keep failed jobs for 7 days
         },
       },
-    });
+    };
+
+    // Upstash/Secure Redis requires explicit TLS object
+    if (isRedisSsl) {
+      queueOptions.redis = {
+        port: parseInt(new URL(redisUrl).port) || 6379,
+        host: new URL(redisUrl).hostname,
+        password: new URL(redisUrl).password,
+        tls: {
+          rejectUnauthorized: false, // Required for some managed Redis providers
+        },
+      };
+    }
+
+    emailQueue = new Queue("email-campaigns", queueOptions);
 
     // Process emails with rate limiting
     emailQueue.process("send-email", 10, async (job) => {
@@ -131,7 +150,21 @@ const initEmailQueue = () => {
       console.warn(`⚠️ Job stalled: ${job.id}`);
     });
 
-    console.log("📧 Email queue initialized");
+    emailQueue.on("error", (error) => {
+      console.error("❌ Email Queue Error:", error.message);
+    });
+
+    emailQueue.on("waiting", (jobId) => {
+      // console.log(`⏳ Job ${jobId} is waiting...`);
+    });
+
+    emailQueue.on("active", (job) => {
+      console.log(
+        `⚙️ Processing job ${job.id} for campaign ${job.data.campaignId}`,
+      );
+    });
+
+    console.log("📧 Email queue and workers initialized");
     return emailQueue;
   } catch (error) {
     console.error("Failed to initialize email queue:", error);

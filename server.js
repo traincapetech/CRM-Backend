@@ -83,6 +83,9 @@ const testsRoutes = require("./routes/tests");
 const testAssignmentsRoutes = require("./routes/testAssignments");
 const testAttemptsRoutes = require("./routes/testAttempts");
 const testReportsRoutes = require("./routes/testReports");
+const feedRoutes = require("./routes/feed");
+const journeyRoutes = require("./routes/journeys");
+const searchRoutes = require("./routes/search");
 const app = express();
 const server = http.createServer(app);
 
@@ -465,6 +468,9 @@ app.use("/api/test-assignments", testAssignmentsRoutes);
 app.use("/api/test-attempts", testAttemptsRoutes);
 app.use("/api/test-reports", testReportsRoutes);
 app.use("/api/biometric", biometricRoutes);
+app.use("/api/feed", feedRoutes); // Mount Feed Routes
+app.use("/api/journeys", journeyRoutes); // Mount Journey Routes
+app.use("/api/search", searchRoutes); // Mount Search Routes
 
 // Basic route for testing
 app.get("/", (req, res) => {
