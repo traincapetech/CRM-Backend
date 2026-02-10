@@ -244,14 +244,8 @@ exports.webhook = async (req, res) => {
       settings.lastSyncAt = new Date();
       await settings.save();
       console.log("✅ Webhook processed successfully:", result);
-      return res.status(200).json({
-        success: true,
-        data: result,
-        message:
-          result.unmatched > 0
-            ? `Webhook processed. ${result.unmatched} logs unmatched (check employee biometricCode).`
-            : "Webhook processed",
-      });
+      // Return "OK" as plain text for device compatibility
+      return res.status(200).send("OK");
     } catch (error) {
       console.error("❌ Biometric webhook processing failed:", error.message);
       console.error("Error stack:", error.stack);

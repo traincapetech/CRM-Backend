@@ -1,4 +1,5 @@
 const Lead = require("../models/Lead");
+const { decrypt } = require("../utils/encryption");
 
 // @desc    Get all leads
 // @route   GET /api/leads
@@ -767,6 +768,17 @@ exports.getAssignedLeads = async (req, res) => {
       .skip(skip)
       .limit(limit)
       .lean(); // OPTIMIZATION: Use lean() for faster queries
+
+    // CRITICAL FIX: Manually decrypt PII fields because .lean() bypasses Mongoose toJSON transform
+    leads.forEach((lead) => {
+      try {
+        if (lead.email) lead.email = decrypt(lead.email);
+        if (lead.phone) lead.phone = decrypt(lead.phone);
+      } catch (error) {
+        console.error(`Failed to decrypt lead ${lead._id}:`, error.message);
+        // Keep original encrypted value if decryption fails
+      }
+    });
 
     console.log(
       `Found ${leads.length} assigned leads for ${req.user.fullName} (showing ${skip + 1}-${skip + leads.length} of ${totalCount})`,
