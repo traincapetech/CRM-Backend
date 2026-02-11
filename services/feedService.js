@@ -69,7 +69,12 @@ class FeedService {
    */
   async getUserFeed(userId, options = {}) {
     try {
-      const { limit = 20, offset = 0, includeActioned = false } = options;
+      const {
+        limit = 20,
+        offset = 0,
+        includeActioned = false,
+        targetId,
+      } = options;
 
       const query = { userId };
 
@@ -77,10 +82,32 @@ class FeedService {
         query.isActioned = false;
       }
 
-      const feed = await ActionItem.find(query)
+      let feed = await ActionItem.find(query)
         .sort({ priority: -1, createdAt: -1 }) // High priority, newest first
         .skip(offset)
         .limit(limit);
+
+      // If targetId is provided, ensure it's in the list (fetch separately if needed)
+      if (targetId) {
+        const targetInFeed = feed.find(
+          (item) => item._id.toString() === targetId,
+        );
+        if (!targetInFeed) {
+          const targetItem = await ActionItem.findOne({
+            _id: targetId,
+            userId,
+          });
+          if (targetItem) {
+            feed = [targetItem, ...feed];
+          }
+        } else {
+          // Move to top
+          feed = [
+            targetInFeed,
+            ...feed.filter((item) => item._id.toString() !== targetId),
+          ];
+        }
+      }
 
       return feed;
     } catch (error) {

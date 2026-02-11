@@ -11,6 +11,7 @@ exports.getFeed = async (req, res) => {
       limit: parseInt(limit) || 20,
       offset: parseInt(offset) || 0,
       includeActioned: includeActioned === "true",
+      targetId: req.query.targetId,
     });
 
     res.status(200).json({

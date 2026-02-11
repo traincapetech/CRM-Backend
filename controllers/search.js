@@ -39,7 +39,9 @@ exports.globalSearch = async (req, res) => {
       return res.status(200).json({ success: true, results: [] });
     }
 
-    const regex = new RegExp(query, "i"); // Case-insensitive regex
+    // Escape special chars to prevent regex errors
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(escapedQuery, "i"); // Case-insensitive regex
     const results = [];
 
     // 1. Search Pages (In-Memory)
