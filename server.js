@@ -45,6 +45,14 @@ try {
   console.log("📧 Emails will be sent synchronously (fallback mode)");
 }
 
+// Initialize Performance Management Cron Jobs
+const PerformanceCronJobs = require("./services/performanceCronJobs");
+try {
+  PerformanceCronJobs.startAll();
+} catch (error) {
+  console.warn("⚠️ Performance cron jobs not initialized:", error.message);
+}
+
 // Use the IP filter middleware
 // app.use(ipFilter);
 
@@ -76,6 +84,7 @@ const workflowRoutes = require("./routes/workflows");
 const payoutRoutes = require("./routes/payouts");
 const paytmRoutes = require("./routes/paytm");
 const biometricRoutes = require("./routes/biometric");
+const performanceRoutes = require("./routes/performance");
 const testRolesRoutes = require("./routes/testRoles");
 const testGroupsRoutes = require("./routes/testGroups");
 const testQuestionsRoutes = require("./routes/testQuestions");
@@ -469,6 +478,7 @@ app.use("/api/test-assignments", testAssignmentsRoutes);
 app.use("/api/test-attempts", testAttemptsRoutes);
 app.use("/api/test-reports", testReportsRoutes);
 app.use("/api/biometric", biometricRoutes);
+app.use("/api/performance", performanceRoutes); // Performance Management ERP
 app.use("/api/feed", feedRoutes); // Mount Feed Routes
 app.use("/api/journeys", journeyRoutes); // Mount Journey Routes
 app.use("/api/search", searchRoutes); // Mount Search Routes
