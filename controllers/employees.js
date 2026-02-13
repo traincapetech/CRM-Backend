@@ -417,9 +417,19 @@ exports.createEmployee = async (req, res) => {
               fieldName,
             );
             console.log(`File ${fieldName} uploaded successfully:`, uploaded);
+
+            // Extract just the URL string if the result is an object
+            // This prevents MongoDB "Cast to string failed" errors
+            const fileValue =
+              typeof uploaded === "object" && uploaded.url
+                ? uploaded.url
+                : uploaded;
+
             // Store in both individual field and documents object for consistency
-            employeeData[fieldName] = uploaded;
-            employeeData.documents[fieldName] = uploaded;
+            employeeData[fieldName] = fileValue;
+            employeeData.documents[fieldName] = fileValue;
+
+            console.log(`Set ${fieldName} to:`, fileValue);
           } catch (e) {
             console.error(`Upload failed for ${fieldName}:`, e.message);
           }
@@ -493,11 +503,13 @@ exports.createEmployee = async (req, res) => {
   }
 };
 
-// @desc    Update employee
-// @route   PUT /api/employees/:id
-// @access  Private
 exports.updateEmployee = async (req, res) => {
   try {
+    console.log("=== UPDATE EMPLOYEE REQUEST ===");
+    console.log("Employee ID:", req.params.id);
+    console.log("Request body:", req.body);
+    console.log("Files:", req.files ? Object.keys(req.files) : "No files");
+
     let employee = await Employee.findById(req.params.id);
 
     if (!employee) {
@@ -519,6 +531,8 @@ exports.updateEmployee = async (req, res) => {
     const employeeData = req.body.employee
       ? JSON.parse(req.body.employee)
       : req.body;
+
+    console.log("Parsed employee data:", employeeData);
 
     // If role is being updated, ensure employmentType is correct
     if (employeeData.role) {
@@ -546,6 +560,7 @@ exports.updateEmployee = async (req, res) => {
 
     // Handle file uploads
     if (req.files) {
+      console.log("Processing file uploads:", Object.keys(req.files));
       for (const fieldName of Object.keys(req.files)) {
         const arr = req.files[fieldName];
         if (arr && arr[0]) {
@@ -564,7 +579,18 @@ exports.updateEmployee = async (req, res) => {
               file,
               fieldName,
             );
-            employeeData[fieldName] = uploaded;
+            console.log(`Uploaded ${fieldName}:`, uploaded);
+
+            // Extract just the URL string if the result is an object
+            // This prevents MongoDB "Cast to string failed" errors
+            const fileValue =
+              typeof uploaded === "object" && uploaded.url
+                ? uploaded.url
+                : uploaded;
+
+            employeeData[fieldName] = fileValue;
+
+            console.log(`Set ${fieldName} to:`, fileValue);
           } catch (e) {
             console.error(`Upload failed for ${fieldName}:`, e.message);
           }
@@ -572,20 +598,33 @@ exports.updateEmployee = async (req, res) => {
       }
     }
 
+    console.log("Final employee data to update:", employeeData);
+
     employee = await Employee.findByIdAndUpdate(req.params.id, employeeData, {
       new: true,
       runValidators: true,
     });
+
+    console.log("Employee updated successfully");
 
     res.status(200).json({
       success: true,
       data: employee,
     });
   } catch (err) {
-    console.error("Error updating employee:", err);
+    console.error("=== UPDATE EMPLOYEE ERROR ===");
+    console.error("Error:", err);
+    console.error("Error message:", err.message);
+    console.error("Error name:", err.name);
+    if (err.errors) {
+      console.error("Validation errors:", err.errors);
+    }
+
     res.status(400).json({
       success: false,
       message: err.message,
+      error: err.name,
+      validationErrors: err.errors,
     });
   }
 };

@@ -1,4 +1,6 @@
 .env
+.env.*
+
 
 # Uploads Directory - Contains sensitive user documents
 uploads/
