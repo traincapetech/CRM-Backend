@@ -393,6 +393,44 @@ const getTeamPerformance = async (req, res) => {
   }
 };
 
+// @desc    Trigger manual performance calculation for today
+// @route   POST /api/performance/employee/:id/calculate
+// @access  Private
+const calculateEmployeePerformanceToday = async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+    const PerformanceCalculationService = require("../services/performanceCalculation");
+
+    // Calculate for today
+    const today = new Date();
+    const result =
+      await PerformanceCalculationService.calculateEmployeePerformance(
+        employeeId,
+        today,
+      );
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        message: "Calculation failed or no KPIs found for employee",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Performance calculated successfully",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Error calculating performance:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error calculating performance",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getKPITemplates,
   createKPITemplate,
@@ -403,4 +441,5 @@ module.exports = {
   getEmployeePerformance,
   getEmployeeDailyPerformance,
   getTeamPerformance,
+  calculateEmployeePerformanceToday,
 };

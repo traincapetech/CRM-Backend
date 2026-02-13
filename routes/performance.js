@@ -12,6 +12,7 @@ const {
   getEmployeePerformance,
   getEmployeeDailyPerformance,
   getTeamPerformance,
+  calculateEmployeePerformanceToday,
 } = require("../controllers/performance");
 
 // KPI Template Management
@@ -38,6 +39,10 @@ router
 router.route("/employee/:id").get(protect, getEmployeePerformance);
 
 router.route("/employee/:id/daily").get(protect, getEmployeeDailyPerformance);
+
+router
+  .route("/employee/:id/calculate")
+  .post(protect, calculateEmployeePerformanceToday);
 
 // Team Performance
 router

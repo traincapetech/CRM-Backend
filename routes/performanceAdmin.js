@@ -91,4 +91,38 @@ router.post(
   },
 );
 
+// @desc    Get all employee performance summaries
+// @route   GET /api/performance/admin/all-employees
+// @access  Private (Admin, HR)
+router.get(
+  "/admin/all-employees",
+  protect,
+  authorize("Admin", "HR"),
+  async (req, res) => {
+    try {
+      const PerformanceSummary = require("../models/PerformanceSummary");
+
+      const summaries = await PerformanceSummary.find({})
+        .populate("employeeId", "fullName email role isActive")
+        .sort({ currentRating: -1 });
+
+      // Filter out summaries where employeeId might be null (deleted users)
+      const validSummaries = summaries.filter((s) => s.employeeId);
+
+      res.status(200).json({
+        success: true,
+        count: validSummaries.length,
+        data: validSummaries,
+      });
+    } catch (error) {
+      console.error("Error fetching all employee performance:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error fetching employee performance data",
+        error: error.message,
+      });
+    }
+  },
+);
+
 module.exports = router;
