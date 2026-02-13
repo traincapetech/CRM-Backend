@@ -581,7 +581,18 @@ processExamReminders(io);
 
 // Handle unhandled promise rejections
 process.on("unhandledRejection", (err, promise) => {
-  console.log(`Error: ${err.message}`);
+  console.log(`Error: ${err ? err.message || err : "Unknown error"}`);
+
+  // Don't crash for Redis max request limit errors if they bubble up here
+  if (
+    err &&
+    err.message &&
+    err.message.includes("max requests limit exceeded")
+  ) {
+    console.log("⚠️ Ignoring unhandled Redis limit error to keep server alive");
+    return;
+  }
+
   // Close server & exit process
-  server.close(() => process.exit(1));
+  // server.close(() => process.exit(1));
 });
