@@ -152,6 +152,22 @@ const initEmailQueue = () => {
 
     emailQueue.on("error", (error) => {
       console.error("❌ Email Queue Error:", error.message);
+      // If we hit the maxrequest limit, pause the queue to prevent crash loops
+      if (
+        error.message &&
+        error.message.includes("max requests limit exceeded")
+      ) {
+        console.error(
+          "⚠️ Redis limit exceeded. Pausing queue and falling back to sync mode.",
+        );
+        try {
+          emailQueue.pause();
+          emailQueue.close();
+          emailQueue = null;
+        } catch (e) {
+          console.error("Error closing queue:", e);
+        }
+      }
     });
 
     emailQueue.on("waiting", (jobId) => {
@@ -167,7 +183,8 @@ const initEmailQueue = () => {
     console.log("📧 Email queue and workers initialized");
     return emailQueue;
   } catch (error) {
-    console.error("Failed to initialize email queue:", error);
+    console.error("Failed to initialize email queue:", error.message);
+    // Return null to trigger fallback mode
     return null;
   }
 };

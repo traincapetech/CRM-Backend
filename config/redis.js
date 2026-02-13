@@ -1,18 +1,18 @@
 /**
  * Redis Configuration
- * 
+ *
  * Provides Redis client for caching API responses and database queries
  */
 
-const Redis = require('ioredis');
+const Redis = require("ioredis");
 
 let redisClient = null;
 
 const connectRedis = () => {
   // Only connect if REDIS_URL is provided
   if (!process.env.REDIS_URL) {
-    console.log('ℹ️  Redis not configured - caching disabled');
-    console.log('   To enable caching, set REDIS_URL in .env');
+    console.log("ℹ️  Redis not configured - caching disabled");
+    console.log("   To enable caching, set REDIS_URL in .env");
     return null;
   }
 
@@ -25,22 +25,27 @@ const connectRedis = () => {
       maxRetriesPerRequest: 3,
     });
 
-    redisClient.on('connect', () => {
-      console.log('✅ Redis connected successfully');
+    redisClient.on("connect", () => {
+      console.log("✅ Redis connected successfully");
     });
 
-    redisClient.on('error', (err) => {
-      console.error('❌ Redis connection error:', err.message);
-      console.log('   Continuing without cache...');
+    redisClient.on("error", (err) => {
+      console.error("❌ Redis connection error:", err.message);
+      console.log("   Continuing without cache...");
+      // If we hit the maxrequest limit, disable redis client to prevent future calls
+      if (err.message && err.message.includes("max requests limit exceeded")) {
+        console.warn("⚠️ Redis limit exceeded. Disabling cache features.");
+        redisClient = null;
+      }
     });
 
-    redisClient.on('ready', () => {
-      console.log('🚀 Redis ready for caching');
+    redisClient.on("ready", () => {
+      console.log("🚀 Redis ready for caching");
     });
 
     return redisClient;
   } catch (error) {
-    console.error('Failed to initialize Redis:', error.message);
+    console.error("Failed to initialize Redis:", error.message);
     return null;
   }
 };
@@ -50,12 +55,11 @@ const getRedisClient = () => {
 };
 
 const isRedisAvailable = () => {
-  return redisClient !== null && redisClient.status === 'ready';
+  return redisClient !== null && redisClient.status === "ready";
 };
 
 module.exports = {
   connectRedis,
   getRedisClient,
-  isRedisAvailable
+  isRedisAvailable,
 };
-
