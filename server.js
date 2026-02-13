@@ -139,6 +139,7 @@ io.on("connection", (socket) => {
         const supportTeam = await User.find({
           role: { $in: ["Admin", "Manager", "Sales Person", "Lead Person"] },
           chatStatus: "ONLINE",
+          active: true, // Filter out inactive users
         }).select("fullName role chatStatus");
 
         socket.emit("support-team-list", supportTeam);

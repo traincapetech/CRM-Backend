@@ -1,5 +1,5 @@
-const ChatService = require('../services/chatService');
-const User = require('../models/User');
+const ChatService = require("../services/chatService");
+const User = require("../models/User");
 
 // @desc    Send a message
 // @route   POST /api/chat/messages
@@ -12,7 +12,7 @@ const sendMessage = async (req, res) => {
     if (!recipientId || !content) {
       return res.status(400).json({
         success: false,
-        message: 'Recipient ID and content are required'
+        message: "Recipient ID and content are required",
       });
     }
 
@@ -20,14 +20,14 @@ const sendMessage = async (req, res) => {
       senderId,
       recipientId,
       content,
-      messageType
+      messageType,
     });
 
     // Emit the message via Socket.IO
-    const io = req.app.get('io');
+    const io = req.app.get("io");
     if (io) {
       // Send to recipient
-      io.to(`user-${recipientId}`).emit('newMessage', {
+      io.to(`user-${recipientId}`).emit("newMessage", {
         _id: message._id,
         chatId: message.chatId,
         senderId: message.senderId,
@@ -35,27 +35,27 @@ const sendMessage = async (req, res) => {
         content: message.content,
         messageType: message.messageType,
         timestamp: message.timestamp,
-        isRead: message.isRead
+        isRead: message.isRead,
       });
 
       // Send notification to recipient
-      io.to(`user-${recipientId}`).emit('messageNotification', {
+      io.to(`user-${recipientId}`).emit("messageNotification", {
         senderId: message.senderId,
         senderName: message.senderId.fullName,
         content: message.content,
-        timestamp: message.timestamp
+        timestamp: message.timestamp,
       });
     }
 
     res.status(201).json({
       success: true,
-      data: message
+      data: message,
     });
   } catch (error) {
-    console.error('Error sending message:', error);
+    console.error("Error sending message:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -73,7 +73,7 @@ const getChatMessages = async (req, res) => {
       senderId,
       recipientId,
       parseInt(page),
-      parseInt(limit)
+      parseInt(limit),
     );
 
     res.status(200).json({
@@ -82,14 +82,14 @@ const getChatMessages = async (req, res) => {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: messages.length
-      }
+        total: messages.length,
+      },
     });
   } catch (error) {
-    console.error('Error getting chat messages:', error);
+    console.error("Error getting chat messages:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -104,13 +104,13 @@ const getChatRooms = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: chatRooms
+      data: chatRooms,
     });
   } catch (error) {
-    console.error('Error getting chat rooms:', error);
+    console.error("Error getting chat rooms:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -125,13 +125,13 @@ const getOnlineUsers = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: users
+      data: users,
     });
   } catch (error) {
-    console.error('Error getting online users:', error);
+    console.error("Error getting online users:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -146,38 +146,41 @@ let usersCacheExpiry = null;
 const getAllUsersForChat = async (req, res) => {
   try {
     const currentUserId = req.user._id;
-    
+
     // OPTIMIZATION: Check cache first
     const now = Date.now();
     if (usersCache && usersCacheExpiry && now < usersCacheExpiry) {
-      console.log('Returning cached users data');
+      console.log("Returning cached users data");
       return res.status(200).json({
         success: true,
-        data: usersCache
+        data: usersCache,
       });
     }
-    
-    // Get all users except current user, including customers
-    const users = await User.find({ 
-      _id: { $ne: currentUserId } 
+
+    // Get all users except current user, including customers, but EXCLUDE terminated/inactive users
+    const users = await User.find({
+      _id: { $ne: currentUserId },
+      active: true,
     })
-    .select('fullName email role chatStatus lastSeen profilePicture createdAt')
-    .lean() // OPTIMIZATION: Use lean() for faster queries
-    .limit(100); // OPTIMIZATION: Limit to 100 users max
+      .select(
+        "fullName email role chatStatus lastSeen profilePicture createdAt",
+      )
+      .lean() // OPTIMIZATION: Use lean() for faster queries
+      .limit(100); // OPTIMIZATION: Limit to 100 users max
 
     // OPTIMIZATION: Cache the results for 5 minutes
     usersCache = users;
-    usersCacheExpiry = now + (5 * 60 * 1000); // 5 minutes
+    usersCacheExpiry = now + 5 * 60 * 1000; // 5 minutes
 
     res.status(200).json({
       success: true,
-      data: users
+      data: users,
     });
   } catch (error) {
-    console.error('Error fetching users for chat:', error);
+    console.error("Error fetching users for chat:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching users for chat'
+      message: "Error fetching users for chat",
     });
   }
 };
@@ -190,34 +193,34 @@ const updateChatStatus = async (req, res) => {
     const { status } = req.body;
     const userId = req.user._id;
 
-    if (!['ONLINE', 'OFFLINE', 'AWAY'].includes(status)) {
+    if (!["ONLINE", "OFFLINE", "AWAY"].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid status. Must be ONLINE, OFFLINE, or AWAY'
+        message: "Invalid status. Must be ONLINE, OFFLINE, or AWAY",
       });
     }
 
     await ChatService.updateUserStatus(userId, status);
 
     // Emit status update via Socket.IO
-    const io = req.app.get('io');
+    const io = req.app.get("io");
     if (io) {
-      io.emit('userStatusUpdate', {
+      io.emit("userStatusUpdate", {
         userId,
         status,
-        lastSeen: new Date()
+        lastSeen: new Date(),
       });
     }
 
     res.status(200).json({
       success: true,
-      message: 'Status updated successfully'
+      message: "Status updated successfully",
     });
   } catch (error) {
-    console.error('Error updating chat status:', error);
+    console.error("Error updating chat status:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -235,13 +238,13 @@ const markMessagesAsRead = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Messages marked as read'
+      message: "Messages marked as read",
     });
   } catch (error) {
-    console.error('Error marking messages as read:', error);
+    console.error("Error marking messages as read:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
@@ -253,5 +256,5 @@ module.exports = {
   getOnlineUsers,
   getAllUsersForChat,
   updateChatStatus,
-  markMessagesAsRead
-}; 
+  markMessagesAsRead,
+};
