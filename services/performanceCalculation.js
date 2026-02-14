@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const KPIDefinition = require("../models/KPIDefinition");
 const EmployeeTarget = require("../models/EmployeeTarget");
 const DailyPerformanceRecord = require("../models/DailyPerformanceRecord");
@@ -80,13 +81,21 @@ class PerformanceCalculationService {
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const count = await Lead.countDocuments({
-      createdBy: userId,
-      createdAt: {
+    // Count leads that were either created OR updated by/for this user today
+    // This tracks "Active Leads" rather than just "New Leads Generated"
+    const query = {
+      $or: [
+        { createdBy: userId },
+        { assignedTo: userId },
+        { leadPerson: userId },
+      ],
+      updatedAt: {
         $gte: startOfDay,
         $lte: endOfDay,
       },
-    });
+    };
+
+    const count = await Lead.countDocuments(query);
 
     return count;
   }
@@ -195,6 +204,58 @@ class PerformanceCalculationService {
           status,
           weight: kpi.weight,
         });
+
+        // Sync with EmployeeTarget (Ensure target exists and update actuals)
+        try {
+          let periodKey = null;
+          let startDate = new Date(date);
+          let endDate = new Date(date);
+
+          if (kpi.frequency === "daily") {
+            periodKey = dateKey;
+            startDate.setHours(0, 0, 0, 0);
+            endDate.setHours(23, 59, 59, 999);
+          } else if (kpi.frequency === "monthly") {
+            periodKey = dateKey.substring(0, 7); // 2026-02
+            startDate.setDate(1);
+            startDate.setHours(0, 0, 0, 0);
+            endDate = new Date(startDate);
+            endDate.setMonth(endDate.getMonth() + 1);
+            endDate.setDate(0);
+            endDate.setHours(23, 59, 59, 999);
+          }
+
+          if (periodKey) {
+            await EmployeeTarget.findOneAndUpdate(
+              {
+                employeeId,
+                kpiId: kpi._id,
+                "period.periodKey": periodKey,
+              },
+              {
+                $set: {
+                  actual,
+                  score,
+                  status,
+                  lastCalculated: new Date(),
+                },
+                $setOnInsert: {
+                  employeeId,
+                  kpiId: kpi._id,
+                  targets: kpi.thresholds,
+                  period: {
+                    startDate,
+                    endDate,
+                    periodKey,
+                  },
+                },
+              },
+              { upsert: true },
+            );
+          }
+        } catch (targetErr) {
+          console.error(`Error updating target: ${targetErr.message}`);
+        }
 
         // Weighted average
         totalWeightedScore += score * kpi.weight;

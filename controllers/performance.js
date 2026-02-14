@@ -269,10 +269,20 @@ const getEmployeePerformance = async (req, res) => {
     }
 
     // Get current active targets
-    const targets = await EmployeeTarget.find({ employeeId })
+    const rawTargets = await EmployeeTarget.find({ employeeId })
       .populate("kpiId")
       .sort({ "period.startDate": -1 })
-      .limit(10);
+      .limit(20); // Increase limit to ensure we catch recent ones
+
+    // Deduplicate: Keep only the latest target per KPI
+    const uniqueTargetsMap = new Map();
+    rawTargets.forEach((t) => {
+      const kpiId = t.kpiId._id.toString();
+      if (!uniqueTargetsMap.has(kpiId)) {
+        uniqueTargetsMap.set(kpiId, t);
+      }
+    });
+    const targets = Array.from(uniqueTargetsMap.values());
 
     // Get recent performance records (last 30 days)
     const thirtyDaysAgo = new Date();
@@ -285,11 +295,37 @@ const getEmployeePerformance = async (req, res) => {
       .sort({ date: -1 })
       .limit(30);
 
+    // MERGE ACTUALS: Inject today's/latest actuals into static targets
+    const latestRecord = recentRecords.length > 0 ? recentRecords[0] : null;
+
+    // Create a map of KPI ID -> Score Object
+    const kpiScoreMap = {};
+    if (latestRecord && latestRecord.kpiScores) {
+      latestRecord.kpiScores.forEach((score) => {
+        if (score.kpiId) {
+          kpiScoreMap[score.kpiId.toString()] = score;
+        }
+      });
+    }
+
+    // Merge into targets
+    const enrichedTargets = targets.map((t) => {
+      const tObj = t.toObject();
+      const kpiId = t.kpiId._id.toString();
+
+      if (kpiScoreMap[kpiId]) {
+        tObj.actual = kpiScoreMap[kpiId].actual;
+        tObj.score = kpiScoreMap[kpiId].score;
+        tObj.status = kpiScoreMap[kpiId].status; // Update status based on today's performance
+      }
+      return tObj;
+    });
+
     res.status(200).json({
       success: true,
       data: {
         summary,
-        targets,
+        targets: enrichedTargets, // Send enriched targets
         recentRecords,
       },
     });
