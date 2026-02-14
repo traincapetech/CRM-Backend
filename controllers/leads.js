@@ -388,27 +388,46 @@ exports.createLead = async (req, res) => {
       console.error("Workflow execution error (non-blocking):", workflowError);
     }
 
-    // Verify the created lead
-    const createdLead = await Lead.findById(lead._id)
-      .populate("assignedTo")
-      .populate("createdBy");
-    console.log("Created lead successfully:", {
-      id: createdLead._id,
-      name: createdLead.name,
-      assignedTo: createdLead.assignedTo
-        ? {
-            id: createdLead.assignedTo._id,
-            name: createdLead.assignedTo.fullName,
-          }
-        : "None",
-      createdBy: createdLead.createdBy
-        ? {
-            id: createdLead.createdBy._id,
-            name: createdLead.createdBy.fullName,
-          }
-        : "None",
-    });
-    console.log("==============================================");
+    // REAL-TIME PERFORMANCE UPDATE
+    // Calculate performance for assignedTo and leadPerson immediately
+    try {
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const today = new Date();
+
+      // Update for assigned sales person
+      if (lead.assignedTo) {
+        console.log(
+          `⚡️ Triggering real-time performance update for assignedTo (created): ${lead.assignedTo}`,
+        );
+        PerformanceCalculationService.calculateEmployeePerformance(
+          lead.assignedTo,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${lead.assignedTo}:`,
+            err.message,
+          ),
+        );
+      }
+
+      // Update for lead person
+      if (lead.leadPerson) {
+        console.log(
+          `⚡️ Triggering real-time performance update for leadPerson (created): ${lead.leadPerson}`,
+        );
+        PerformanceCalculationService.calculateEmployeePerformance(
+          lead.leadPerson,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${lead.leadPerson}:`,
+            err.message,
+          ),
+        );
+      }
+    } catch (perfError) {
+      console.error("Performance update error (non-blocking):", perfError);
+    }
 
     res.status(201).json({
       success: true,
@@ -636,6 +655,49 @@ exports.updateLead = async (req, res) => {
           workflowError,
         );
       }
+    }
+
+    // REAL-TIME PERFORMANCE UPDATE
+    // Calculate performance for assignedTo and leadPerson
+    try {
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const today = new Date();
+
+      // Update for assigned sales person
+      if (lead.assignedTo) {
+        const assignedToId = lead.assignedTo._id || lead.assignedTo;
+        console.log(
+          `⚡️ Triggering real-time performance update for assignedTo: ${assignedToId}`,
+        );
+        PerformanceCalculationService.calculateEmployeePerformance(
+          assignedToId,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${assignedToId}:`,
+            err.message,
+          ),
+        );
+      }
+
+      // Update for lead person
+      if (lead.leadPerson) {
+        const leadPersonId = lead.leadPerson._id || lead.leadPerson;
+        console.log(
+          `⚡️ Triggering real-time performance update for leadPerson: ${leadPersonId}`,
+        );
+        PerformanceCalculationService.calculateEmployeePerformance(
+          leadPersonId,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${leadPersonId}:`,
+            err.message,
+          ),
+        );
+      }
+    } catch (perfError) {
+      console.error("Performance update error (non-blocking):", perfError);
     }
 
     res.status(200).json({

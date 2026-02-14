@@ -238,15 +238,34 @@ const getEmployeePerformance = async (req, res) => {
       "fullName email role",
     );
 
-    // If no summary exists, create a default one
+    // If no summary exists, calculate performance for today to generate one
     if (!summary) {
-      summary = await PerformanceSummary.create({
+      console.log(
+        `No summary for ${employeeId}, triggering initial calculation...`,
+      );
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const today = new Date();
+      await PerformanceCalculationService.calculateEmployeePerformance(
         employeeId,
-        currentRating: 0,
-        ratingTier: "average",
-        stars: 3,
-      });
-      summary = await summary.populate("employeeId", "fullName email role");
+        today,
+      );
+
+      // Fetch again after calculation
+      summary = await PerformanceSummary.findOne({ employeeId }).populate(
+        "employeeId",
+        "fullName email role",
+      );
+
+      // If still no summary (e.g. no KPIs), create empty one with 0 stars
+      if (!summary) {
+        summary = await PerformanceSummary.create({
+          employeeId,
+          currentRating: 0,
+          ratingTier: "N/A",
+          stars: 0,
+        });
+        summary = await summary.populate("employeeId", "fullName email role");
+      }
     }
 
     // Get current active targets

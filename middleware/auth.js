@@ -57,7 +57,17 @@ const protect = async (req, res, next) => {
     req.user = user;
     next();
   } catch (err) {
-    console.error("Auth middleware error:", err);
+    // Only log full error for non-JWT errors or critical issues
+    if (err.name === "JsonWebTokenError") {
+      console.warn(`Auth Warning: Invalid token (${err.message})`);
+      // Optional: Log partial token for debugging if needed
+      // console.warn('Token prefix:', token.substring(0, 10) + '...');
+    } else if (err.name === "TokenExpiredError") {
+      console.warn("Auth Warning: Token expired");
+    } else {
+      console.error("Auth middleware error:", err);
+    }
+
     return res.status(401).json({
       success: false,
       message: "Not authorized to access this route",
