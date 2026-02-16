@@ -290,6 +290,11 @@ exports.createSale = async (req, res) => {
       req.body.salesPerson = req.user.id;
     }
 
+    // Handle empty leadPerson - set to undefined so mongoose doesn't try to cast empty string to ObjectId
+    if (req.body.leadPerson === "" || req.body.leadPerson === "null") {
+      delete req.body.leadPerson;
+    }
+
     // Handle reference sales for Sales Person role
     if (req.user.role === "Sales Person" && req.body.isReference) {
       // For reference sales, set leadPerson to null to show "Reference"
