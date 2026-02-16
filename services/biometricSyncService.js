@@ -217,6 +217,19 @@ const normalizeLogs = (payload) => {
         "device_no",
       ]);
 
+      if (!biometricCode) {
+        console.warn("⚠️ Dropping log: Missing biometric code", log);
+        return null;
+      }
+      if (!eventTime) {
+        console.warn("⚠️ Dropping log: Invalid or missing event time", log);
+        return null;
+      }
+      if (!eventType) {
+        console.warn("⚠️ Dropping log: Invalid event type", log);
+        return null;
+      }
+
       return {
         biometricCode: biometricCode ? String(biometricCode).trim() : null,
         eventTime,
@@ -226,7 +239,7 @@ const normalizeLogs = (payload) => {
         rawPayload: log,
       };
     })
-    .filter((log) => log.biometricCode && log.eventTime && log.eventType);
+    .filter((log) => log !== null);
 };
 
 const normalizeBiometricCode = (value) => {
