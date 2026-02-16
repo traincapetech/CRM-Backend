@@ -79,6 +79,28 @@ const resetSettings = async () => {
       console.log("ℹ️ Employee 00003905 already exists.");
     }
 
+    // 5. Create Employee 3914 for recent webhook test
+    let emp3914 = await Employee.findOne({ biometricCode: "3914" });
+    if (!emp3914) {
+      emp3914 = await Employee.create({
+        fullName: "Biometric Test User 3914",
+        email: "test.biometric.3914@traincapetech.in",
+        department: department._id,
+        role: role._id,
+        phoneNumber: "7777777777",
+        dateOfJoining: new Date(),
+        biometricCode: "3914",
+        biometricEnabled: true,
+        basicSalary: 10000,
+        status: "ACTIVE",
+      });
+      console.log(
+        "✅ Created test employee 'Biometric Test User 3914' with code 3914",
+      );
+    } else {
+      console.log("ℹ️ Employee 3914 already exists.");
+    }
+
     process.exit();
   } catch (error) {
     console.error(`Error: ${error.message}`);
