@@ -135,9 +135,15 @@ const extractEventTime = (log) => {
 
 const normalizeLogs = (payload) => {
   if (!payload) return [];
-  const logs = Array.isArray(payload)
-    ? payload
-    : payload.logs ||
+
+  let logs = [];
+
+  if (Array.isArray(payload)) {
+    logs = payload;
+  } else if (typeof payload === "object") {
+    // Check for wrapper keys first
+    logs =
+      payload.logs ||
       payload.data ||
       payload.events ||
       payload.attendance ||
@@ -147,8 +153,15 @@ const normalizeLogs = (payload) => {
       payload.Data ||
       payload.Events ||
       payload.Attendance ||
-      payload.AttendanceLogs ||
-      [];
+      payload.AttendanceLogs;
+
+    // If no wrapper found, treat the payload itself as a single log entry
+    if (!logs) {
+      logs = [payload];
+    }
+  } else {
+    return [];
+  }
 
   if (!Array.isArray(logs)) return [];
 

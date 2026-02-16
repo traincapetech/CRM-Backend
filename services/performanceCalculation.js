@@ -124,7 +124,9 @@ class PerformanceCalculationService {
         $gte: startOfMonth,
         $lte: endOfMonth,
       },
-      status: "closed", // Only count closed sales
+      status: {
+        $in: ["closed", "Completed", "completed", "Pending", "pending"],
+      }, // Count all relevant sales
     });
 
     const count = sales.length;

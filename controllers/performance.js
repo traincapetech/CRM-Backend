@@ -179,8 +179,15 @@ const assignKPIToEmployees = async (req, res) => {
     }
 
     // Create targets for each employee
-    const targets = [];
+    const assignedTargets = [];
     for (const employeeId of employeeIds) {
+      // Use custom targets if provided in request, otherwise use KPI defaults
+      const targetValues = req.body.targets || {
+        minimum: kpi.thresholds.minimum,
+        target: kpi.thresholds.target,
+        excellent: kpi.thresholds.excellent,
+      };
+
       const targetData = {
         employeeId,
         kpiId,
@@ -189,11 +196,7 @@ const assignKPIToEmployees = async (req, res) => {
           endDate: period.endDate,
           periodKey: period.periodKey, // e.g., "2025-02" for monthly
         },
-        targets: {
-          minimum: kpi.thresholds.minimum,
-          target: kpi.thresholds.target,
-          excellent: kpi.thresholds.excellent,
-        },
+        targets: targetValues,
       };
 
       // Use upsert to avoid duplicates
@@ -210,13 +213,13 @@ const assignKPIToEmployees = async (req, res) => {
         },
       );
 
-      targets.push(target);
+      assignedTargets.push(target);
     }
 
     res.status(201).json({
       success: true,
-      message: `KPI assigned to ${targets.length} employee(s)`,
-      data: targets,
+      message: `KPI assigned to ${assignedTargets.length} employee(s)`,
+      data: assignedTargets,
     });
   } catch (error) {
     console.error("Error assigning KPI:", error);
