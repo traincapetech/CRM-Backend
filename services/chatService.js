@@ -37,6 +37,7 @@ class ChatService {
         recipientId,
         content,
         messageType = "text",
+        attachments = [],
       } = messageData;
 
       // Get or create chat room
@@ -49,6 +50,8 @@ class ChatService {
         recipientId,
         content,
         messageType,
+        attachments,
+        status: "sent",
         timestamp: new Date(),
       });
 
@@ -56,7 +59,8 @@ class ChatService {
 
       // Update chat room with last message info
       await ChatRoom.findByIdAndUpdate(chatRoom._id, {
-        lastMessage: content,
+        lastMessage:
+          content || (attachments.length > 0 ? "📎 Attachment" : "Message"),
         lastMessageTime: new Date(),
         $inc: {
           [`unreadCount.${recipientId === chatRoom.senderId ? "senderId" : "recipientId"}`]: 1,
@@ -77,36 +81,55 @@ class ChatService {
   }
 
   // Get chat messages between two users
-  static async getChatMessages(senderId, recipientId, page = 1, limit = 50) {
+  static async getChatMessages(
+    senderId,
+    recipientId,
+    page = 1,
+    limit = 50,
+    search = "",
+  ) {
     try {
       const chatId = [senderId, recipientId].sort().join("_");
 
-      const messages = await ChatMessage.find({ chatId })
+      const query = { chatId };
+      if (search) {
+        query.content = { $regex: search, $options: "i" };
+      }
+
+      const messages = await ChatMessage.find(query)
         .populate("senderId", "fullName email profilePicture")
         .populate("recipientId", "fullName email profilePicture")
         .sort({ timestamp: 1 })
+        // If searching, we might want to return all matches or paginate differently,
+        // but for now keeping pagination
         .limit(limit * 1)
         .skip((page - 1) * limit);
 
-      // Mark messages as read for the recipient
-      await ChatMessage.updateMany(
-        {
-          chatId,
-          recipientId: senderId,
-          isRead: false,
-        },
-        { isRead: true },
-      );
-
-      // Reset unread count for the recipient
-      await ChatRoom.updateOne(
-        { chatId },
-        {
-          $set: {
-            [`unreadCount.${senderId}`]: 0,
+      // Mark messages as read for the recipient (only if looking at recent messages)
+      if (!search && page === 1) {
+        await ChatMessage.updateMany(
+          {
+            chatId,
+            recipientId: senderId,
+            isRead: false,
           },
-        },
-      );
+          {
+            isRead: true,
+            status: "read",
+            readAt: new Date(),
+          },
+        );
+
+        // Reset unread count for the recipient
+        await ChatRoom.updateOne(
+          { chatId },
+          {
+            $set: {
+              [`unreadCount.${senderId}`]: 0,
+            },
+          },
+        );
+      }
 
       return messages;
     } catch (error) {

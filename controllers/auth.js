@@ -207,8 +207,6 @@ exports.login = async (req, res) => {
       role: user.role,
     });
 
-
-
     // Create token
     const token = user.getSignedJwtToken();
     console.log("Generated token for user:", user._id.toString());
@@ -223,7 +221,7 @@ exports.login = async (req, res) => {
 
     const permissionPayload = await getUserPermissions(user);
 
-     // Check if 2FA is enabled
+    // Check if 2FA is enabled
     if (user.twoFactorEnabled) {
       console.log("🔐 2FA required for user:", user._id.toString());
       return res.status(200).json({

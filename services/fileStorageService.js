@@ -121,6 +121,69 @@ async function uploadEmployeeDoc(file, docType) {
 }
 
 /**
+ * Upload a generic file to R2 or local storage
+ * @param {Object} file - Multer file object
+ * @param {string} folder - Folder name (e.g., 'expenses', 'chat')
+ * @returns {Promise<Object>} Upload result with URL
+ */
+async function uploadFile(file, folder = "uploads") {
+  console.log(`Uploading file: ${folder}, R2 configured: ${isR2Configured}`);
+
+  try {
+    if (isR2Configured) {
+      // Upload to Cloudflare R2
+      const result = await uploadToR2(file, folder);
+
+      return {
+        storage: "cloudflare-r2",
+        fileName: file.filename,
+        url: result.url,
+        key: result.key,
+        uploadedAt: new Date(),
+        mimetype: file.mimetype,
+        size: file.size,
+        originalName: file.originalname,
+      };
+    } else {
+      // Fallback to local storage
+      // Determine destination directory based on folder
+      let destDir = UPLOAD_PATHS.TMP; // Default
+      if (folder === "employees") destDir = UPLOAD_PATHS.EMPLOYEES;
+      else if (folder === "documents") destDir = UPLOAD_PATHS.DOCUMENTS;
+      else if (folder === "incentives") destDir = UPLOAD_PATHS.INCENTIVES;
+      else {
+        // Create generic folder if not mapped
+        destDir = path.join(__dirname, "..", "uploads", folder);
+      }
+
+      const destPath = path.join(destDir, file.filename);
+
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.copyFileSync(file.path, destPath);
+
+      try {
+        fs.unlinkSync(file.path);
+      } catch {}
+
+      const localUrl = `/uploads/${folder}/${file.filename}`;
+
+      return {
+        storage: "local",
+        fileName: file.filename,
+        url: localUrl,
+        uploadedAt: new Date(),
+        mimetype: file.mimetype,
+        size: file.size,
+        originalName: file.originalname,
+      };
+    }
+  } catch (error) {
+    console.error("Upload error:", error.message);
+    throw new Error(`Failed to upload file: ${error.message}`);
+  }
+}
+
+/**
  * Delete an employee document from R2 or local storage
  * @param {Object} info - Document info object with storage type and url/key
  * @returns {Promise<boolean>} Success status
@@ -154,6 +217,8 @@ async function deleteEmployeeDoc(info) {
 module.exports = {
   uploadMiddleware,
   uploadEmployeeDoc,
+  uploadFile,
+  deleteEmployeeDoc,
   deleteEmployeeDoc,
   UPLOAD_PATHS,
   isR2Configured,

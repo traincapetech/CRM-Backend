@@ -1,18 +1,22 @@
 const ChatService = require("../services/chatService");
 const User = require("../models/User");
+const { uploadFile } = require("../services/fileStorageService");
 
 // @desc    Send a message
 // @route   POST /api/chat/messages
 // @access  Private
 const sendMessage = async (req, res) => {
   try {
-    const { recipientId, content, messageType } = req.body;
+    const { recipientId, content, messageType, attachments } = req.body;
     const senderId = req.user._id;
 
-    if (!recipientId || !content) {
+    if (
+      !recipientId ||
+      (!content && (!attachments || attachments.length === 0))
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Recipient ID and content are required",
+        message: "Recipient ID and content (or attachments) are required",
       });
     }
 
@@ -21,6 +25,7 @@ const sendMessage = async (req, res) => {
       recipientId,
       content,
       messageType,
+      attachments,
     });
 
     // Emit the message via Socket.IO
@@ -34,7 +39,9 @@ const sendMessage = async (req, res) => {
         recipientId: message.recipientId,
         content: message.content,
         messageType: message.messageType,
+        attachments: message.attachments,
         timestamp: message.timestamp,
+        status: message.status,
         isRead: message.isRead,
       });
 
@@ -42,7 +49,7 @@ const sendMessage = async (req, res) => {
       io.to(`user-${recipientId}`).emit("messageNotification", {
         senderId: message.senderId,
         senderName: message.senderId.fullName,
-        content: message.content,
+        content: message.content || "📎 Attachment",
         timestamp: message.timestamp,
       });
     }
@@ -67,13 +74,14 @@ const getChatMessages = async (req, res) => {
   try {
     const { recipientId } = req.params;
     const senderId = req.user._id;
-    const { page = 1, limit = 50 } = req.query;
+    const { page = 1, limit = 50, search = "" } = req.query;
 
     const messages = await ChatService.getChatMessages(
       senderId,
       recipientId,
       parseInt(page),
       parseInt(limit),
+      search,
     );
 
     res.status(200).json({
@@ -257,4 +265,33 @@ module.exports = {
   getAllUsersForChat,
   updateChatStatus,
   markMessagesAsRead,
+  uploadAttachment: async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "No file uploaded",
+        });
+      }
+
+      // Use fileStorageService to handle upload (R2 or Local)
+      const uploadResult = await uploadFile(req.file, "chat");
+
+      res.status(200).json({
+        success: true,
+        data: {
+          url: uploadResult.url,
+          fileName: req.file.originalname,
+          fileType: req.file.mimetype,
+          fileSize: req.file.size,
+        },
+      });
+    } catch (error) {
+      console.error("Error uploading chat attachment:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error uploading file",
+      });
+    }
+  },
 };

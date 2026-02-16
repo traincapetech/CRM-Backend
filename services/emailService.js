@@ -343,8 +343,96 @@ const sendPIPNotification = async (employee, pip, manager) => {
   }
 };
 
+// Ticket Created Email (To User)
+const sendTicketCreatedEmail = async (ticket, user) => {
+  // Implementation for sending ticket creation confirmation
+  // Note: detailed implementation omitted for brevity but logic is similar to others
+  // Using generic sender if not specified
+  const senderEmail = process.env.SUPPORT_EMAIL || process.env.EMAIL_USER;
+  const transporter = createTransporter(senderEmail);
+
+  const mailOptions = {
+    from: `"Traincape Support" <${senderEmail}>`,
+    to: user.email,
+    subject: `[Ticket #${ticket._id}] received: ${ticket.title}`,
+    html: `
+            <div style="font-family: Arial, sans-serif; padding: 20px;">
+                <h2>Ticket Received</h2>
+                <p>Hello ${user.fullName},</p>
+                <p>We have received your ticket regarding "<strong>${ticket.title}</strong>".</p>
+                <p>Ticket ID: ${ticket._id}</p>
+                <p>Status: ${ticket.status}</p>
+                <p>Priority: ${ticket.priority}</p>
+                <p>Our team will review it shortly.</p>
+            </div>
+        `,
+  };
+  try {
+    await transporter.sendMail(mailOptions);
+  } catch (error) {
+    console.error("Error sending ticket created email:", error);
+  }
+};
+
+// Ticket Assigned Email (To Assignee)
+const sendTicketAssignedEmail = async (ticket, assignee, assigner) => {
+  const senderEmail = assigner?.email || process.env.EMAIL_USER;
+  const transporter = createTransporter(senderEmail);
+
+  const mailOptions = {
+    from: `"Traincape CRM" <${senderEmail}>`,
+    to: assignee.email,
+    subject: `New Ticket Assigned: ${ticket.title}`,
+    html: `
+            <div style="font-family: Arial, sans-serif; padding: 20px;">
+                <h2>New Ticket Assignment</h2>
+                <p>Hello ${assignee.fullName},</p>
+                <p>You have been assigned a new ticket.</p>
+                <p><strong>Title:</strong> ${ticket.title}</p>
+                <p><strong>Priority:</strong> ${ticket.priority}</p>
+                <p><strong>Due Date:</strong> ${ticket.dueDate ? new Date(ticket.dueDate).toLocaleDateString() : "N/A"}</p>
+                <p>Please check the dashboard for details.</p>
+            </div>
+        `,
+  };
+  try {
+    await transporter.sendMail(mailOptions);
+  } catch (error) {
+    console.error("Error sending ticket assigned email:", error);
+  }
+};
+
+// Ticket Status Update Email (To User)
+const sendTicketStatusUpdateEmail = async (ticket, user) => {
+  const senderEmail = process.env.SUPPORT_EMAIL || process.env.EMAIL_USER;
+  const transporter = createTransporter(senderEmail);
+
+  const mailOptions = {
+    from: `"Traincape Support" <${senderEmail}>`,
+    to: user.email,
+    subject: `[Ticket #${ticket._id}] Status Update: ${ticket.status}`,
+    html: `
+            <div style="font-family: Arial, sans-serif; padding: 20px;">
+                <h2>Ticket Updated</h2>
+                <p>Hello ${user.fullName},</p>
+                <p>Your ticket "<strong>${ticket.title}</strong>" has been updated.</p>
+                <p><strong>New Status:</strong> ${ticket.status}</p>
+                <p>Log in to view the latest updates.</p>
+            </div>
+        `,
+  };
+  try {
+    await transporter.sendMail(mailOptions);
+  } catch (error) {
+    console.error("Error sending ticket status email:", error);
+  }
+};
+
 module.exports = {
   sendPaymentConfirmationEmail,
   sendServiceDeliveryEmail,
   sendPIPNotification,
+  sendTicketCreatedEmail,
+  sendTicketAssignedEmail,
+  sendTicketStatusUpdateEmail,
 };
