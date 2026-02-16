@@ -103,11 +103,13 @@ router.get(
       const PerformanceSummary = require("../models/PerformanceSummary");
 
       const summaries = await PerformanceSummary.find({})
-        .populate("employeeId", "fullName email role isActive")
+        .populate("employeeId", "fullName email role active")
         .sort({ currentRating: -1 });
 
-      // Filter out summaries where employeeId might be null (deleted users)
-      const validSummaries = summaries.filter((s) => s.employeeId);
+      // Filter out summaries where employeeId might be null (deleted users) or inactive
+      const validSummaries = summaries.filter(
+        (s) => s.employeeId && s.employeeId.active !== false,
+      );
 
       res.status(200).json({
         success: true,

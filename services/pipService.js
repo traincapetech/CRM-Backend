@@ -19,8 +19,12 @@ class PIPService {
       // Get performance summary
       const summary = await PerformanceSummary.findOne({ employeeId });
       if (!summary) {
+        console.log(`Checking ${employeeId}: No summary found`);
         return null;
       }
+      console.log(
+        `Checking ${employeeId}: 30-day avg = ${summary.averages?.last30Days}, isPIP = ${summary.isPIP}`,
+      );
 
       // Already on PIP? Skip
       if (summary.isPIP) {
@@ -103,7 +107,7 @@ class PIPService {
    */
   static async triggerPIP(employeeId, triggerInfo) {
     try {
-      const employee = await User.findById(employeeId).populate("managerId");
+      const employee = await User.findById(employeeId);
       if (!employee) {
         throw new Error("Employee not found");
       }
@@ -160,8 +164,20 @@ class PIPService {
       console.log(`   Duration: ${duration} days`);
       console.log(`   Avg Score: ${triggerInfo.avgScore.toFixed(1)}/100`);
 
-      // TODO: Send notification emails
-      // await EmailService.sendPIPNotification(employee, pip, manager);
+      // Send notification email
+      const EmailService = require("./emailService");
+      try {
+        await EmailService.sendPIPNotification(
+          employee,
+          pip,
+          employee.managerId,
+        );
+      } catch (emailError) {
+        console.error(
+          "⚠️ Failed to send PIP notification email:",
+          emailError.message,
+        );
+      }
 
       return pip;
     } catch (error) {

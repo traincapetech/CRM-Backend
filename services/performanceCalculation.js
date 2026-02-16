@@ -128,10 +128,7 @@ class PerformanceCalculationService {
     });
 
     const count = sales.length;
-    const revenue = sales.reduce(
-      (sum, sale) => sum + (sale.finalAmount || 0),
-      0,
-    );
+    const revenue = sales.reduce((sum, sale) => sum + (sale.totalCost || 0), 0);
 
     return { count, revenue };
   }

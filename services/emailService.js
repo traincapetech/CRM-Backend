@@ -1,77 +1,89 @@
-const nodemailer = require('nodemailer');
+const nodemailer = require("nodemailer");
 
 // Email provider configurations
 const getEmailConfig = (email) => {
-  const domain = email.split('@')[1].toLowerCase();
-  
+  const domain = email.split("@")[1].toLowerCase();
+
   // Hostinger email configuration
-  if (domain === 'traincapetech.in' || domain.includes('hostinger')) {
+  if (domain === "traincapetech.in" || domain.includes("hostinger")) {
     return {
-      host: 'smtp.hostinger.com',
+      host: "smtp.hostinger.com",
       port: 587,
       secure: false, // true for 465, false for other ports
       auth: {
         user: email,
-        pass: process.env.HOSTINGER_EMAIL_PASS || process.env.EMAIL_PASS
-      }
+        pass: process.env.HOSTINGER_EMAIL_PASS || process.env.EMAIL_PASS,
+      },
     };
   }
-  
+
   // Gmail configuration
-  if (domain === 'gmail.com') {
+  if (domain === "gmail.com") {
     return {
-      service: 'gmail',
+      service: "gmail",
       auth: {
         user: email,
-        pass: process.env.GMAIL_APP_PASS || process.env.EMAIL_PASS
-      }
+        pass: process.env.GMAIL_APP_PASS || process.env.EMAIL_PASS,
+      },
     };
   }
-  
+
   // Outlook/Hotmail configuration
-  if (domain === 'outlook.com' || domain === 'hotmail.com' || domain === 'live.com') {
+  if (
+    domain === "outlook.com" ||
+    domain === "hotmail.com" ||
+    domain === "live.com"
+  ) {
     return {
-      service: 'hotmail',
+      service: "hotmail",
       auth: {
         user: email,
-        pass: process.env.OUTLOOK_EMAIL_PASS || process.env.EMAIL_PASS
-      }
+        pass: process.env.OUTLOOK_EMAIL_PASS || process.env.EMAIL_PASS,
+      },
     };
   }
-  
+
   // Yahoo configuration
-  if (domain === 'yahoo.com' || domain === 'yahoo.in') {
+  if (domain === "yahoo.com" || domain === "yahoo.in") {
     return {
-      service: 'yahoo',
+      service: "yahoo",
       auth: {
         user: email,
-        pass: process.env.YAHOO_EMAIL_PASS || process.env.EMAIL_PASS
-      }
+        pass: process.env.YAHOO_EMAIL_PASS || process.env.EMAIL_PASS,
+      },
     };
   }
-  
+
   // Generic SMTP configuration (fallback)
   return {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    host: process.env.SMTP_HOST || "smtp.gmail.com",
     port: process.env.SMTP_PORT || 587,
     secure: false,
     auth: {
       user: email,
-      pass: process.env.EMAIL_PASS
-    }
+      pass: process.env.EMAIL_PASS,
+    },
   };
 };
 
 // Create transporter based on sender email
 const createTransporter = (senderEmail) => {
   const config = getEmailConfig(senderEmail);
-  return nodemailer.createTransporter(config);
+  return nodemailer.createTransport(config);
 };
 
 // Payment confirmation email template
 const getPaymentConfirmationTemplate = (data) => {
-  const { customerName, tokenAmount, currency, course, totalCost, pendingAmount, paymentDate } = data;
-  
+  const {
+    customerName,
+    tokenAmount,
+    currency,
+    course,
+    totalCost,
+    pendingAmount,
+    paymentDate,
+  } = data;
+
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
       <h2 style="color: #2563eb; text-align: center;">Payment Confirmation</h2>
@@ -106,7 +118,7 @@ const getPaymentConfirmationTemplate = (data) => {
 // Service delivery email template
 const getServiceDeliveryTemplate = (data) => {
   const { customerName, totalCost, currency, course, paymentDate } = data;
-  
+
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
       <h2 style="color: #16a34a; text-align: center;">Service Delivery Confirmation</h2>
@@ -141,55 +153,58 @@ const sendPaymentConfirmationEmail = async (saleData, salesPersonEmail) => {
   try {
     // Validate inputs
     if (!salesPersonEmail) {
-      console.log('❌ Sales person email not available');
-      return { success: false, message: 'Sales person email not available' };
+      console.log("❌ Sales person email not available");
+      return { success: false, message: "Sales person email not available" };
     }
-    
+
     if (!saleData.email) {
-      console.log('❌ Customer email unavailable for:', saleData.customerName);
-      return { success: false, message: 'Customer email not available' };
+      console.log("❌ Customer email unavailable for:", saleData.customerName);
+      return { success: false, message: "Customer email not available" };
     }
-    
+
     const transporter = createTransporter(salesPersonEmail);
-    
-    const pendingAmount = (saleData.totalCost || 0) - (saleData.tokenAmount || 0);
-    const paymentDate = new Date(saleData.date || Date.now()).toLocaleDateString();
-    
+
+    const pendingAmount =
+      (saleData.totalCost || 0) - (saleData.tokenAmount || 0);
+    const paymentDate = new Date(
+      saleData.date || Date.now(),
+    ).toLocaleDateString();
+
     const emailData = {
       customerName: saleData.customerName,
       tokenAmount: saleData.tokenAmount || 0,
-      currency: saleData.totalCostCurrency || saleData.currency || 'USD',
+      currency: saleData.totalCostCurrency || saleData.currency || "USD",
       course: saleData.course,
       totalCost: saleData.totalCost || 0,
       pendingAmount: pendingAmount,
-      paymentDate: paymentDate
+      paymentDate: paymentDate,
     };
-    
+
     const mailOptions = {
       from: `"Traincape Technology" <${salesPersonEmail}>`,
       to: saleData.email,
       cc: salesPersonEmail, // CC the sales person
       subject: `Payment Confirmation - ${saleData.course} - ${saleData.customerName}`,
-      html: getPaymentConfirmationTemplate(emailData)
+      html: getPaymentConfirmationTemplate(emailData),
     };
-    
+
     const result = await transporter.sendMail(mailOptions);
-    console.log('✅ Payment confirmation email sent:', result.messageId);
-    
+    console.log("✅ Payment confirmation email sent:", result.messageId);
+
     return { success: true, messageId: result.messageId };
   } catch (error) {
-    console.error('❌ Error sending payment confirmation email:', error);
-    
+    console.error("❌ Error sending payment confirmation email:", error);
+
     // Provide specific error messages based on error type
-    let errorMessage = 'Failed to send payment confirmation email';
-    if (error.code === 'EAUTH') {
-      errorMessage = 'Email authentication failed - check email credentials';
-    } else if (error.code === 'ECONNECTION') {
-      errorMessage = 'Email server connection failed';
+    let errorMessage = "Failed to send payment confirmation email";
+    if (error.code === "EAUTH") {
+      errorMessage = "Email authentication failed - check email credentials";
+    } else if (error.code === "ECONNECTION") {
+      errorMessage = "Email server connection failed";
     } else if (error.responseCode === 535) {
-      errorMessage = 'Invalid email credentials';
+      errorMessage = "Invalid email credentials";
     }
-    
+
     return { success: false, error: errorMessage };
   }
 };
@@ -199,57 +214,137 @@ const sendServiceDeliveryEmail = async (saleData, salesPersonEmail) => {
   try {
     // Validate inputs
     if (!salesPersonEmail) {
-      console.log('❌ Sales person email not available');
-      return { success: false, message: 'Sales person email not available' };
+      console.log("❌ Sales person email not available");
+      return { success: false, message: "Sales person email not available" };
     }
-    
+
     if (!saleData.email) {
-      console.log('❌ Customer email unavailable for:', saleData.customerName);
-      return { success: false, message: 'Customer email not available' };
+      console.log("❌ Customer email unavailable for:", saleData.customerName);
+      return { success: false, message: "Customer email not available" };
     }
-    
+
     const transporter = createTransporter(salesPersonEmail);
-    
-    const paymentDate = new Date(saleData.date || Date.now()).toLocaleDateString();
-    
+
+    const paymentDate = new Date(
+      saleData.date || Date.now(),
+    ).toLocaleDateString();
+
     const emailData = {
       customerName: saleData.customerName,
       totalCost: saleData.totalCost || 0,
-      currency: saleData.totalCostCurrency || saleData.currency || 'USD',
+      currency: saleData.totalCostCurrency || saleData.currency || "USD",
       course: saleData.course,
-      paymentDate: paymentDate
+      paymentDate: paymentDate,
     };
-    
+
     const mailOptions = {
       from: `"Traincape Technology" <${salesPersonEmail}>`,
       to: saleData.email,
       cc: salesPersonEmail, // CC the sales person
       subject: `Service Delivery Confirmation - ${saleData.course} - ${saleData.customerName}`,
-      html: getServiceDeliveryTemplate(emailData)
+      html: getServiceDeliveryTemplate(emailData),
     };
-    
+
     const result = await transporter.sendMail(mailOptions);
-    console.log('✅ Service delivery email sent:', result.messageId);
-    
+    console.log("✅ Service delivery email sent:", result.messageId);
+
     return { success: true, messageId: result.messageId };
   } catch (error) {
-    console.error('❌ Error sending service delivery email:', error);
-    
+    console.error("❌ Error sending service delivery email:", error);
+
     // Provide specific error messages based on error type
-    let errorMessage = 'Failed to send service delivery email';
-    if (error.code === 'EAUTH') {
-      errorMessage = 'Email authentication failed - check email credentials';
-    } else if (error.code === 'ECONNECTION') {
-      errorMessage = 'Email server connection failed';
+    let errorMessage = "Failed to send service delivery email";
+    if (error.code === "EAUTH") {
+      errorMessage = "Email authentication failed - check email credentials";
+    } else if (error.code === "ECONNECTION") {
+      errorMessage = "Email server connection failed";
     } else if (error.responseCode === 535) {
-      errorMessage = 'Invalid email credentials';
+      errorMessage = "Invalid email credentials";
     }
-    
+
     return { success: false, error: errorMessage };
+  }
+};
+
+// Send PIP Notification Email
+const sendPIPNotification = async (employee, pip, manager) => {
+  try {
+    if (!employee.email) {
+      console.log("❌ Employee email not available for PIP notification");
+      return { success: false, message: "Employee email not available" };
+    }
+
+    // Use manager's email as sender if available, otherwise use default
+    const senderEmail =
+      manager?.email ||
+      process.env.HR_EMAIL ||
+      process.env.ADMIN_EMAIL ||
+      process.env.EMAIL_USER;
+
+    if (!senderEmail) {
+      console.warn(
+        "⚠️ No sender email configure for PIP notification. Using noreply.",
+      );
+    }
+
+    const transporter = createTransporter(
+      senderEmail || "noreply@traincapetech.in",
+    );
+
+    const endDate = new Date(pip.endDate).toLocaleDateString();
+
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+        <h2 style="color: #dc2626; text-align: center;">Performance Improvement Plan Initiated</h2>
+        
+        <p>Dear ${employee.fullName},</p>
+        
+        <p>This email is to inform you that a <strong>Performance Improvement Plan (PIP)</strong> has been initiated for you, effective immediately.</p>
+        
+        <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 15px; margin: 20px 0;">
+          <p style="margin: 0; color: #991b1b;"><strong>Reason:</strong> ${pip.triggerReason}</p>
+          <p style="margin: 10px 0 0 0; color: #991b1b;"><strong>Duration:</strong> ${pip.duration} days (Ends: ${endDate})</p>
+        </div>
+
+        <p>This plan is designed to help you get back on track. Your manager will work with you to set specific goals and schedule weekly reviews.</p>
+        
+        <p><strong>Next Steps:</strong></p>
+        <ul>
+          <li>Review the PIP details in your dashboard.</li>
+          <li>Schedule a meeting with your manager (${manager?.fullName || "Manager"}) to discuss goals.</li>
+          <li>Commit to the weekly review process.</li>
+        </ul>
+        
+        <p>We believe in your potential and want to see you succeed. Please treat this as an opportunity to focus on your professional growth.</p>
+        
+        <hr style="margin: 20px 0;">
+        <p style="font-size: 12px; color: #666;">
+          This is an automated message from the Performance Management System.<br>
+          PIP ID: ${pip._id}
+        </p>
+      </div>
+    `;
+
+    const mailOptions = {
+      from: `"Performance Management" <${senderEmail}>`,
+      to: employee.email,
+      cc: manager?.email, // CC the manager
+      subject: `Action Required: Performance Improvement Plan Initiated`,
+      html: emailHtml,
+    };
+
+    const result = await transporter.sendMail(mailOptions);
+    console.log("✅ PIP notification email sent:", result.messageId);
+
+    return { success: true, messageId: result.messageId };
+  } catch (error) {
+    console.error("❌ Error sending PIP notification email:", error);
+    return { success: false, error: error.message };
   }
 };
 
 module.exports = {
   sendPaymentConfirmationEmail,
-  sendServiceDeliveryEmail
-}; 
+  sendServiceDeliveryEmail,
+  sendPIPNotification,
+};

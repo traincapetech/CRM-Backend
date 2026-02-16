@@ -140,13 +140,16 @@ const deleteKPITemplate = async (req, res) => {
       });
     }
 
-    // Instead of hard delete, soft delete by setting isActive to false
-    kpi.isActive = false;
-    await kpi.save();
+    // Instead of hard delete, perform hard delete and clean up targets
+    await KPIDefinition.findByIdAndDelete(req.params.id);
+
+    // Also delete associated targets to prevent ghost data
+    const EmployeeTarget = require("../models/EmployeeTarget");
+    await EmployeeTarget.deleteMany({ kpiId: req.params.id });
 
     res.status(200).json({
       success: true,
-      message: "KPI template deactivated successfully",
+      message: "KPI template deleted successfully",
     });
   } catch (error) {
     console.error("Error deleting KPI template:", error);
@@ -277,9 +280,12 @@ const getEmployeePerformance = async (req, res) => {
     // Deduplicate: Keep only the latest target per KPI
     const uniqueTargetsMap = new Map();
     rawTargets.forEach((t) => {
-      const kpiId = t.kpiId._id.toString();
-      if (!uniqueTargetsMap.has(kpiId)) {
-        uniqueTargetsMap.set(kpiId, t);
+      // Filter out deleted KPIs or KPIs that don't match role
+      if (t.kpiId && t.kpiId.role === summary.employeeId.role) {
+        const kpiId = t.kpiId._id.toString();
+        if (!uniqueTargetsMap.has(kpiId)) {
+          uniqueTargetsMap.set(kpiId, t);
+        }
       }
     });
     const targets = Array.from(uniqueTargetsMap.values());
