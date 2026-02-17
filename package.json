@@ -43,6 +43,7 @@
     "stripe": "^18.3.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
+    "ua-parser-js": "^2.0.9",
     "xss-clean": "^0.1.4"
   },
   "devDependencies": {

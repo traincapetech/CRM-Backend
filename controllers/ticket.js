@@ -99,6 +99,7 @@ exports.createTicket = async (req, res) => {
 };
 
 // 2. Get All Tickets (Role-Based)
+// 2. Get All Tickets (Role-Based)
 exports.getAllTickets = async (req, res) => {
   try {
     let filter = {};
@@ -116,7 +117,16 @@ exports.getAllTickets = async (req, res) => {
       const userDeptId = deptController.getDepartmentFromRole(userRole);
 
       if (userDeptId) {
-        filter.assignedDept = userDeptId;
+        // Fix: Manager sees tickets assigned to their dept OR (unassigned AND preferred for their dept)
+        filter = {
+          $or: [
+            { assignedDept: userDeptId },
+            { assignedDept: null, preferredDept: userDeptId },
+            // Also keep tickets they raised or are assigned to personally (just in case)
+            { assignedTo: req.user._id },
+            { raisedBy: req.user._id },
+          ],
+        };
       } else {
         // If no department match, show tickets assigned to or raised by them
         filter = {
@@ -130,6 +140,12 @@ exports.getAllTickets = async (req, res) => {
         $or: [{ assignedTo: req.user._id }, { raisedBy: req.user._id }],
       };
     }
+
+    // DEBUG: Log filter to investigate why IT Employee sees all tickets
+    console.log(
+      `getAllTickets - Role: ${userRole}, User: ${req.user.fullName} (${req.user._id})`,
+    );
+    console.log(`Filter applied:`, JSON.stringify(filter));
 
     const tickets = await Ticket.find(filter)
       .populate("raisedBy", "fullName name email role")

@@ -19,6 +19,8 @@ const {
   resetPassword,
   createUserWithDocuments,
   updateUserWithDocuments,
+  getLoginHistory,
+  getActiveSessions,
 } = require("../controllers/auth");
 
 // 2FA Controller
@@ -30,6 +32,8 @@ const {
   get2FAStatus,
   regenerateBackupCodes,
 } = require("../controllers/twoFactor");
+
+const { getSettings, updateSettings } = require("../controllers/settings");
 
 // Debug middleware
 const debugMiddleware = (req, res, next) => {
@@ -75,6 +79,12 @@ router.route("/2fa/backup-codes").post(protect, regenerateBackupCodes);
 
 // Protected routes
 router.route("/me").get(protect, getMe).put(protect, updateProfile);
+router
+  .route("/settings")
+  .get(protect, getSettings)
+  .put(protect, updateSettings);
+router.route("/login-history").get(protect, getLoginHistory);
+router.route("/sessions").get(protect, getActiveSessions);
 
 router
   .route("/profile-picture")

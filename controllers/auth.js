@@ -1,4 +1,5 @@
 const User = require("../models/User");
+const LoginHistory = require("../models/LoginHistory"); // Added LoginHistory model
 const bcrypt = require("bcrypt");
 const fs = require("fs"); // Added for file cleanup
 const path = require("path"); // Added for path.join
@@ -6,6 +7,33 @@ const { UPLOAD_PATHS } = require("../config/storage");
 const { sendEmail } = require("../config/nodemailer");
 const asyncHandler = require("../middleware/async"); // Added for asyncHandler
 const { getUserPermissions } = require("../utils/rbac");
+const uaparser = require("ua-parser-js"); // You might need to install this, or just do basic parsing
+
+// Helper to record login history
+const recordLoginHistory = async (
+  req,
+  userId,
+  status,
+  failureReason = null,
+) => {
+  try {
+    const ua = uaparser(req.headers["user-agent"]);
+
+    await LoginHistory.create({
+      userId,
+      ipAddress: req.ip || req.connection.remoteAddress,
+      userAgent: req.headers["user-agent"],
+      deviceType: ua.device.type || "Desktop",
+      browser:
+        `${ua.browser.name || "Unknown"} ${ua.browser.version || ""}`.trim(),
+      os: `${ua.os.name || "Unknown"} ${ua.os.version || ""}`.trim(),
+      status,
+      failureReason,
+    });
+  } catch (error) {
+    console.error("Error recording login history:", error);
+  }
+};
 
 // @desc    Register user
 // @route   POST /api/auth/register
@@ -116,6 +144,15 @@ exports.login = async (req, res) => {
       }).select("+password -__v");
     }
 
+    if (!user) {
+      // Record failed attempt if user not found (optional, but good for security)
+      // Note: Cannot record userId if user doesn't exist.
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
+
     console.log(
       "Found user:",
       user
@@ -128,15 +165,9 @@ exports.login = async (req, res) => {
         : "Not found",
     );
 
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-    }
-
     // Check if user account is active
     if (user.active === false) {
+      await recordLoginHistory(req, user._id, "FAILED", "Account Deactivated");
       return res.status(403).json({
         success: false,
         message:
@@ -160,6 +191,13 @@ exports.login = async (req, res) => {
           user.active = false;
           await user.save();
 
+          await recordLoginHistory(
+            req,
+            user._id,
+            "FAILED",
+            "Internship Expired",
+          );
+
           return res.status(403).json({
             success: false,
             message:
@@ -170,24 +208,7 @@ exports.login = async (req, res) => {
     }
 
     // Check if password matches
-    console.log("=== PASSWORD VERIFICATION ===");
-    console.log("User ID:", user._id.toString());
-    console.log("Email:", user.email);
-    console.log("Role:", user.role);
-    console.log("Active:", user.active);
-    console.log(
-      "Password provided:",
-      password ? "Yes (length: " + password.length + ")" : "No",
-    );
-    console.log("Stored password hash exists:", !!user.password);
-    console.log(
-      "Stored password hash length:",
-      user.password ? user.password.length : 0,
-    );
-
     const isMatch = await user.matchPassword(password);
-    console.log("Password match result:", isMatch);
-    console.log("=== END PASSWORD VERIFICATION ===");
 
     if (!isMatch) {
       console.log("❌ LOGIN FAILED: Password mismatch for user:", {
@@ -195,6 +216,7 @@ exports.login = async (req, res) => {
         email: user.email,
         role: user.role,
       });
+      await recordLoginHistory(req, user._id, "FAILED", "Invalid Password");
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
@@ -206,6 +228,9 @@ exports.login = async (req, res) => {
       email: user.email,
       role: user.role,
     });
+
+    // Record success
+    await recordLoginHistory(req, user._id, "SUCCESS");
 
     // Create token
     const token = user.getSignedJwtToken();
@@ -281,6 +306,106 @@ exports.login = async (req, res) => {
         process.env.NODE_ENV === "development"
           ? error.message
           : "Internal server error",
+    });
+  }
+};
+
+// @desc    Get login history for current user
+// @route   GET /api/auth/login-history
+// @access  Private
+exports.getLoginHistory = async (req, res) => {
+  try {
+    const history = await LoginHistory.find({ userId: req.user.id })
+      .sort({ timestamp: -1 })
+      .limit(20);
+
+    res.status(200).json({
+      success: true,
+      count: history.length,
+      data: history,
+    });
+  } catch (err) {
+    console.error("Error fetching login history:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch login history",
+    });
+  }
+};
+
+// @desc    Get active sessions
+// @route   GET /api/auth/sessions
+// @access  Private
+exports.getActiveSessions = async (req, res) => {
+  try {
+    // For now, since we don't store session tokens in DB,
+    // we'll return the current session (from request) and recent successful logins
+    // This is a "mock" active sessions list based on recent history
+    // In a full implementation, you'd track tokens in a DB collection.
+
+    // Get recent distinct successful logins (last 5)
+    // This is an approximation
+    const recentLogins = await LoginHistory.aggregate([
+      { $match: { userId: req.user._id, status: "SUCCESS" } },
+      { $sort: { timestamp: -1 } },
+      {
+        $group: {
+          _id: "$userAgent",
+          latestLogin: { $first: "$$ROOT" },
+        },
+      },
+      { $limit: 3 },
+    ]);
+
+    const ua = uaparser(req.headers["user-agent"]);
+    const currentSession = {
+      id: "current",
+      deviceType: ua.device.type || "Desktop",
+      browser:
+        `${ua.browser.name || "Unknown"} ${ua.browser.version || ""}`.trim(),
+      os: `${ua.os.name || "Unknown"} ${ua.os.version || ""}`.trim(),
+      ipAddress: req.ip || req.connection.remoteAddress,
+      lastActive: new Date(),
+      isCurrent: true,
+    };
+
+    const formattedSessions = recentLogins
+      .map((item) => {
+        const login = item.latestLogin;
+        // Skip if it looks like the current session (simple check)
+        if (
+          login.userAgent === req.headers["user-agent"] &&
+          (login.ipAddress === req.ip ||
+            login.ipAddress === req.connection.remoteAddress)
+        ) {
+          return null; // Skip duplicate of current
+        }
+
+        return {
+          id: login._id,
+          deviceType: login.deviceType,
+          browser: login.browser,
+          os: login.os,
+          ipAddress: login.ipAddress,
+          lastActive: login.timestamp,
+          isCurrent: false,
+        };
+      })
+      .filter(Boolean); // Remove nulls
+
+    // Prepend current session
+    const sessions = [currentSession, ...formattedSessions];
+
+    res.status(200).json({
+      success: true,
+      count: sessions.length,
+      data: sessions,
+    });
+  } catch (err) {
+    console.error("Error fetching active sessions:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch active sessions",
     });
   }
 };
