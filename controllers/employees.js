@@ -520,7 +520,11 @@ exports.updateEmployee = async (req, res) => {
     }
 
     // Check authorization - Allow only HR, Admin, and Manager to update employees
-    if (!["HR", "Admin", "Manager"].includes(req.user.role)) {
+    // Also allow users to update their own profile
+    if (
+      !["HR", "Admin", "Manager"].includes(req.user.role) &&
+      employee.userId?.toString() !== req.user.id
+    ) {
       return res.status(403).json({
         success: false,
         message: "Not authorized to update employee profiles",
@@ -823,7 +827,11 @@ exports.uploadDocuments = async (req, res) => {
     }
 
     // Check authorization: Only IT Manager/Admin/Manager/HR can upload (employees cannot upload even their own)
-    if (!["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role)) {
+    // ALLOW employees to upload their own documents now
+    if (
+      !["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role) &&
+      employee.userId?.toString() !== req.user.id
+    ) {
       return res.status(403).json({
         success: false,
         message:
@@ -955,7 +963,11 @@ exports.deleteDocument = async (req, res) => {
     }
 
     // Check authorization: IT Manager/Admin/Manager can delete, employees cannot delete (even their own)
-    if (!["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role)) {
+    // ALLOW employees to delete their own documents now
+    if (
+      !["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role) &&
+      employee.userId?.toString() !== req.user.id
+    ) {
       return res.status(403).json({
         success: false,
         message: "Not authorized to delete documents",
