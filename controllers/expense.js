@@ -211,7 +211,7 @@ exports.deleteExpense = async (req, res) => {
       }
     }
 
-    await expense.remove(); // or findByIdAndDelete
+    await expense.deleteOne();
 
     res.status(200).json({
       success: true,
