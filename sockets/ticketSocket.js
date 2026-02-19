@@ -86,10 +86,11 @@ const ticketSocketHandler = (io, socket) => {
    * Typing indicator
    */
   socket.on("typing", ({ ticketId }) => {
-    socket.to(`ticket_${ticketId}`).emit("user_typing", {
-      userId: socket.user._id,
-      name: socket.user.name,
-    });
+    // socket.to(`ticket_${ticketId}`).emit("user_typing", {
+    //   userId: socket.user._id,
+    //   name: socket.user.name,
+    // });
+    console.log(socket)
   });
 
   /**

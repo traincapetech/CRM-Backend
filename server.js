@@ -316,94 +316,9 @@ const io = socketIo(server, {
 io.on("connection", (socket) => {
   console.log("New client connected:", socket.id);
 
-  // Check if this is a guest connection
-  const isGuest = socket.handshake.query.isGuest === "true";
-  const guestId = socket.handshake.query.guestId;
-
-  if (isGuest) {
-    console.log("Guest connected:", guestId);
-
-    // Handle guest joining their room
-    socket.on("join-guest-room", (guestId) => {
-      socket.join(`guest-${guestId}`);
-      console.log(`Guest ${guestId} joined their room`);
-    });
-
-    // Handle guest requesting support team
-    socket.on("get-support-team", async () => {
-      try {
-        const User = require("./models/User");
-        const supportTeam = await User.find({
-          role: { $in: ["Admin", "Manager", "Sales Person", "Lead Person"] },
-          chatStatus: "ONLINE",
-          active: true, // Filter out inactive users
-        }).select("fullName role chatStatus");
-
-        socket.emit("support-team-list", supportTeam);
-      } catch (error) {
-        console.error("Error getting support team:", error);
-      }
-    });
-
-    // Handle guest messages
-    socket.on("guest-message", async (data) => {
-      try {
-        const { guestId, guestInfo, recipientId, content, timestamp } = data;
-
-        // Create a guest message object
-        const guestMessage = {
-          id: Date.now(),
-          guestId,
-          guestInfo,
-          content,
-          timestamp,
-          sender: "guest",
-        };
-
-        // Send to support team member
-        if (recipientId !== "offline") {
-          io.to(`user-${recipientId}`).emit("guest-message-received", {
-            ...guestMessage,
-            sender: "guest",
-            senderName: guestInfo.name,
-            senderEmail: guestInfo.email,
-          });
-
-          // Send notification
-          io.to(`user-${recipientId}`).emit("messageNotification", {
-            senderId: guestId,
-            senderName: `${guestInfo.name} (Guest)`,
-            content: content,
-            timestamp: timestamp,
-            isGuest: true,
-          });
-        }
-
-        // Confirm message received
-        socket.emit("guest-message-sent", guestMessage);
-      } catch (error) {
-        console.error("Error handling guest message:", error);
-        socket.emit("guest-message-error", { error: error.message });
-      }
-    });
-
-    // Handle support team responding to guest
-    socket.on("respond-to-guest", (data) => {
-      const { guestId, content, senderName, timestamp } = data;
-
-      io.to(`guest-${guestId}`).emit("guest-message-received", {
-        id: Date.now(),
-        content,
-        sender: "support",
-        senderName,
-        timestamp: new Date(timestamp),
-      });
-    });
-  } else {
-    // Initialize chat handlers for regular users
-    chatSocketHandler(io, socket);
-    ticketSocketHandler(io, socket);
-  }
+  // Initialize modular handlers
+  chatSocketHandler(io, socket);
+  ticketSocketHandler(io, socket);
 });
 
 // Reminder service
@@ -489,7 +404,7 @@ app.options("/api/*", handleOptions);
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 0.5 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
   message: "Too many requests from this IP, please try again later",
   standardHeaders: true,
@@ -617,6 +532,7 @@ app.use((err, req, res, next) => {
 
   const allowedOrigins = [
     "http://localhost:5173",
+    "http://localhost:5174",
     "http://127.0.0.1:5173",
     "https://traincapecrm.traincapetech.in",
     "http://traincapecrm.traincapetech.in",

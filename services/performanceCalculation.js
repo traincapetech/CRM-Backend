@@ -81,12 +81,15 @@ class PerformanceCalculationService {
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
 
-    // Count leads that were CREATED by/for this user today
-    // This tracks "New Leads Generated" strictly
-    // Removed assignedTo to prevent counting leads just assigned for calling
+    // Count leads that were either created OR updated by/for this user today
+    // This tracks "Active Leads" rather than just "New Leads Generated"
     const query = {
-      $or: [{ createdBy: userId }, { leadPerson: userId }],
-      createdAt: {
+      $or: [
+        { createdBy: userId },
+        { assignedTo: userId },
+        { leadPerson: userId },
+      ],
+      updatedAt: {
         $gte: startOfDay,
         $lte: endOfDay,
       },

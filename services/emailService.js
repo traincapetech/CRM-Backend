@@ -427,7 +427,6 @@ const sendTicketStatusUpdateEmail = async (ticket, user) => {
     console.error("Error sending ticket status email:", error);
   }
 };
-
 module.exports = {
   sendPaymentConfirmationEmail,
   sendServiceDeliveryEmail,

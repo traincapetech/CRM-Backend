@@ -168,26 +168,38 @@ class ChatService {
       // Format the response to include the other user's info
       const formattedRooms = chatRooms
         .map((room) => {
-          const otherUser =
-            room.senderId._id.toString() === userObjectId.toString()
-              ? room.recipientId
-              : room.senderId;
-
-          // Check if otherUser exists before accessing its properties
-          if (!otherUser) {
+          // Safety checks for populated fields
+          if (!room.senderId || !room.recipientId) {
+            console.warn(`Chat room ${room.chatId} has missing user data`);
             return null;
           }
 
-          const unreadCount =
-            room.senderId._id.toString() === userObjectId.toString()
+          const senderIdStr = room.senderId._id
+            ? room.senderId._id.toString()
+            : room.senderId.toString();
+          const userIdStr = userObjectId.toString();
+
+          const isSender = senderIdStr === userIdStr;
+          const otherUser = isSender ? room.recipientId : room.senderId;
+
+          // Check if otherUser exists before accessing its properties
+          if (!otherUser || typeof otherUser !== "object") {
+            return null;
+          }
+
+          const unreadCount = isSender
+            ? room.unreadCount
               ? room.unreadCount.senderId
-              : room.unreadCount.recipientId;
+              : 0
+            : room.unreadCount
+              ? room.unreadCount.recipientId
+              : 0;
 
           return {
             chatId: room.chatId,
             otherUser: {
               _id: otherUser._id,
-              fullName: otherUser.fullName,
+              fullName: otherUser.fullName || "Unknown User",
               email: otherUser.email,
               profilePicture: otherUser.profilePicture,
               chatStatus: otherUser.chatStatus,
@@ -195,14 +207,15 @@ class ChatService {
             },
             lastMessage: room.lastMessage,
             lastMessageTime: room.lastMessageTime,
-            unreadCount,
+            unreadCount: unreadCount || 0,
           };
         })
         .filter((room) => room !== null); // Filter out null rooms
 
       return formattedRooms;
     } catch (error) {
-      throw new Error(`Error getting user chat rooms: ${error.message}`);
+      console.error("Critical error in getUserChatRooms:", error);
+      return []; // Return empty array instead of throwing to prevent crashing the whole response
     }
   }
 
