@@ -77,6 +77,7 @@ const PerformanceSummarySchema = new mongoose.Schema(
     pipDetails: {
       startDate: Date,
       endDate: Date,
+      reason: String,
       pipId: {
         type: mongoose.Schema.ObjectId,
         ref: "PIP",

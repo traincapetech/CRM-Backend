@@ -101,6 +101,37 @@ router.get(
   async (req, res) => {
     try {
       const PerformanceSummary = require("../models/PerformanceSummary");
+      const User = require("../models/User");
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+
+      // Ensure all active employees with KPI-eligible roles have fresh calculations
+      const eligibleEmployees = await User.find({
+        active: true,
+        role: { $in: ["Lead Person", "Sales Person", "Manager"] },
+      }).select("_id fullName role");
+
+      const today = new Date();
+      for (const emp of eligibleEmployees) {
+        try {
+          await PerformanceCalculationService.calculateEmployeePerformance(
+            emp._id,
+            today,
+          );
+        } catch (calcErr) {
+          // If calculation fails (e.g., no KPIs for role), ensure at least a summary exists
+          const existingSummary = await PerformanceSummary.findOne({
+            employeeId: emp._id,
+          });
+          if (!existingSummary) {
+            await PerformanceSummary.create({
+              employeeId: emp._id,
+              currentRating: 0,
+              ratingTier: "poor",
+              stars: 1,
+            });
+          }
+        }
+      }
 
       const summaries = await PerformanceSummary.find({})
         .populate("employeeId", "fullName email role active")

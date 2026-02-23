@@ -453,7 +453,8 @@ exports.getAllUsers = async (req, res) => {
     // Get the role filter from query params (if provided). Support multiple roles.
     const roleParam = req.query.role || "";
 
-    const filter = {};
+    // Always exclude deactivated users from dropdowns/lists
+    const filter = { active: true };
     if (roleParam) {
       if (Array.isArray(roleParam)) {
         // ?role=A&role=B

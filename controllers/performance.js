@@ -111,9 +111,47 @@ const updateKPITemplate = async (req, res) => {
       });
     }
 
+    // Propagate updated thresholds/weight to all existing EmployeeTargets for this KPI
+    const updateFields = {};
+    if (req.body.thresholds) {
+      updateFields["targets.minimum"] = kpi.thresholds.minimum;
+      updateFields["targets.target"] = kpi.thresholds.target;
+      updateFields["targets.excellent"] = kpi.thresholds.excellent;
+    }
+
+    if (Object.keys(updateFields).length > 0) {
+      await EmployeeTarget.updateMany(
+        { kpiId: kpi._id },
+        { $set: updateFields },
+      );
+    }
+
+    // Recalculate performance for all affected employees
+    const affectedTargets = await EmployeeTarget.find({
+      kpiId: kpi._id,
+    }).select("employeeId");
+    const uniqueEmployeeIds = [
+      ...new Set(affectedTargets.map((t) => t.employeeId.toString())),
+    ];
+
+    if (uniqueEmployeeIds.length > 0) {
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const today = new Date();
+      for (const empId of uniqueEmployeeIds) {
+        try {
+          await PerformanceCalculationService.calculateEmployeePerformance(
+            empId,
+            today,
+          );
+        } catch (calcErr) {
+          console.error(`Error recalculating for ${empId}:`, calcErr.message);
+        }
+      }
+    }
+
     res.status(200).json({
       success: true,
-      message: "KPI template updated successfully",
+      message: `KPI template updated successfully. ${uniqueEmployeeIds.length} employee(s) recalculated.`,
       data: kpi,
     });
   } catch (error) {
@@ -178,6 +216,46 @@ const assignKPIToEmployees = async (req, res) => {
       });
     }
 
+    // Auto-fill period endDate if missing based on frequency
+    let endDate = period.endDate;
+    if (!endDate) {
+      const start = new Date(period.startDate);
+      if (kpi.frequency === "daily") {
+        endDate = start.toISOString().split("T")[0];
+      } else if (kpi.frequency === "weekly") {
+        const end = new Date(start);
+        end.setDate(end.getDate() + 6);
+        endDate = end.toISOString().split("T")[0];
+      } else if (kpi.frequency === "monthly") {
+        const end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+        endDate = end.toISOString().split("T")[0];
+      } else if (kpi.frequency === "quarterly") {
+        const quarter = Math.floor(start.getMonth() / 3);
+        const end = new Date(start.getFullYear(), quarter * 3 + 3, 0);
+        endDate = end.toISOString().split("T")[0];
+      } else {
+        // Fallback: end of current month
+        const end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+        endDate = end.toISOString().split("T")[0];
+      }
+    }
+
+    // Auto-fill periodKey if missing
+    let periodKey = period.periodKey;
+    if (!periodKey) {
+      const start = new Date(period.startDate);
+      if (kpi.frequency === "daily") {
+        periodKey = period.startDate;
+      } else if (kpi.frequency === "weekly") {
+        periodKey = `${period.startDate}-W`;
+      } else if (kpi.frequency === "monthly") {
+        periodKey = period.startDate.substring(0, 7);
+      } else if (kpi.frequency === "quarterly") {
+        const quarter = Math.floor(start.getMonth() / 3) + 1;
+        periodKey = `${start.getFullYear()}-Q${quarter}`;
+      }
+    }
+
     // Create targets for each employee
     const assignedTargets = [];
     for (const employeeId of employeeIds) {
@@ -193,8 +271,8 @@ const assignKPIToEmployees = async (req, res) => {
         kpiId,
         period: {
           startDate: period.startDate,
-          endDate: period.endDate,
-          periodKey: period.periodKey, // e.g., "2025-02" for monthly
+          endDate,
+          periodKey,
         },
         targets: targetValues,
       };
@@ -204,7 +282,7 @@ const assignKPIToEmployees = async (req, res) => {
         {
           employeeId,
           kpiId,
-          "period.periodKey": period.periodKey,
+          "period.periodKey": periodKey,
         },
         targetData,
         {
@@ -216,9 +294,26 @@ const assignKPIToEmployees = async (req, res) => {
       assignedTargets.push(target);
     }
 
+    // Trigger immediate recalculation for assigned employees
+    const PerformanceCalculationService = require("../services/performanceCalculation");
+    const today = new Date();
+    for (const employeeId of employeeIds) {
+      try {
+        await PerformanceCalculationService.calculateEmployeePerformance(
+          employeeId,
+          today,
+        );
+      } catch (calcErr) {
+        console.error(
+          `Error recalculating for ${employeeId}:`,
+          calcErr.message,
+        );
+      }
+    }
+
     res.status(201).json({
       success: true,
-      message: `KPI assigned to ${assignedTargets.length} employee(s)`,
+      message: `KPI assigned to ${assignedTargets.length} employee(s) and performance recalculated`,
       data: assignedTargets,
     });
   } catch (error) {
@@ -326,6 +421,8 @@ const getEmployeePerformance = async (req, res) => {
         tObj.actual = kpiScoreMap[kpiId].actual;
         tObj.score = kpiScoreMap[kpiId].score;
         tObj.status = kpiScoreMap[kpiId].status; // Update status based on today's performance
+        tObj.pacedTarget = kpiScoreMap[kpiId].target; // The time-prorated target for today
+        tObj.baseTarget = kpiScoreMap[kpiId].baseTarget; // The full period's target
       }
       return tObj;
     });
