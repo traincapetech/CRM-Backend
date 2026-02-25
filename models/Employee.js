@@ -141,6 +141,9 @@ const employeeSchema = new mongoose.Schema(
     pcc: {
       type: mongoose.Schema.Types.Mixed,
     },
+    signature: {
+      type: mongoose.Schema.Types.Mixed,
+    },
     resume: {
       type: mongoose.Schema.Types.Mixed,
     },
@@ -221,11 +224,11 @@ const employeeSchema = new mongoose.Schema(
 
 // PII fields to encrypt
 const PII_FIELDS = [
-  "phoneNumber",
-  "whatsappNumber",
-  "currentAddress",
-  "permanentAddress",
-  "dateOfBirth",
+  // "phoneNumber",
+  // "whatsappNumber",
+  // "currentAddress",
+  // "permanentAddress",
+  // "dateOfBirth",
   "aadharCard",
   "panCard",
   "bankAccountNumber",

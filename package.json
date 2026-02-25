@@ -41,12 +41,12 @@
     "socket.io": "^4.8.1",
     "speakeasy": "^2.0.0",
     "stripe": "^18.3.0",
-    "swagger-jsdoc": "^6.2.8",
+    "swagger-jsdoc": "^1.2.1",
     "swagger-ui-express": "^5.0.1",
     "ua-parser-js": "^2.0.9",
     "xss-clean": "^0.1.4"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.1.14"
   }
 }

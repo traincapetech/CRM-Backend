@@ -166,13 +166,12 @@ class PerformanceCalculationService {
   static async calculateLeads(userId, date, frequency) {
     const { start, end } = this.getDateRange(date, frequency);
 
+    // Count leads that were CREATED by/for this user today
+    // This tracks "New Leads Generated" strictly
+    // Removed assignedTo to prevent counting leads just assigned for calling
     const query = {
-      $or: [
-        { createdBy: userId },
-        { assignedTo: userId },
-        { leadPerson: userId },
-      ],
-      updatedAt: {
+      $or: [{ createdBy: userId }, { leadPerson: userId }],
+      createdAt: {
         $gte: start,
         $lte: end,
       },

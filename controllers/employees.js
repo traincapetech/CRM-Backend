@@ -19,6 +19,7 @@ exports.uploadEmployeeFiles = fileStorage.uploadMiddleware.fields([
   { name: "pcc", maxCount: 1 },
   { name: "resume", maxCount: 1 },
   { name: "offerLetter", maxCount: 1 },
+  { name: "signature", maxCount: 1 },
 ]);
 
 // @desc    Get all employees
@@ -131,7 +132,8 @@ exports.getEmployees = async (req, res) => {
         (empObj.photograph ||
           empObj.aadharCard ||
           empObj.panCard ||
-          empObj.resume)
+          empObj.resume ||
+          empObj.signature)
       ) {
         empObj.documents = {
           photograph: empObj.photograph,
@@ -144,6 +146,7 @@ exports.getEmployees = async (req, res) => {
           pcc: empObj.pcc,
           resume: empObj.resume,
           offerLetter: empObj.offerLetter,
+          signature: empObj.signature,
         };
       }
       return empObj;
@@ -236,7 +239,8 @@ exports.getEmployee = async (req, res) => {
       (empObj.photograph ||
         empObj.aadharCard ||
         empObj.panCard ||
-        empObj.resume)
+        empObj.resume ||
+        empObj.signature)
     ) {
       empObj.documents = {
         photograph: empObj.photograph,
@@ -249,6 +253,7 @@ exports.getEmployee = async (req, res) => {
         pcc: empObj.pcc,
         resume: empObj.resume,
         offerLetter: empObj.offerLetter,
+        signature: empObj.signature,
       };
     }
 
@@ -319,7 +324,8 @@ exports.getEmployeeByUserId = async (req, res) => {
       (empObj.photograph ||
         empObj.aadharCard ||
         empObj.panCard ||
-        empObj.resume)
+        empObj.resume ||
+        empObj.signature)
     ) {
       empObj.documents = {
         photograph: empObj.photograph,
@@ -332,6 +338,7 @@ exports.getEmployeeByUserId = async (req, res) => {
         pcc: empObj.pcc,
         resume: empObj.resume,
         offerLetter: empObj.offerLetter,
+        signature: empObj.signature,
       };
     }
 
@@ -520,7 +527,11 @@ exports.updateEmployee = async (req, res) => {
     }
 
     // Check authorization - Allow only HR, Admin, and Manager to update employees
-    if (!["HR", "Admin", "Manager"].includes(req.user.role)) {
+    // Also allow users to update their own profile
+    if (
+      !["HR", "Admin", "Manager"].includes(req.user.role) &&
+      employee.userId?.toString() !== req.user.id
+    ) {
       return res.status(403).json({
         success: false,
         message: "Not authorized to update employee profiles",
@@ -663,6 +674,7 @@ exports.deleteEmployee = async (req, res) => {
       "pcc",
       "resume",
       "offerLetter",
+      "signature",
     ];
 
     fileFields.forEach((field) => {
@@ -753,7 +765,7 @@ exports.createDepartment = async (req, res) => {
 // @access  Private
 exports.getRoles = async (req, res) => {
   try {
-    const roles = await Role.find().select("name _id");
+    const roles = await Role.find().populate("employeeCount");
 
     // If no roles exist, create default ones
     if (roles.length === 0) {
@@ -764,7 +776,14 @@ exports.getRoles = async (req, res) => {
         { name: "Sales Person", description: "Sales team member" },
         { name: "Lead Person", description: "Lead generation team member" },
       ]);
-      roles.push(...defaultRoles);
+      
+      // Need to re-fetch to get populated fields for the new roles if needed, 
+      // but virtuals are usually calculated on the fly if populated
+      const populatedRoles = await Role.find().populate("employeeCount");
+      return res.json({
+        success: true,
+        data: populatedRoles,
+      });
     }
 
     res.json({
@@ -800,7 +819,90 @@ exports.createRole = async (req, res) => {
       data: role,
     });
   } catch (err) {
-    console.error("Error creating role:", err);
+    console.error("Error creating role:", err.message);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Update role
+// @route   PUT /api/employees/roles/:id
+// @access  Private (Admin/Manager only)
+exports.updateRole = async (req, res) => {
+  try {
+    if (req.user.role !== "Admin" && req.user.role !== "Manager") {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update roles",
+      });
+    }
+
+    let role = await Role.findById(req.params.id);
+
+    if (!role) {
+      return res.status(404).json({
+        success: false,
+        message: "Role not found",
+      });
+    }
+
+    role = await Role.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: role,
+    });
+  } catch (err) {
+    console.error("Error updating role:", err.message);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Delete role
+// @route   DELETE /api/employees/roles/:id
+// @access  Private (Admin/Manager only)
+exports.deleteRole = async (req, res) => {
+  try {
+    if (req.user.role !== "Admin" && req.user.role !== "Manager") {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to delete roles",
+      });
+    }
+
+    const role = await Role.findById(req.params.id).populate("employeeCount");
+
+    if (!role) {
+      return res.status(404).json({
+        success: false,
+        message: "Role not found",
+      });
+    }
+
+    // Prevent deletion if employees are assigned to this role
+    if (role.employeeCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete role with assigned employees",
+      });
+    }
+
+    await Role.findByIdAndDelete(req.params.id);
+
+    res.status(200).json({
+      success: true,
+      data: {},
+    });
+  } catch (err) {
+    console.error("Error deleting role:", err.message);
     res.status(400).json({
       success: false,
       message: err.message,
@@ -823,7 +925,11 @@ exports.uploadDocuments = async (req, res) => {
     }
 
     // Check authorization: Only IT Manager/Admin/Manager/HR can upload (employees cannot upload even their own)
-    if (!["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role)) {
+    // ALLOW employees to upload their own documents now
+    if (
+      !["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role) &&
+      employee.userId?.toString() !== req.user.id
+    ) {
       return res.status(403).json({
         success: false,
         message:
@@ -955,7 +1061,11 @@ exports.deleteDocument = async (req, res) => {
     }
 
     // Check authorization: IT Manager/Admin/Manager can delete, employees cannot delete (even their own)
-    if (!["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role)) {
+    // ALLOW employees to delete their own documents now
+    if (
+      !["HR", "Admin", "Manager", "IT Manager"].includes(req.user.role) &&
+      employee.userId?.toString() !== req.user.id
+    ) {
       return res.status(403).json({
         success: false,
         message: "Not authorized to delete documents",

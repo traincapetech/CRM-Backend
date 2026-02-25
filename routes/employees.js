@@ -11,6 +11,9 @@ const {
   deleteEmployee,
   getDepartments,
   getRoles,
+  createRole,
+  updateRole,
+  deleteRole,
   uploadEmployeeFiles,
   uploadDocuments,
   getDocuments,
@@ -47,7 +50,12 @@ router.route('/departments')
   .get(protect, getDepartments);
 
 router.route('/roles')
-  .get(protect, getRoles);
+  .get(protect, getRoles)
+  .post(protect, createRole);
+
+router.route('/roles/:id')
+  .put(protect, updateRole)
+  .delete(protect, deleteRole);
 
 // Fix IT Interns employmentType
 router.route('/fix-it-interns')
