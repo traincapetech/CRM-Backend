@@ -171,6 +171,61 @@ exports.generatePayroll = async (req, res) => {
       );
     }
 
+    // ===== SALARY ADVANCE DEDUCTION INTEGRATION =====
+    const EmployeeAdvance = require("../models/EmployeeAdvance");
+    const activeAdvances = await EmployeeAdvance.find({
+      employeeId: employee._id,
+      status: "active",
+      remainingAmount: { $gt: 0 },
+    });
+
+    let totalAdvanceDeduction = 0;
+    const advanceUpdates = []; // Store updates to apply after payroll creation
+
+    if (activeAdvances.length > 0) {
+      for (const advance of activeAdvances) {
+        let deductionForThisAdvance = 0;
+
+        if (advance.deductionType === "full") {
+          deductionForThisAdvance = advance.remainingAmount;
+        } else {
+          // partial - deduct the monthly amount, capped at remaining
+          deductionForThisAdvance = Math.min(
+            advance.deductionAmountPerMonth || 0,
+            advance.remainingAmount,
+          );
+        }
+
+        if (deductionForThisAdvance > 0) {
+          totalAdvanceDeduction += deductionForThisAdvance;
+          advanceUpdates.push({
+            advance,
+            deductionAmount: deductionForThisAdvance,
+          });
+        }
+      }
+
+      if (totalAdvanceDeduction > 0) {
+        payrollData.advanceDeduction = totalAdvanceDeduction;
+        console.log(
+          `🏦 Advance deductions: Rs. ${totalAdvanceDeduction} from ${advanceUpdates.length} active advance(s)`,
+        );
+
+        // Warn if deduction exceeds 50% of gross salary
+        const estimatedGross =
+          payrollData.calculatedSalary || payrollData.baseSalary || 0;
+        if (
+          estimatedGross > 0 &&
+          totalAdvanceDeduction > estimatedGross * 0.5
+        ) {
+          console.warn(
+            `⚠️ WARNING: Advance deduction (Rs. ${totalAdvanceDeduction}) exceeds 50% of estimated salary (Rs. ${estimatedGross})`,
+          );
+        }
+      }
+    }
+    // ===== END SALARY ADVANCE DEDUCTION INTEGRATION =====
+
     // Auto-calculate salary if baseSalary and daysPresent are available
     if (payrollData.baseSalary && payrollData.daysPresent) {
       payrollData.calculatedSalary =
@@ -197,6 +252,27 @@ exports.generatePayroll = async (req, res) => {
         },
       );
       console.log("🔗 Linked expenses to payroll");
+    }
+
+    // Update advance records after payroll creation
+    if (advanceUpdates.length > 0) {
+      for (const { advance, deductionAmount } of advanceUpdates) {
+        advance.remainingAmount -= deductionAmount;
+        if (advance.remainingAmount <= 0) {
+          advance.remainingAmount = 0;
+          advance.status = "completed";
+        }
+        advance.deductionHistory.push({
+          month: parseInt(month),
+          year: parseInt(year),
+          deductedAmount: deductionAmount,
+          deductedBy: req.user.id,
+          payrollId: payroll._id,
+          deductedAt: new Date(),
+        });
+        await advance.save();
+      }
+      console.log(`🏦 Updated ${advanceUpdates.length} advance record(s)`);
     }
 
     await payroll.save();
@@ -417,6 +493,7 @@ exports.updatePayroll = async (req, res) => {
       "esi",
       "tax",
       "loan",
+      "advanceDeduction",
       "other",
       // Status and notes
       "notes",
@@ -1023,6 +1100,20 @@ const generatePDFContent = (doc, payroll) => {
   });
   deductionsY += 20;
 
+  if (payroll.advanceDeduction && payroll.advanceDeduction > 0) {
+    doc.text(`Salary Advance Deduction:`, deductionsX, deductionsY);
+    doc.text(
+      `Rs. ${payroll.advanceDeduction.toFixed(2)}`,
+      deductionsX + 150,
+      deductionsY,
+      {
+        align: "right",
+        width: columnWidth - 150,
+      },
+    );
+    deductionsY += 20;
+  }
+
   doc.text(`Other Deductions:`, deductionsX, deductionsY);
   doc.text(`Rs. ${payroll.other.toFixed(2)}`, deductionsX + 150, deductionsY, {
     align: "right",
@@ -1058,7 +1149,12 @@ const generatePDFContent = (doc, payroll) => {
     payroll.festivalBonus;
 
   const totalDeductions =
-    payroll.pf + payroll.esi + payroll.tax + payroll.loan + payroll.other;
+    payroll.pf +
+    payroll.esi +
+    payroll.tax +
+    payroll.loan +
+    (payroll.advanceDeduction || 0) +
+    payroll.other;
 
   doc.text(`Total Earnings: Rs. ${totalEarnings.toFixed(2)}`);
   doc.text(`Total Deductions: Rs. ${totalDeductions.toFixed(2)}`);

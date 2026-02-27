@@ -88,6 +88,7 @@ const paytmRoutes = require("./routes/paytm");
 const biometricRoutes = require("./routes/biometric");
 const performanceRoutes = require("./routes/performance");
 const expenseRoutes = require("./routes/expenses");
+const advanceRoutes = require("./routes/advances");
 const testRolesRoutes = require("./routes/testRoles");
 const testGroupsRoutes = require("./routes/testGroups");
 const testQuestionsRoutes = require("./routes/testQuestions");
@@ -492,6 +493,7 @@ app.use("/api/test-reports", testReportsRoutes);
 app.use("/api/biometric", biometricRoutes);
 app.use("/api/performance", performanceRoutes); // Performance Management ERP
 app.use("/api/expenses", expenseRoutes); // Expense Reimbursement
+app.use("/api/advances", advanceRoutes); // Employee Salary Advances
 app.use("/api/feed", feedRoutes); // Mount Feed Routes
 app.use("/api/journeys", journeyRoutes); // Mount Journey Routes
 app.use("/api/search", searchRoutes); // Mount Search Routes

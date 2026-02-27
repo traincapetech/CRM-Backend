@@ -129,6 +129,10 @@ const payrollSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    advanceDeduction: {
+      type: Number,
+      default: 0,
+    },
     other: {
       type: Number,
       default: 0,
@@ -297,6 +301,7 @@ payrollSchema.methods.calculateSalary = function () {
     (this.esi || 0) +
     (this.tax || 0) +
     (this.loan || 0) +
+    (this.advanceDeduction || 0) +
     (this.other || 0);
 
   console.log("📉 Deductions calculated:", {
@@ -304,6 +309,7 @@ payrollSchema.methods.calculateSalary = function () {
     esi: this.esi || 0,
     tax: this.tax || 0,
     loan: this.loan || 0,
+    advanceDeduction: this.advanceDeduction || 0,
     other: this.other || 0,
     totalDeductions: this.totalDeductions,
   });
