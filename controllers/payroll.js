@@ -865,66 +865,79 @@ exports.deletePayroll = async (req, res) => {
 };
 
 /**
- * Generates the content for the PDF salary slip.
+ * Generates the content for the PDF salary slip with Enterprise Aesthetics.
  * @param {object} doc - The PDFDocument instance.
  * @param {object} payroll - The payroll data object.
  */
 const generatePDFContent = (doc, payroll) => {
-  // Set up the border
-  doc.rect(30, 30, doc.page.width - 60, doc.page.height - 60).stroke();
+  // --- Styling Constants ---
+  const PRIMARY_COLOR = "#1e3a8a"; // Deep Blue
+  const SECONDARY_COLOR = "#475569"; // Slate 600
+  const BORDER_COLOR = "#e2e8f0"; // Slate 200
+  const ACCENT_BG = "#f8fafc"; // Slate 50
 
-  // Company Logo
+  const MARGIN_LEFT = 40;
+  const MARGIN_RIGHT = doc.page.width - 40;
+  const CONTENT_WIDTH = MARGIN_RIGHT - MARGIN_LEFT;
+
+  const PAGE_BORDER_PADDING = 15;
+
+  // --- Outer Border ---
+  doc
+    .rect(
+      PAGE_BORDER_PADDING,
+      PAGE_BORDER_PADDING,
+      doc.page.width - PAGE_BORDER_PADDING * 2,
+      doc.page.height - PAGE_BORDER_PADDING * 2,
+    )
+    .lineWidth(2)
+    .strokeColor(PRIMARY_COLOR)
+    .stroke();
+
+  // --- Header Section ---
   const logoPath = path.join(__dirname, "../assets/images/traincape-logo.jpg");
   if (fs.existsSync(logoPath)) {
-    doc.image(logoPath, doc.page.width / 2 + 160, 33, { width: 80 });
+    doc.image(logoPath, MARGIN_LEFT, 45, { height: 40 });
+  } else {
+    // Fallback if logo not found
+    doc
+      .fontSize(22)
+      .font("Helvetica-Bold")
+      .fillColor(PRIMARY_COLOR)
+      .text("Traincape", MARGIN_LEFT, 50);
   }
+
+  // Company Details (Right Aligned)
+  doc.fontSize(10).font("Helvetica-Bold").fillColor(SECONDARY_COLOR);
+  doc.text("Traincape Technology", MARGIN_RIGHT - 200, 45, {
+    align: "right",
+    width: 200,
+  });
+  doc.font("Helvetica").fontSize(9);
+  doc.text("Khandolia Plaza, 118C", MARGIN_RIGHT - 200, 58, {
+    align: "right",
+    width: 200,
+  });
+  doc.text("Dabri - Palam Rd", MARGIN_RIGHT - 200, 70, {
+    align: "right",
+    width: 200,
+  });
+  doc.text("Delhi 110045, India", MARGIN_RIGHT - 200, 82, {
+    align: "right",
+    width: 200,
+  });
+
   doc.moveDown(2);
 
-  // Header
-  doc.fontSize(18).text("SALARY SLIP", { align: "center", bold: true });
-  doc.fontSize(12).text("Traincape Technology", { align: "center" });
+  // Solid Separator
   doc
-    .fontSize(10)
-    .text("Khandolia Plaza, 118C, Dabri - Palam Rd, Delhi 110045", {
-      align: "center",
-    });
-  doc.moveDown();
-  doc
-    .strokeColor("#aaaaaa")
+    .moveTo(MARGIN_LEFT, 110)
+    .lineTo(MARGIN_RIGHT, 110)
     .lineWidth(1)
-    .lineCap("butt")
-    .moveTo(50, doc.y)
-    .lineTo(doc.page.width - 0, doc.y)
+    .strokeColor(BORDER_COLOR)
     .stroke();
-  doc.moveDown();
 
-  // Employee Details
-  const contentIndent = 20; // Define a consistent indent for padding
-
-  doc
-    .fontSize(12)
-    .text("Employee Details", { underline: true, indent: contentIndent });
-  doc.fontSize(10);
-  doc.text(`Name: ${payroll.employeeId.fullName}`, { indent: contentIndent });
-  doc.text(`Employee ID: ${payroll.employeeId._id}`, { indent: contentIndent });
-  doc.text(`Department: ${payroll.employeeId.department?.name || "N/A"}`, {
-    indent: contentIndent,
-  });
-  doc.text(`Email: ${payroll.employeeId.email}`, { indent: contentIndent });
-  doc.text(`Phone: ${payroll.employeeId.phoneNumber || "N/A"}`, {
-    indent: contentIndent,
-  });
-  doc.moveDown();
-  doc
-    .strokeColor("#aaaaaa")
-    .lineWidth(1)
-    .lineCap("butt")
-    .moveTo(50, doc.y)
-    .lineTo(doc.page.width - 50, doc.y)
-    .stroke();
-  doc.moveDown();
-
-  // Pay Period
+  // --- Title & Month ---
   const months = [
     "January",
     "February",
@@ -939,240 +952,287 @@ const generatePDFContent = (doc, payroll) => {
     "November",
     "December",
   ];
-  doc
-    .fontSize(12)
-    .text("Pay Period", { underline: true, indent: contentIndent });
-  doc.fontSize(10);
-  doc.text(`Month: ${months[payroll.month - 1]} ${payroll.year}`, {
-    indent: contentIndent,
-  });
-  doc.text(`Working Days: ${payroll.workingDays}`, { indent: contentIndent });
-  doc.text(`Days Present: ${payroll.daysPresent}`, { indent: contentIndent });
-  doc.moveDown();
-  doc
-    .strokeColor("#aaaaaa")
-    .lineWidth(1)
-    .lineCap("butt")
-    .moveTo(50, doc.y)
-    .lineTo(doc.page.width - 50, doc.y)
-    .stroke();
-  doc.moveDown();
-
-  // Earnings and Deductions in two columns
-  const startX = 50;
-  const columnWidth = (doc.page.width - 100) / 2;
-  const startY = doc.y;
-
-  // Earnings Column
-  doc.fontSize(12).text("Earnings", startX, startY, { underline: true });
-  doc.fontSize(10);
-  let earningsY = doc.y + 10;
-  doc.text(`Base Salary:`, startX, earningsY);
-  doc.text(`Rs. ${payroll.baseSalary.toFixed(2)}`, startX + 150, earningsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-  earningsY += 20;
-
-  doc.text(`HRA:`, startX, earningsY);
-  doc.text(`Rs. ${payroll.hra.toFixed(2)}`, startX + 150, earningsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-  earningsY += 20;
-
-  doc.text(`DA:`, startX, earningsY);
-  doc.text(`Rs. ${payroll.da.toFixed(2)}`, startX + 150, earningsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-  earningsY += 20;
-
-  doc.text(`Conveyance:`, startX, earningsY);
-  doc.text(
-    `Rs. ${payroll.conveyanceAllowance.toFixed(2)}`,
-    startX + 150,
-    earningsY,
-    { align: "right", width: columnWidth - 150 },
-  );
-  earningsY += 20;
-
-  doc.text(`Medical:`, startX, earningsY);
-  doc.text(
-    `Rs. ${payroll.medicalAllowance.toFixed(2)}`,
-    startX + 150,
-    earningsY,
-    { align: "right", width: columnWidth - 150 },
-  );
-  earningsY += 20;
-
-  doc.text(`Special:`, startX, earningsY);
-  doc.text(
-    `Rs. ${payroll.specialAllowance.toFixed(2)}`,
-    startX + 150,
-    earningsY,
-    { align: "right", width: columnWidth - 150 },
-  );
-  earningsY += 20;
-
-  doc.text(`Overtime:`, startX, earningsY);
-  doc.text(
-    `Rs. ${payroll.overtimeAmount.toFixed(2)}`,
-    startX + 150,
-    earningsY,
-    { align: "right", width: columnWidth - 150 },
-  );
-  earningsY += 20;
-
-  doc.text(`Reimbursements:`, startX, earningsY);
-  doc.text(
-    `Rs. ${payroll.reimbursements ? payroll.reimbursements.toFixed(2) : "0.00"}`,
-    startX + 150,
-    earningsY,
-    { align: "right", width: columnWidth - 150 },
-  );
-  earningsY += 20;
-
-  // Bonuses
-  earningsY += 10;
-  doc.text(`Performance Bonus:`, startX, earningsY);
-  doc.text(
-    `Rs. ${payroll.performanceBonus.toFixed(2)}`,
-    startX + 150,
-    earningsY,
-    { align: "right", width: columnWidth - 150 },
-  );
-  earningsY += 20;
-
-  doc.text(`Project Bonus:`, startX, earningsY);
-  doc.text(`Rs. ${payroll.projectBonus.toFixed(2)}`, startX + 150, earningsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-  earningsY += 20;
-
-  doc.text(`Attendance Bonus:`, startX, earningsY);
-  doc.text(
-    `Rs. ${payroll.attendanceBonus.toFixed(2)}`,
-    startX + 150,
-    earningsY,
-    { align: "right", width: columnWidth - 150 },
-  );
-  earningsY += 20;
-
-  doc.text(`Festival Bonus:`, startX, earningsY);
-  doc.text(`Rs. ${payroll.festivalBonus.toFixed(2)}`, startX + 150, earningsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-  earningsY += 20;
-
-  // Deductions Column
-  const deductionsX = startX + columnWidth + 10;
-  doc.fontSize(12).text("Deductions", deductionsX, startY, { underline: true });
-  doc.fontSize(10);
-  let deductionsY = doc.y + 10;
-  doc.text(`Provident Fund (PF):`, deductionsX, deductionsY);
-  doc.text(`Rs. ${payroll.pf.toFixed(2)}`, deductionsX + 150, deductionsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-  deductionsY += 20;
-
-  doc.text(`ESI:`, deductionsX, deductionsY);
-  doc.text(`Rs. ${payroll.esi.toFixed(2)}`, deductionsX + 150, deductionsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-  deductionsY += 20;
-
-  doc.text(`Professional Tax:`, deductionsX, deductionsY);
-  doc.text(`Rs. ${payroll.tax.toFixed(2)}`, deductionsX + 150, deductionsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-  deductionsY += 20;
-
-  doc.text(`Loan Recovery:`, deductionsX, deductionsY);
-  doc.text(`Rs. ${payroll.loan.toFixed(2)}`, deductionsX + 150, deductionsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-  deductionsY += 20;
-
-  if (payroll.advanceDeduction && payroll.advanceDeduction > 0) {
-    doc.text(`Salary Advance Deduction:`, deductionsX, deductionsY);
-    doc.text(
-      `Rs. ${payroll.advanceDeduction.toFixed(2)}`,
-      deductionsX + 150,
-      deductionsY,
-      {
-        align: "right",
-        width: columnWidth - 150,
-      },
-    );
-    deductionsY += 20;
-  }
-
-  doc.text(`Other Deductions:`, deductionsX, deductionsY);
-  doc.text(`Rs. ${payroll.other.toFixed(2)}`, deductionsX + 150, deductionsY, {
-    align: "right",
-    width: columnWidth - 150,
-  });
-
-  doc.y = Math.max(earningsY, deductionsY) + 20;
-  doc
-    .strokeColor("#aaaaaa")
-    .lineWidth(1)
-    .lineCap("butt")
-    .moveTo(50, doc.y)
-    .lineTo(doc.page.width - 50, doc.y)
-    .stroke();
-  doc.moveDown();
-
-  // Summary
-  doc.fontSize(12).text("Summary", { underline: true });
-  doc.fontSize(10);
-  const totalEarnings =
-    payroll.baseSalary +
-    payroll.hra +
-    payroll.da +
-    payroll.conveyanceAllowance +
-    payroll.medicalAllowance +
-    payroll.specialAllowance +
-    payroll.specialAllowance +
-    payroll.overtimeAmount +
-    (payroll.reimbursements || 0) +
-    payroll.performanceBonus +
-    payroll.projectBonus +
-    payroll.attendanceBonus +
-    payroll.festivalBonus;
-
-  const totalDeductions =
-    payroll.pf +
-    payroll.esi +
-    payroll.tax +
-    payroll.loan +
-    (payroll.advanceDeduction || 0) +
-    payroll.other;
-
-  doc.text(`Total Earnings: Rs. ${totalEarnings.toFixed(2)}`);
-  doc.text(`Total Deductions: Rs. ${totalDeductions.toFixed(2)}`);
-  doc.moveDown();
 
   doc
-    .fontSize(14)
-    .text(`Net Salary: Rs. ${payroll.netSalary.toFixed(2)}`, { bold: true });
+    .fillColor(PRIMARY_COLOR)
+    .font("Helvetica-Bold")
+    .fontSize(18)
+    .text("PAYSLIP", MARGIN_LEFT, 130, {
+      align: "center",
+      width: CONTENT_WIDTH,
+      characterSpacing: 2,
+    });
+
+  doc
+    .fillColor(SECONDARY_COLOR)
+    .font("Helvetica")
+    .fontSize(11)
+    .text(`${months[payroll.month - 1]} ${payroll.year}`, MARGIN_LEFT, 155, {
+      align: "center",
+      width: CONTENT_WIDTH,
+    });
+
   doc.moveDown(2);
 
-  // Footer
-  doc.fontSize(8);
-  doc.text("This is a computer-generated document. No signature is required.", {
+  // --- Employee Info Box ---
+  const infoBoxY = 190;
+  const infoBoxHeight = 85;
+
+  doc
+    .rect(MARGIN_LEFT, infoBoxY, CONTENT_WIDTH, infoBoxHeight)
+    .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+
+  doc.fillColor(SECONDARY_COLOR).fontSize(9);
+
+  // Left Column
+  const col1X = MARGIN_LEFT + 15;
+  const col1ValueX = col1X + 80;
+  let currentY = infoBoxY + 15;
+
+  doc.font("Helvetica").text("Employee Name:", col1X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(payroll.employeeId.fullName, col1ValueX, currentY);
+  currentY += 18;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("Employee ID:", col1X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(
+      payroll.employeeId._id.toString().substring(0, 10).toUpperCase(),
+      col1ValueX,
+      currentY,
+    );
+  currentY += 18;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("Department:", col1X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(payroll.employeeId.department?.name || "N/A", col1ValueX, currentY);
+
+  // Right Column
+  const col2X = MARGIN_LEFT + CONTENT_WIDTH / 2 + 15;
+  const col2ValueX = col2X + 80;
+  currentY = infoBoxY + 15;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("Working Days:", col2X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(payroll.workingDays.toString(), col2ValueX, currentY);
+  currentY += 18;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("Days Present:", col2X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(payroll.daysPresent.toString(), col2ValueX, currentY);
+  currentY += 18;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("LWP:", col2X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(
+      (payroll.workingDays - payroll.daysPresent).toString(),
+      col2ValueX,
+      currentY,
+    );
+
+  // --- Salary Details Table ---
+  const tableY = infoBoxY + infoBoxHeight + 30;
+  const colWidth = CONTENT_WIDTH / 2;
+
+  // Table Headers (Earnings & Deductions)
+  doc
+    .rect(MARGIN_LEFT, tableY, colWidth, 25)
+    .fillAndStroke(PRIMARY_COLOR, PRIMARY_COLOR);
+  doc
+    .rect(MARGIN_LEFT + colWidth, tableY, colWidth, 25)
+    .fillAndStroke(PRIMARY_COLOR, PRIMARY_COLOR);
+
+  doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(10);
+  doc.text("EARNINGS", MARGIN_LEFT + 15, tableY + 8);
+  doc.text("AMOUNT (INR)", MARGIN_LEFT + colWidth - 90, tableY + 8);
+
+  doc.text("DEDUCTIONS", MARGIN_LEFT + colWidth + 15, tableY + 8);
+  doc.text("AMOUNT (INR)", MARGIN_LEFT + CONTENT_WIDTH - 90, tableY + 8);
+
+  // Table rows
+  doc.fillColor("#0f172a").font("Helvetica").fontSize(9);
+  let rowY = tableY + 30;
+
+  const drawRow = (labelE, valE, labelD, valD, isLast = false) => {
+    // Labels
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR);
+    if (labelE) doc.text(labelE, MARGIN_LEFT + 15, rowY);
+    if (labelD) doc.text(labelD, MARGIN_LEFT + colWidth + 15, rowY);
+
+    // Values
+    doc.font("Helvetica").fillColor("#0f172a");
+    if (valE !== null)
+      doc.text(valE.toFixed(2), MARGIN_LEFT + colWidth - 85, rowY, {
+        width: 70,
+        align: "right",
+      });
+    if (valD !== null)
+      doc.text(valD.toFixed(2), MARGIN_LEFT + CONTENT_WIDTH - 85, rowY, {
+        width: 70,
+        align: "right",
+      });
+
+    rowY += 18;
+
+    if (!isLast) {
+      doc
+        .moveTo(MARGIN_LEFT + 10, rowY - 5)
+        .lineTo(MARGIN_RIGHT - 10, rowY - 5)
+        .lineWidth(0.5)
+        .strokeColor("#f1f5f9")
+        .stroke();
+      rowY += 5;
+    }
+  };
+
+  // Compile items
+  const earnings = [
+    { label: "Base Salary", val: payroll.baseSalary },
+    { label: "House Rent Allowance", val: payroll.hra },
+    { label: "Dearness Allowance", val: payroll.da },
+    { label: "Conveyance", val: payroll.conveyanceAllowance },
+    { label: "Medical Allowance", val: payroll.medicalAllowance },
+    { label: "Special Allowance", val: payroll.specialAllowance },
+    { label: "Overtime Amount", val: payroll.overtimeAmount },
+    { label: "Reimbursements", val: payroll.reimbursements || 0 },
+    { label: "Performance Bonus", val: payroll.performanceBonus },
+    { label: "Project/Incentive Bonus", val: payroll.projectBonus },
+    { label: "Attendance Bonus", val: payroll.attendanceBonus },
+    { label: "Festival Bonus", val: payroll.festivalBonus },
+  ].filter((i) => i.val > 0);
+
+  const deductions = [
+    { label: "Provident Fund (PF)", val: payroll.pf },
+    { label: "ESI", val: payroll.esi },
+    { label: "Professional Tax", val: payroll.tax },
+    { label: "Loan Recovery", val: payroll.loan },
+    { label: "Advance Deduction", val: payroll.advanceDeduction || 0 },
+    { label: "Other Deductions", val: payroll.other },
+  ].filter((i) => i.val > 0);
+
+  const rowCount = Math.max(earnings.length, deductions.length);
+
+  for (let i = 0; i < rowCount; i++) {
+    const e = earnings[i] || { label: "", val: null };
+    const d = deductions[i] || { label: "", val: null };
+    drawRow(e.label, e.val, d.label, d.val, i === rowCount - 1);
+  }
+
+  // Table Vertical Divider
+  doc
+    .moveTo(MARGIN_LEFT + colWidth, tableY + 25)
+    .lineTo(MARGIN_LEFT + colWidth, rowY)
+    .lineWidth(1)
+    .strokeColor(BORDER_COLOR)
+    .stroke();
+
+  // Table Outer Frame (Sides & Bottom)
+  doc.moveTo(MARGIN_LEFT, tableY).lineTo(MARGIN_LEFT, rowY).stroke();
+  doc.moveTo(MARGIN_RIGHT, tableY).lineTo(MARGIN_RIGHT, rowY).stroke();
+  doc.moveTo(MARGIN_LEFT, rowY).lineTo(MARGIN_RIGHT, rowY).stroke();
+
+  // --- Summary Totals Row ---
+  const totalEarnings = earnings.reduce((sum, item) => sum + item.val, 0);
+  const totalDeductions = deductions.reduce((sum, item) => sum + item.val, 0);
+
+  doc
+    .rect(MARGIN_LEFT, rowY, colWidth, 25)
+    .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+  doc
+    .rect(MARGIN_LEFT + colWidth, rowY, colWidth, 25)
+    .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+
+  doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(10);
+  doc.text("Total Earnings", MARGIN_LEFT + 15, rowY + 8);
+  doc.text(totalEarnings.toFixed(2), MARGIN_LEFT + colWidth - 85, rowY + 8, {
+    width: 70,
+    align: "right",
+  });
+
+  doc.text("Total Deductions", MARGIN_LEFT + colWidth + 15, rowY + 8);
+  doc.text(
+    totalDeductions.toFixed(2),
+    MARGIN_LEFT + CONTENT_WIDTH - 85,
+    rowY + 8,
+    { width: 70, align: "right" },
+  );
+
+  // --- Net Salary Highlight ---
+  doc.moveDown(4);
+  const netY = doc.y;
+
+  doc
+    .rect(MARGIN_RIGHT - 250, netY, 250, 45)
+    .fillAndStroke(PRIMARY_COLOR, PRIMARY_COLOR);
+  doc.fillColor("#ffffff").font("Helvetica").fontSize(11);
+  doc.text("NET SALARY", MARGIN_RIGHT - 235, netY + 16);
+
+  doc.font("Helvetica-Bold").fontSize(16);
+  doc.text(
+    `INR ${payroll.netSalary.toFixed(2)}`,
+    MARGIN_RIGHT - 165,
+    netY + 14,
+    { width: 140, align: "right" },
+  );
+
+  doc.moveDown(3);
+
+  // --- Signature Line / Footer ---
+  const footerY = doc.page.height - 100;
+
+  const signPath =
+    "/Users/a/Desktop/Traincape_CRM-main/client/dist/assets/Parichay_Sign-Z_7nzyfB.png";
+  if (fs.existsSync(signPath)) {
+    doc.image(signPath, MARGIN_RIGHT - 130, footerY - 45, { width: 110 });
+  }
+
+  doc
+    .moveTo(MARGIN_RIGHT - 150, footerY)
+    .lineTo(MARGIN_RIGHT, footerY)
+    .lineWidth(0.5)
+    .strokeColor(SECONDARY_COLOR)
+    .stroke();
+
+  doc.fillColor(SECONDARY_COLOR).font("Helvetica").fontSize(9);
+  doc.text("Authorized Signatory", MARGIN_RIGHT - 150, footerY + 10, {
+    width: 150,
     align: "center",
   });
-  doc.text(`Generated on: ${new Date().toLocaleDateString()}`, {
-    align: "center",
-  });
+
+  doc.fillColor("#94a3b8").fontSize(8);
+  doc.text(
+    "This is a computer-generated document and does not require a physical signature.",
+    MARGIN_LEFT,
+    doc.page.height - 50,
+    { align: "center", width: CONTENT_WIDTH },
+  );
 };
 
 // @desc    Delete payroll
