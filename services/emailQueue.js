@@ -22,15 +22,25 @@ const {
 
 // Initialize queue with Redis connection
 let emailQueue = null;
+let redisConnected = false;
 
-const initEmailQueue = () => {
-  if (emailQueue) return emailQueue;
+const initEmailQueue = async () => {
+  if (emailQueue && redisConnected) return emailQueue;
   if (!Queue) {
     console.warn("⚠️ Bull queue not available. Install with: npm install bull");
     return null;
   }
 
-  const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  // Check if REDIS_URL is configured
+  if (!process.env.REDIS_URL) {
+    console.warn(
+      "⚠️ REDIS_URL not configured in .env. Email queue will not be available.",
+    );
+    console.warn("⚠️ Falling back to synchronous email sending.");
+    return null;
+  }
+
+  const redisUrl = process.env.REDIS_URL;
   const isRedisSsl = redisUrl.startsWith("rediss://");
 
   console.log(
@@ -69,6 +79,25 @@ const initEmailQueue = () => {
     }
 
     emailQueue = new Queue("email-campaigns", queueOptions);
+
+    // Verify Redis connectivity with a ping before declaring ready
+    try {
+      const client = await emailQueue.client;
+      await client.ping();
+      redisConnected = true;
+      console.log("✅ Redis connection verified for email queue");
+    } catch (pingError) {
+      console.error("❌ Redis ping failed:", pingError.message);
+      console.warn("⚠️ Falling back to synchronous email sending.");
+      try {
+        await emailQueue.close();
+      } catch (e) {
+        // ignore close errors
+      }
+      emailQueue = null;
+      redisConnected = false;
+      return null;
+    }
 
     // Process emails with rate limiting
     emailQueue.process("send-email", 10, async (job) => {
@@ -152,18 +181,22 @@ const initEmailQueue = () => {
 
     emailQueue.on("error", (error) => {
       console.error("❌ Email Queue Error:", error.message);
+      redisConnected = false;
       // If we hit the maxrequest limit, pause the queue to prevent crash loops
       if (
         error.message &&
-        error.message.includes("max requests limit exceeded")
+        (error.message.includes("max requests limit exceeded") ||
+          error.message.includes("ECONNREFUSED") ||
+          error.message.includes("ENOTFOUND"))
       ) {
         console.error(
-          "⚠️ Redis limit exceeded. Pausing queue and falling back to sync mode.",
+          "⚠️ Redis connection lost. Pausing queue and falling back to sync mode.",
         );
         try {
           emailQueue.pause();
           emailQueue.close();
           emailQueue = null;
+          redisConnected = false;
         } catch (e) {
           console.error("Error closing queue:", e);
         }
@@ -184,6 +217,8 @@ const initEmailQueue = () => {
     return emailQueue;
   } catch (error) {
     console.error("Failed to initialize email queue:", error.message);
+    emailQueue = null;
+    redisConnected = false;
     // Return null to trigger fallback mode
     return null;
   }
@@ -208,18 +243,34 @@ const queueEmails = async (
   batchSize = 50,
   delayBetweenBatches = 1000,
 ) => {
-  if (!emailQueue) {
-    initEmailQueue();
+  // Try to initialize queue if not already done
+  if (!emailQueue || !redisConnected) {
+    await initEmailQueue();
   }
 
-  if (!emailQueue || !Queue) {
+  // Verify queue is actually available and connected
+  if (!emailQueue || !Queue || !redisConnected) {
     throw new Error(
-      "Email queue not available. Install Bull: npm install bull. Or check Redis connection.",
+      "Email queue not available. Redis is not connected. Falling back to synchronous sending.",
+    );
+  }
+
+  // Double-check Redis connectivity before queuing
+  try {
+    const client = await emailQueue.client;
+    await client.ping();
+  } catch (pingError) {
+    console.error("❌ Redis ping failed before queueing:", pingError.message);
+    redisConnected = false;
+    emailQueue = null;
+    throw new Error(
+      "Redis connection lost. Falling back to synchronous sending.",
     );
   }
 
   const totalRecipients = recipients.length;
   const batches = [];
+  const sendTimestamp = Date.now(); // Unique timestamp per send attempt
 
   // Split recipients into batches
   for (let i = 0; i < totalRecipients; i += batchSize) {
@@ -259,7 +310,7 @@ const queueEmails = async (
         },
         {
           delay,
-          jobId: `${campaignId}-${recipient.email}`, // Prevent duplicates
+          jobId: `${campaignId}-${recipient.email}-${sendTimestamp}`, // Include timestamp to allow re-sends
         },
       );
     }

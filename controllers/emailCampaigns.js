@@ -504,167 +504,170 @@ exports.sendCampaign = async (req, res) => {
       counselor_name: senderName,
     }));
 
-    // Use email queue for sending (if available) or fallback to synchronous sending
-    const { queueEmails } = require("../services/emailQueue");
+    // Send emails directly via Brevo/SMTP (synchronous sending)
+    console.log(
+      `📧 Sending campaign to ${preparedRecipients.length} recipients via Brevo/SMTP...`,
+    );
+    let sent = 0;
+    let delivered = 0;
+    let bounced = 0;
+    let errors = [];
 
-    try {
-      // Try to use queue system
-      const queueResult = await queueEmails(
-        preparedRecipients,
-        campaign._id.toString(),
-        campaign.subject,
-        campaign.template,
-        campaign.template.replace(/<[^>]*>/g, ""), // Plain text version
-        50, // Batch size: 50 emails per batch
-        1000, // Delay: 1 second between batches (rate limiting)
-      );
+    // Rate limiting: send in batches with delays
+    const batchSize = 10;
+    const delayBetweenBatches = 2000; // 2 seconds between batches
 
-      console.log(
-        `📬 Queued ${queueResult.totalQueued} emails in ${queueResult.batches} batches`,
-      );
+    for (let i = 0; i < preparedRecipients.length; i += batchSize) {
+      const batch = preparedRecipients.slice(i, i + batchSize);
 
-      // Update campaign with initial stats
-      campaign.stats.sent = 0; // Will be updated by queue workers
-      campaign.stats.delivered = 0;
-      campaign.stats.bounced = 0;
-      campaign.sentAt = new Date();
-      await campaign.save();
-
-      res.status(200).json({
-        success: true,
-        message: `Campaign queued. ${queueResult.totalQueued} emails will be sent in background.`,
-        data: {
-          queued: queueResult.totalQueued,
-          batches: queueResult.batches,
-          totalMatchedLeads:
-            campaign.recipientType === "leads" ||
-            campaign.recipientType === "all"
-              ? totalMatchedLeads
-              : undefined,
-          validEmailLeads:
-            campaign.recipientType === "leads" ||
-            campaign.recipientType === "all"
-              ? validEmailLeads
-              : undefined,
-          skippedNoEmailLeads:
-            campaign.recipientType === "leads" ||
-            campaign.recipientType === "all"
-              ? skippedNoEmailLeads
-              : undefined,
-          segment:
-            campaign.recipientType === "segment"
-              ? {
-                  leadsMatched: segmentCounts.leadsMatched,
-                  leadsValidEmails: segmentCounts.leadsValidEmails,
-                  customersMatched: segmentCounts.customersMatched,
-                  customersValidEmails: segmentCounts.customersValidEmails,
-                }
-              : undefined,
-        },
-      });
-      return;
-    } catch (queueError) {
-      console.warn(
-        "Queue system not available, falling back to synchronous sending:",
-        queueError.message,
-      );
-
-      // Fallback to synchronous sending (for small campaigns or when queue is unavailable)
-      let sent = 0;
-      let delivered = 0;
-      let bounced = 0;
-
-      // Rate limiting: send in batches with delays
-      const batchSize = 10; // Smaller batches for synchronous sending
-      const delayBetweenBatches = 2000; // 2 seconds between batches
-
-      for (let i = 0; i < preparedRecipients.length; i += batchSize) {
-        const batch = preparedRecipients.slice(i, i + batchSize);
-
-        for (const recipient of batch) {
-          try {
-            // Replace template variables
-            const variables = buildTemplateVariables(recipient, {
-              fromName: req.user?.fullName,
-            });
-            const htmlContent = addEmailTracking(
-              replaceTemplateVariables(campaign.template, variables),
-              campaign._id.toString(),
-              recipient.email,
-            );
-            const subject = replaceTemplateVariables(
-              campaign.subject,
-              variables,
-            );
-
-            await sendEmail(
-              recipient.email,
-              subject,
-              htmlContent.replace(/<[^>]*>/g, ""), // Plain text version
-              htmlContent,
-            );
-
-            sent++;
-            delivered++;
-          } catch (error) {
-            console.error(`Failed to send to ${recipient.email}:`, error);
-            sent++;
-            bounced++;
-          }
-        }
-
-        // Delay between batches (except for the last batch)
-        if (i + batchSize < recipients.length) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, delayBetweenBatches),
+      for (const recipient of batch) {
+        try {
+          // Replace template variables
+          const variables = buildTemplateVariables(recipient, {
+            fromName: req.user?.fullName,
+          });
+          const htmlContent = addEmailTracking(
+            replaceTemplateVariables(campaign.template, variables),
+            campaign._id.toString(),
+            recipient.email,
           );
+          const subject = replaceTemplateVariables(campaign.subject, variables);
+
+          await sendEmail(
+            recipient.email,
+            subject,
+            htmlContent.replace(/<[^>]*>/g, ""), // Plain text version
+            htmlContent,
+          );
+
+          sent++;
+          delivered++;
+
+          // Update recipient tracking status
+          const trackingEntry = campaign.recipientTracking.find(
+            (r) => r.email === recipient.email,
+          );
+          if (trackingEntry) {
+            trackingEntry.status = "sent";
+            trackingEntry.sentAt = new Date();
+          }
+
+          console.log(
+            `✅ [${sent}/${preparedRecipients.length}] Email sent to ${recipient.email}`,
+          );
+        } catch (error) {
+          console.error(
+            `❌ Failed to send to ${recipient.email}:`,
+            error.message,
+          );
+          sent++;
+          bounced++;
+          errors.push({ email: recipient.email, error: error.message });
+
+          // Update recipient tracking status for bounced
+          const trackingEntry = campaign.recipientTracking.find(
+            (r) => r.email === recipient.email,
+          );
+          if (trackingEntry) {
+            trackingEntry.status = "bounced";
+          }
         }
       }
 
-      // Update campaign stats
-      campaign.status = "sent";
+      // Save progress after each batch (in case of server crash)
       campaign.stats.sent = sent;
       campaign.stats.delivered = delivered;
       campaign.stats.bounced = bounced;
-      campaign.sentAt = new Date();
-      campaign.completedAt = new Date();
       await campaign.save();
 
-      res.status(200).json({
-        success: true,
-        message: `Campaign sent to ${sent} recipients`,
+      // Delay between batches (except for the last batch)
+      if (i + batchSize < preparedRecipients.length) {
+        console.log(
+          `⏳ Batch ${Math.floor(i / batchSize) + 1} complete. Waiting ${delayBetweenBatches}ms before next batch...`,
+        );
+        await new Promise((resolve) =>
+          setTimeout(resolve, delayBetweenBatches),
+        );
+      }
+    }
+
+    // Final update - mark campaign complete
+    campaign.status = delivered > 0 ? "sent" : "cancelled";
+    campaign.stats.sent = sent;
+    campaign.stats.delivered = delivered;
+    campaign.stats.bounced = bounced;
+    campaign.sentAt = new Date();
+    campaign.completedAt = new Date();
+    await campaign.save();
+
+    console.log(
+      `📊 Campaign "${campaign.name}" complete: ${delivered} delivered, ${bounced} bounced out of ${sent} total`,
+    );
+
+    if (delivered === 0 && sent > 0) {
+      // All emails failed
+      return res.status(500).json({
+        success: false,
+        message: `Campaign failed: all ${sent} emails bounced. Check email configuration (Brevo API key / SMTP credentials).`,
         data: {
           sent,
           delivered,
           bounced,
-          totalMatchedLeads:
-            campaign.recipientType === "leads" ||
-            campaign.recipientType === "all"
-              ? totalMatchedLeads
-              : undefined,
-          validEmailLeads:
-            campaign.recipientType === "leads" ||
-            campaign.recipientType === "all"
-              ? validEmailLeads
-              : undefined,
-          skippedNoEmailLeads:
-            campaign.recipientType === "leads" ||
-            campaign.recipientType === "all"
-              ? skippedNoEmailLeads
-              : undefined,
-          segment:
-            campaign.recipientType === "segment"
-              ? {
-                  leadsMatched: segmentCounts.leadsMatched,
-                  leadsValidEmails: segmentCounts.leadsValidEmails,
-                  customersMatched: segmentCounts.customersMatched,
-                  customersValidEmails: segmentCounts.customersValidEmails,
-                }
-              : undefined,
+          errors: errors.slice(0, 5), // Show first 5 errors
         },
       });
-    } // End of catch (queueError) block
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Campaign sent successfully! ${delivered} delivered, ${bounced} bounced.`,
+      data: {
+        sent,
+        delivered,
+        bounced,
+        totalMatchedLeads:
+          campaign.recipientType === "leads" || campaign.recipientType === "all"
+            ? totalMatchedLeads
+            : undefined,
+        validEmailLeads:
+          campaign.recipientType === "leads" || campaign.recipientType === "all"
+            ? validEmailLeads
+            : undefined,
+        skippedNoEmailLeads:
+          campaign.recipientType === "leads" || campaign.recipientType === "all"
+            ? skippedNoEmailLeads
+            : undefined,
+        segment:
+          campaign.recipientType === "segment"
+            ? {
+                leadsMatched: segmentCounts.leadsMatched,
+                leadsValidEmails: segmentCounts.leadsValidEmails,
+                customersMatched: segmentCounts.customersMatched,
+                customersValidEmails: segmentCounts.customersValidEmails,
+              }
+            : undefined,
+      },
+    });
   } catch (error) {
+    // If campaign was set to 'sending' but we hit an error, reset it
+    try {
+      const failedCampaign = await EmailCampaign.findById(req.params.id);
+      if (
+        failedCampaign &&
+        failedCampaign.status === "sending" &&
+        failedCampaign.stats.sent === 0
+      ) {
+        failedCampaign.status = "draft";
+        await failedCampaign.save();
+        console.log(
+          `↩️ Campaign ${req.params.id} reset to draft due to send error`,
+        );
+      }
+    } catch (resetError) {
+      console.error("Error resetting campaign status:", resetError);
+    }
+
+    console.error("❌ Campaign send error:", error.message);
     res.status(500).json({
       success: false,
       message: error.message,
@@ -741,11 +744,30 @@ exports.getCampaignAnalytics = async (req, res) => {
 // @route   GET /api/email-campaigns/track/open
 // @access  Public
 exports.trackOpen = async (req, res) => {
+  // Respond with pixel IMMEDIATELY (before DB update) to avoid timeout on cold starts
+  const img = Buffer.from(
+    "R0lGODlhAQABAPAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==",
+    "base64",
+  );
+  res.setHeader("Content-Type", "image/gif");
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate",
+  );
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.send(img);
+
+  // Fire-and-forget: update DB after response is sent
   try {
     const campaignId = req.query.c;
     const recipientEmail = req.query.e;
 
     if (campaignId) {
+      console.log(
+        `📬 Email OPEN tracked: campaign=${campaignId}, email=${recipientEmail || "unknown"}`,
+      );
+
       // Update aggregate stats
       await EmailCampaign.findByIdAndUpdate(campaignId, {
         $inc: { "stats.opened": 1 },
@@ -769,20 +791,7 @@ exports.trackOpen = async (req, res) => {
       }
     }
   } catch (error) {
-    // Swallow errors to avoid breaking email clients
-  } finally {
-    const img = Buffer.from(
-      "R0lGODlhAQABAPAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==",
-      "base64",
-    );
-    res.setHeader("Content-Type", "image/gif");
-    res.setHeader(
-      "Cache-Control",
-      "no-store, no-cache, must-revalidate, proxy-revalidate",
-    );
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-    res.send(img);
+    console.error("❌ Error tracking email open:", error.message);
   }
 };
 
@@ -794,8 +803,20 @@ exports.trackClick = async (req, res) => {
   const recipientEmail = req.query.e;
   const redirectUrl = req.query.u;
 
+  // Redirect immediately, update DB after
+  if (!redirectUrl) {
+    return res.status(400).send("Missing redirect URL");
+  }
+
+  res.redirect(redirectUrl);
+
+  // Fire-and-forget: update DB after redirect is sent
   try {
     if (campaignId) {
+      console.log(
+        `🖱️ Email CLICK tracked: campaign=${campaignId}, email=${recipientEmail || "unknown"}, url=${redirectUrl}`,
+      );
+
       // Update aggregate stats
       await EmailCampaign.findByIdAndUpdate(campaignId, {
         $inc: { "stats.clicked": 1 },
@@ -819,14 +840,8 @@ exports.trackClick = async (req, res) => {
       }
     }
   } catch (error) {
-    // ignore tracking errors
+    console.error("❌ Error tracking email click:", error.message);
   }
-
-  if (!redirectUrl) {
-    return res.status(400).send("Missing redirect URL");
-  }
-
-  return res.redirect(redirectUrl);
 };
 
 // @desc    Delete campaign
