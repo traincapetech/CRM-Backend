@@ -40,6 +40,12 @@ const ticketSchema = new Schema(
       required: true,
     },
 
+    category: {
+      type: String,
+      trim: true,
+      default: "General",
+    },
+
     // User who raised the ticket
     raisedBy: {
       type: Schema.Types.ObjectId,

@@ -101,6 +101,7 @@ const journeyRoutes = require("./routes/journeys");
 const searchRoutes = require("./routes/search");
 const ticketRoutes = require("./routes/ticket");
 const departmentRoutes = require("./routes/department");
+const notificationRoutes = require("./routes/notifications");
 const quarterlyIncentivesRoutes = require("./routes/quarterlyIncentives");
 const app = express();
 const server = http.createServer(app);
@@ -500,6 +501,7 @@ app.use("/api/journeys", journeyRoutes); // Mount Journey Routes
 app.use("/api/search", searchRoutes); // Mount Search Routes
 app.use("/api/tickets", ticketRoutes); // Mount Ticket Routes
 app.use("/api/departments", departmentRoutes); // Mount Department Routes
+app.use("/api/notifications", notificationRoutes); // Mount Notification Routes
 app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarterly Incentives Routes
 
 // Basic route for testing
@@ -593,6 +595,10 @@ const PORT = process.env.PORT || 8080;
 
 server.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+
+  // Initialize notification service with io
+  const notificationService = require("./services/notificationService");
+  notificationService.init(io);
 
   // Start the exam notification scheduler
   startExamNotificationScheduler(io);

@@ -71,6 +71,13 @@ const ticketChatSchema = new Schema(
       type: Boolean,
       default: false,
     },
+
+    // Reference to a message being replied to
+    replyTo: {
+      type: Schema.Types.ObjectId,
+      ref: "TicketChat",
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -118,7 +125,11 @@ ticketChatSchema.statics.getTicketChat = async function (
   const skip = (page - 1) * limit;
 
   return this.find({ ticketId })
-    .populate("sender", "name role")
+    .populate("sender", "name fullName role")
+    .populate({
+      path: "replyTo",
+      populate: { path: "sender", select: "name fullName" }
+    })
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit);

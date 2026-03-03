@@ -1,46 +1,11 @@
+const Department = require('../models/Department');
 const User = require('../models/User');
+const Employee = require('../models/Employee');
 
-// Virtual departments based on user roles
-const DEPARTMENTS = [
-  {
-    id: 'IT',
-    name: 'IT',
-    description: 'Information Technology Department',
-    roles: ['IT Manager', 'IT Staff', 'IT Intern', 'IT Permanent'],
-    headRole: 'IT Manager'
-  },
-  {
-    id: 'SALES',
-    name: 'Sales',
-    description: 'Sales Department',
-    roles: ['Manager', 'Sales Person'],
-    headRole: 'Manager'
-  },
-  {
-    id: 'LEAD',
-    name: 'Lead',
-    description: 'Lead Generation Department',
-    roles: ['Manager', 'Lead Person'],
-    headRole: 'Manager'
-  },
-  {
-    id: 'HR',
-    name: 'HR',
-    description: 'Human Resources Department',
-    roles: ['HR', 'Employee'],
-    headRole: 'HR'
-  }
-];
-
-// Get all departments (virtual departments based on roles)
+// Get all departments from database
 exports.getAllDepartments = async (req, res) => {
   try {
-    // Return virtual departments
-    const departments = DEPARTMENTS.map(dept => ({
-      _id: dept.id,
-      name: dept.name,
-      description: dept.description
-    }));
+    const departments = await Department.find({ isActive: true }).sort({ name: 1 });
 
     return res.status(200).json({
       success: true,
@@ -60,7 +25,7 @@ exports.getAllDepartments = async (req, res) => {
 exports.getDepartmentById = async (req, res) => {
   try {
     const { id } = req.params;
-    const department = DEPARTMENTS.find(d => d.id === id);
+    const department = await Department.findById(id);
 
     if (!department) {
       return res.status(404).json({ 
@@ -71,11 +36,7 @@ exports.getDepartmentById = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      data: {
-        _id: department.id,
-        name: department.name,
-        description: department.description
-      }
+      data: department
     });
   } catch (error) {
     console.error('Error in getDepartmentById:', error);
@@ -86,14 +47,13 @@ exports.getDepartmentById = async (req, res) => {
   }
 };
 
-// Get department members based on roles
+// Get department members based on database assignment
 exports.getDepartmentMembers = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Find the virtual department
-    const department = DEPARTMENTS.find(d => d.id === id);
-    
+    // Check if department exists
+    const department = await Department.findById(id);
     if (!department) {
       return res.status(404).json({ 
         success: false,
@@ -101,12 +61,26 @@ exports.getDepartmentMembers = async (req, res) => {
       });
     }
 
-    // Find users with roles that belong to this department
-    const members = await User.find({
-      role: { $in: department.roles }
-    })
-      .select('fullName name email role')
-      .sort({ role: 1, fullName: 1 }); // Head roles first, then alphabetically
+    // Find employees assigned to this department
+    const employees = await Employee.find({ 
+      department: id,
+      status: 'ACTIVE'
+    }).populate('userId', 'fullName name email role');
+
+    // Extract user objects from employee data
+    const members = employees.map(emp => {
+      if (emp.userId) {
+        return {
+          _id: emp.userId._id,
+          fullName: emp.userId.fullName || emp.fullName,
+          name: emp.userId.name || emp.fullName,
+          email: emp.userId.email || emp.email,
+          role: emp.userId.role,
+          employeeId: emp._id
+        };
+      }
+      return null;
+    }).filter(m => m !== null);
 
     return res.status(200).json({
       success: true,
@@ -122,43 +96,27 @@ exports.getDepartmentMembers = async (req, res) => {
   }
 };
 
-// Helper function to get department ID from user role
-exports.getDepartmentFromRole = (role) => {
-  for (const dept of DEPARTMENTS) {
-    if (dept.roles.includes(role)) {
-      return dept.id;
-    }
-  }
-  return null;
+// Helper function to get department ID from user (via Employee record)
+exports.getDepartmentForUser = async (userId) => {
+  const employee = await Employee.findOne({ userId }).populate('department');
+  return employee?.department;
 };
 
-// Helper function to check if user is department head
-exports.isDepartmentHead = (role) => {
-  return DEPARTMENTS.some(dept => dept.headRole === role);
-};
-
-// Get user's department (helper endpoint)
+// Get user's department (endpoint)
 exports.getUserDepartment = async (req, res) => {
   try {
-    const userRole = req.user.role;
-    
-    const department = DEPARTMENTS.find(dept => dept.roles.includes(userRole));
+    const department = await exports.getDepartmentForUser(req.user._id);
     
     if (!department) {
       return res.status(404).json({
         success: false,
-        message: 'No department found for this role'
+        message: 'No department found for this user'
       });
     }
 
     return res.status(200).json({
       success: true,
-      data: {
-        _id: department.id,
-        name: department.name,
-        description: department.description,
-        isHead: department.headRole === userRole
-      }
+      data: department
     });
   } catch (error) {
     console.error('Error in getUserDepartment:', error);
@@ -168,3 +126,4 @@ exports.getUserDepartment = async (req, res) => {
     });
   }
 };
+

@@ -8,12 +8,33 @@ const {
   sendTicketAssignedEmail,
   sendTicketStatusUpdateEmail,
 } = require("../services/emailService");
+const { createNotification } = require("../services/notificationService");
+const TicketChat = require("../models/TicketChat");
+
+const fileStorage = require("../services/fileStorageService");
 
 // 1. Create Ticket (Any user)
 exports.createTicket = async (req, res) => {
   try {
-    const { title, description, priority, preferredDept, attachments } =
-      req.body;
+    const { title, description, priority, assignedDept, category } = req.body;
+
+    // Handle file uploads if any
+    const processedAttachments = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        try {
+          const uploaded = await fileStorage.uploadFile(file, "tickets");
+          processedAttachments.push({
+            url: uploaded.url,
+            fileName: file.originalname,
+            fileType: file.mimetype,
+          });
+        } catch (uploadError) {
+          console.error("Error uploading ticket attachment:", uploadError);
+          // Continue with other files if one fails
+        }
+      }
+    }
 
     // Calculate Due Date based on Priority
     let hoursToAdd = 168; // Default LOW: 7 days (168 hours)
@@ -27,11 +48,13 @@ exports.createTicket = async (req, res) => {
     const ticketData = {
       title,
       description,
-      priority,
+      priority: priority || "MEDIUM",
+      category: category || "General",
       raisedBy: req.user._id,
+      assignedDept: assignedDept || "IT", // Default to IT if not specified
       dueDate,
       slaStatus: "ON_TIME",
-      attachments: attachments || [],
+      attachments: processedAttachments,
       activityLog: [
         {
           action: "CREATED",
@@ -42,11 +65,6 @@ exports.createTicket = async (req, res) => {
       ],
     };
 
-    // Add preferredDept if provided
-    if (preferredDept) {
-      ticketData.preferredDept = preferredDept;
-    }
-
     const ticket = await Ticket.create(ticketData);
 
     // Populate the ticket with user details
@@ -55,28 +73,12 @@ exports.createTicket = async (req, res) => {
       "fullName name email role",
     );
 
-    // Manually attach department data (since it's virtual)
-    const DEPARTMENTS = require("./department").DEPARTMENTS || [
-      {
-        id: "IT",
-        name: "IT",
-        description: "Information Technology Department",
-      },
-      { id: "SALES", name: "Sales", description: "Sales Department" },
-      { id: "LEAD", name: "Lead", description: "Lead Generation Department" },
-      { id: "HR", name: "HR", description: "Human Resources Department" },
-    ];
-
-    if (populatedTicket.preferredDept) {
-      const dept = DEPARTMENTS.find(
-        (d) => d.id === populatedTicket.preferredDept,
-      );
+    const deptId = populatedTicket.preferredDept || populatedTicket.assignedDept;
+    if (deptId) {
+      const Department = require("../models/Department");
+      const dept = await Department.findById(deptId);
       if (dept) {
-        populatedTicket._doc.preferredDept = {
-          _id: dept.id,
-          name: dept.name,
-          description: dept.description,
-        };
+        populatedTicket._doc.assignedDept = dept;
       }
     }
 
@@ -84,6 +86,28 @@ exports.createTicket = async (req, res) => {
     if (populatedTicket.raisedBy && populatedTicket.raisedBy.email) {
       sendTicketCreatedEmail(populatedTicket, populatedTicket.raisedBy);
     }
+
+    // REAL-TIME BROADCAST: Notify all Admins and Managers that a new ticket exists
+    const { broadcastToRole } = require("../services/notificationService");
+    
+    // Dynamically find all relevant roles that should receive "new ticket" alerts
+    // For now, we'll look for strings containing "Admin" or "Manager" to keep it flexible but data-driven
+    const User = require("../models/User");
+    const adminUsers = await User.find({
+      $or: [
+        { role: /Admin/i },
+        { role: /Manager/i },
+        { role: "HR" }
+      ]
+    }).distinct("role");
+
+    adminUsers.forEach(role => {
+      broadcastToRole(role, "new_ticket_created", { 
+        ticketId: populatedTicket._id,
+        raisedBy: populatedTicket.raisedBy?.fullName || "A user",
+        title: populatedTicket.title 
+      });
+    });
 
     return res.status(201).json({
       success: true,
@@ -141,17 +165,34 @@ exports.getAllTickets = async (req, res) => {
       };
     }
 
-    // DEBUG: Log filter to investigate why IT Employee sees all tickets
-    console.log(
-      `getAllTickets - Role: ${userRole}, User: ${req.user.fullName} (${req.user._id})`,
-    );
-    console.log(`Filter applied:`, JSON.stringify(filter));
+    // Pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
 
+    // Additional filters from query
+    if (req.query.status && req.query.status !== "ALL") {
+      filter.status = req.query.status;
+    }
+    if (req.query.priority && req.query.priority !== "ALL") {
+      filter.priority = req.query.priority;
+    }
+    if (req.query.search) {
+      filter.$or = filter.$or || [];
+      filter.$or.push(
+        { title: { $regex: req.query.search, $options: "i" } },
+        { description: { $regex: req.query.search, $options: "i" } }
+      );
+    }
+
+    const total = await Ticket.countDocuments(filter);
     const tickets = await Ticket.find(filter)
       .populate("raisedBy", "fullName name email role")
       .populate("assignedTo", "fullName name email role")
       .populate("activityLog.performedBy", "fullName name email role")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
     // Manually attach department data
     const enrichedTickets = enrichTicketsWithDepartments(tickets);
@@ -160,6 +201,11 @@ exports.getAllTickets = async (req, res) => {
       success: true,
       count: enrichedTickets.length,
       data: enrichedTickets,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit),
+      },
     });
   } catch (error) {
     console.error("Error in getAllTickets:", error);
@@ -214,9 +260,9 @@ function enrichTicketsWithDepartments(tickets) {
 exports.getTicketById = async (req, res) => {
   try {
     const ticket = await Ticket.findById(req.params.id)
-      .populate("raisedBy", "name email")
-      .populate("assignedTo", "name email")
-      .populate("assignedDept", "name")
+      .populate("raisedBy", "fullName name email role")
+      .populate("assignedTo", "fullName name email role")
+      // Remove populate("assignedDept") since it's a string, not ObjectId
       .populate("activityLog.performedBy", "fullName name email role");
 
     if (!ticket) {
@@ -282,6 +328,27 @@ exports.assignTicket = async (req, res) => {
     // Send email to raiser about status update (Assigned)
     if (fullTicket.raisedBy) {
       sendTicketStatusUpdateEmail(fullTicket, fullTicket.raisedBy);
+      
+      // CREATE NOTIFICATION
+      await createNotification({
+        recipient: fullTicket.raisedBy._id,
+        type: "TICKET_ASSIGNED",
+        ticketId: fullTicket._id,
+        message: `Your ticket "${fullTicket.title}" has been assigned to ${fullTicket.assignedTo?.fullName || departmentId}`,
+      });
+
+      // BROADCAST UPDATE to ticket room (for real-time update if user has ticket open)
+      const { broadcastTicketUpdate } = require("../services/notificationService");
+      broadcastTicketUpdate(fullTicket._id, { status: fullTicket.status, assignee: fullTicket.assignedTo });
+      
+      // BROADCAST to the ASSIGNEE'S personal room (to refresh their dashboard if they were not in the ticket room)
+      if (fullTicket.assignedTo?._id) {
+         const { broadcastToUser } = require("../services/notificationService");
+         broadcastToUser(fullTicket.assignedTo._id.toString(), "ticket_assigned", { 
+           ticketId: fullTicket._id,
+           title: fullTicket.title 
+         });
+      }
     }
 
     return res.status(200).json({
@@ -340,6 +407,18 @@ exports.startProgress = async (req, res) => {
     );
     if (fullTicket.raisedBy) {
       sendTicketStatusUpdateEmail(fullTicket, fullTicket.raisedBy);
+      
+      // CREATE NOTIFICATION
+      await createNotification({
+        recipient: fullTicket.raisedBy._id,
+        type: "STATUS_UPDATE",
+        ticketId: fullTicket._id,
+        message: `Progress has started on your ticket: "${fullTicket.title}"`,
+      });
+
+      // BROADCAST UPDATE
+      const { broadcastTicketUpdate } = require("../services/notificationService");
+      broadcastTicketUpdate(fullTicket._id, { status: fullTicket.status });
     }
 
     return res.status(200).json({
@@ -398,6 +477,18 @@ exports.resolveTicket = async (req, res) => {
     );
     if (fullTicket.raisedBy) {
       sendTicketStatusUpdateEmail(fullTicket, fullTicket.raisedBy);
+
+      // CREATE NOTIFICATION
+      await createNotification({
+        recipient: fullTicket.raisedBy._id,
+        type: "STATUS_UPDATE",
+        ticketId: fullTicket._id,
+        message: `Your ticket "${fullTicket.title}" has been marked as RESOLVED`,
+      });
+
+      // BROADCAST UPDATE
+      const { broadcastTicketUpdate } = require("../services/notificationService");
+      broadcastTicketUpdate(fullTicket._id, { status: fullTicket.status });
     }
 
     return res.status(200).json({
@@ -456,6 +547,18 @@ exports.closeTicket = async (req, res) => {
     );
     if (fullTicket.raisedBy) {
       sendTicketStatusUpdateEmail(fullTicket, fullTicket.raisedBy);
+
+      // CREATE NOTIFICATION
+      await createNotification({
+        recipient: fullTicket.raisedBy._id,
+        type: "STATUS_UPDATE",
+        ticketId: fullTicket._id,
+        message: `Your ticket "${fullTicket.title}" has been CLOSED`,
+      });
+
+      // BROADCAST UPDATE
+      const { broadcastTicketUpdate } = require("../services/notificationService");
+      broadcastTicketUpdate(fullTicket._id, { status: fullTicket.status });
     }
 
     return res.status(200).json({
@@ -515,6 +618,10 @@ exports.reopenTicket = async (req, res) => {
     // Notify admin or assignments if needed, but for now just confirmation to user
     if (fullTicket.raisedBy) {
       sendTicketStatusUpdateEmail(fullTicket, fullTicket.raisedBy);
+
+      // BROADCAST UPDATE
+      const { broadcastTicketUpdate } = require("../services/notificationService");
+      broadcastTicketUpdate(fullTicket._id, { status: fullTicket.status });
     }
 
     return res.status(200).json({
@@ -562,3 +669,123 @@ exports.deleteTicket = async (req, res) => {
     });
   }
 };
+
+// 10. Get Ticket Chat History (Paginated)
+exports.getTicketChat = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    
+    const chat = await TicketChat.getTicketChat(req.params.id, page, limit);
+    const total = await TicketChat.countDocuments({ ticketId: req.params.id });
+
+    return res.status(200).json({
+      success: true,
+      data: chat.reverse(), // Return in chronological order for UI
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// 11. Get Ticket Stats (Admin Only)
+exports.getTicketStats = async (req, res) => {
+  try {
+    if (req.user.role !== "Admin" && !["Manager", "IT Manager", "HR"].includes(req.user.role)) {
+       return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    let filter = {};
+    const userRole = req.user.role;
+    if (userRole !== "Admin") {
+       const deptController = require("./department");
+       const userDeptId = deptController.getDepartmentFromRole(userRole);
+       if (userDeptId) filter.assignedDept = userDeptId;
+    }
+
+    const stats = await Ticket.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const priorityStats = await Ticket.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$priority",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const slaStats = await Ticket.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$slaStatus",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        status: stats.reduce((acc, curr) => ({ ...acc, [curr._id]: curr.count }), {}),
+        priority: priorityStats.reduce((acc, curr) => ({ ...acc, [curr._id]: curr.count }), {}),
+        sla: slaStats.reduce((acc, curr) => ({ ...acc, [curr._id]: curr.count }), {}),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// 12. Upload Chat Attachments
+exports.uploadChatAttachments = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No files uploaded",
+      });
+    }
+
+    const processedAttachments = [];
+    for (const file of req.files) {
+      try {
+        const uploaded = await fileStorage.uploadFile(file, "chat");
+        processedAttachments.push({
+          url: uploaded.url,
+          fileName: file.originalname,
+          fileType: file.mimetype,
+        });
+      } catch (uploadError) {
+        console.error("Error uploading chat attachment:", uploadError);
+        // Continue with other files if one fails
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: processedAttachments,
+    });
+  } catch (error) {
+    console.error("Error in uploadChatAttachments:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
