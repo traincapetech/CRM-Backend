@@ -648,6 +648,9 @@ exports.deleteTicket = async (req, res) => {
       });
     }
 
+    // Also delete all chat messages associated with this ticket
+    await TicketChat.deleteMany({ ticketId: req.params.id });
+
     const ticket = await Ticket.findByIdAndDelete(req.params.id);
 
     if (!ticket) {
@@ -659,7 +662,7 @@ exports.deleteTicket = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Ticket deleted",
+      message: "Ticket and associated messages deleted",
     });
   } catch (error) {
     console.error("Error in deleteTicket:", error);

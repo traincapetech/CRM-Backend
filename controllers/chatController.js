@@ -144,26 +144,12 @@ const getOnlineUsers = async (req, res) => {
   }
 };
 
-// Simple in-memory cache for users (expires after 5 minutes)
-let usersCache = null;
-let usersCacheExpiry = null;
-
-// @desc    Get all users for chat (OPTIMIZED with caching)
+// @desc    Get all users for chat (OPTIMIZED)
 // @route   GET /api/chat/users
 // @access  Private
 const getAllUsersForChat = async (req, res) => {
   try {
     const currentUserId = req.user._id;
-
-    // OPTIMIZATION: Check cache first
-    const now = Date.now();
-    if (usersCache && usersCacheExpiry && now < usersCacheExpiry) {
-      console.log("Returning cached users data");
-      return res.status(200).json({
-        success: true,
-        data: usersCache,
-      });
-    }
 
     // Get all users except current user, including customers, but EXCLUDE terminated/inactive users
     const users = await User.find({
@@ -174,11 +160,7 @@ const getAllUsersForChat = async (req, res) => {
         "fullName email role chatStatus lastSeen profilePicture createdAt",
       )
       .lean() // OPTIMIZATION: Use lean() for faster queries
-      .limit(100); // OPTIMIZATION: Limit to 100 users max
-
-    // OPTIMIZATION: Cache the results for 5 minutes
-    usersCache = users;
-    usersCacheExpiry = now + 5 * 60 * 1000; // 5 minutes
+      .limit(500); // Increased limit as per requirements
 
     res.status(200).json({
       success: true,
@@ -241,8 +223,20 @@ const markMessagesAsRead = async (req, res) => {
     const { senderId } = req.params;
     const recipientId = req.user._id;
 
-    // This is handled automatically in getChatMessages, but we can also provide a separate endpoint
-    await ChatService.getChatMessages(recipientId, senderId, 1, 1);
+    await ChatService.markMessagesAsRead(senderId, recipientId);
+
+    // Notify sender in real-time that their messages were read
+    const io = req.app.get("io");
+    if (io) {
+      const chatId = [senderId.toString(), recipientId.toString()]
+        .sort()
+        .join("_");
+
+      io.to(senderId.toString()).emit("messagesRead", {
+        chatId,
+        readerId: recipientId,
+      });
+    }
 
     res.status(200).json({
       success: true,

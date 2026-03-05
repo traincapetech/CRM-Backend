@@ -47,6 +47,14 @@ const {
   uploadAttachment,
 } = require("../controllers/chatController");
 
+const {
+  createGroup,
+  getUserGroups,
+  getGroupMessages,
+  addGroupMember,
+  removeGroupMember,
+} = require("../controllers/chatGroupController");
+
 const { protect } = require("../middleware/auth");
 
 // All routes require authentication
@@ -59,6 +67,13 @@ router.post("/upload", upload.single("file"), uploadAttachment);
 router.post("/messages", sendMessage);
 router.get("/messages/:recipientId", getChatMessages);
 router.put("/messages/read/:senderId", markMessagesAsRead);
+
+// Group routes
+router.post("/groups", createGroup);
+router.get("/groups", getUserGroups);
+router.get("/groups/:groupId/messages", getGroupMessages);
+router.post("/groups/:groupId/members", addGroupMember);
+router.delete("/groups/:groupId/members/:userId", removeGroupMember);
 
 // Chat room routes
 router.get("/rooms", getChatRooms);

@@ -15,7 +15,12 @@ const chatMessageSchema = new mongoose.Schema(
     recipientId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false, // Optional for group messages
+    },
+    groupId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GroupChat",
+      required: false, // Optional for direct messages
     },
     content: {
       type: String,
@@ -62,6 +67,7 @@ const chatMessageSchema = new mongoose.Schema(
 
 // Index for efficient querying
 chatMessageSchema.index({ chatId: 1, timestamp: 1 });
+chatMessageSchema.index({ groupId: 1, timestamp: 1 });
 chatMessageSchema.index({ senderId: 1, recipientId: 1 });
 
 module.exports = mongoose.model("ChatMessage", chatMessageSchema);

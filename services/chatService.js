@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const ChatRoom = require("../models/ChatRoom");
 const ChatMessage = require("../models/ChatMessage");
+const GroupChat = require("../models/GroupChat");
 const User = require("../models/User");
 
 class ChatService {
@@ -262,6 +263,201 @@ class ChatService {
       return users;
     } catch (error) {
       throw new Error(`Error getting users for chat: ${error.message}`);
+    }
+  }
+
+  // Mark messages as read
+  static async markMessagesAsRead(senderId, recipientId) {
+    try {
+      const chatId = [senderId, recipientId].sort().join("_");
+
+      // Update messages
+      await ChatMessage.updateMany(
+        {
+          chatId,
+          recipientId,
+          isRead: false,
+        },
+        {
+          isRead: true,
+          status: "read",
+          readAt: new Date(),
+        },
+      );
+
+      // Reset unread count for the recipient
+      await ChatRoom.updateOne(
+        { chatId },
+        {
+          $set: {
+            [`unreadCount.${recipientId}`]: 0,
+          },
+        },
+      );
+    } catch (error) {
+      throw new Error(`Error marking messages as read: ${error.message}`);
+    }
+  }
+
+  // Group Chat Methods
+
+  // Create a new group
+  static async createGroup(data, creatorId) {
+    try {
+      const { name, description, members = [] } = data;
+
+      // Ensure creator is in members list
+      const memberIds = [...new Set([creatorId, ...members])];
+
+      const formattedMembers = memberIds.map(id => ({
+        user: id,
+        role: id.toString() === creatorId.toString() ? 'admin' : 'member',
+        joinedAt: new Date()
+      }));
+
+      const groupChat = new GroupChat({
+        name,
+        description,
+        createdBy: creatorId,
+        admins: [creatorId],
+        members: formattedMembers
+      });
+
+      await groupChat.save();
+      return await groupChat.populate('members.user', 'fullName email profilePicture');
+    } catch (error) {
+      throw new Error(`Error creating group: ${error.message}`);
+    }
+  }
+
+  // Get user's groups
+  static async getUserGroups(userId) {
+    try {
+      const groups = await GroupChat.find({
+        'members.user': userId,
+        isActive: true
+      })
+      .populate('members.user', 'fullName email profilePicture')
+      .populate('lastMessage.sender', 'fullName')
+      .sort({ updatedAt: -1 });
+
+      return groups;
+    } catch (error) {
+      throw new Error(`Error fetching user groups: ${error.message}`);
+    }
+  }
+
+  // Get group messages
+  static async getGroupMessages(groupId, page = 1, limit = 50) {
+    try {
+      const messages = await ChatMessage.find({ groupId })
+        .populate("senderId", "fullName email profilePicture")
+        .sort({ timestamp: 1 })
+        .limit(limit * 1)
+        .skip((page - 1) * limit);
+
+      return messages;
+    } catch (error) {
+      throw new Error(`Error getting group messages: ${error.message}`);
+    }
+  }
+
+  // Save group message
+  static async saveGroupMessage(messageData) {
+    try {
+      const {
+        senderId,
+        groupId,
+        content,
+        messageType = "text",
+        attachments = [],
+      } = messageData;
+
+      // Verify membership
+      const group = await GroupChat.findOne({ _id: groupId, 'members.user': senderId });
+      if (!group) throw new Error("User is not a member of this group");
+
+      const message = new ChatMessage({
+        chatId: `group_${groupId}`, // Unified chatId for groups
+        senderId,
+        groupId,
+        content,
+        messageType,
+        attachments,
+        status: "sent",
+        timestamp: new Date(),
+      });
+
+      const savedMessage = await message.save();
+
+      // Update group last message
+      await GroupChat.findByIdAndUpdate(groupId, {
+        lastMessage: {
+          content: content || (attachments.length > 0 ? "📎 Attachment" : "Group Message"),
+          sender: senderId,
+          timestamp: new Date()
+        }
+      });
+
+      await savedMessage.populate("senderId", "fullName email profilePicture");
+      return savedMessage;
+    } catch (error) {
+      throw new Error(`Error saving group message: ${error.message}`);
+    }
+  }
+
+  // Add group member
+  static async addGroupMember(groupId, userId, requesterId) {
+    try {
+      const group = await GroupChat.findById(groupId);
+      if (!group) throw new Error("Group not found");
+
+      // Check if requester is admin
+      const isAdmin = group.admins.some(id => id.toString() === requesterId.toString());
+      if (!isAdmin && !group.settings.allowMemberInvite) {
+        throw new Error("Only admins can invite members to this group");
+      }
+
+      // Check if user is already a member
+      if (group.members.some(m => m.user.toString() === userId.toString())) {
+        throw new Error("User is already a member");
+      }
+
+      group.members.push({ user: userId, role: 'member', joinedAt: new Date() });
+      await group.save();
+      return await group.populate('members.user', 'fullName email profilePicture');
+    } catch (error) {
+      throw new Error(`Error adding group member: ${error.message}`);
+    }
+  }
+
+  // Remove group member
+  static async removeGroupMember(groupId, userId, requesterId) {
+    try {
+      const group = await GroupChat.findById(groupId);
+      if (!group) throw new Error("Group not found");
+
+      const isAdmin = group.admins.some(id => id.toString() === requesterId.toString());
+      const isSelf = userId.toString() === requesterId.toString();
+
+      if (!isAdmin && !isSelf) {
+        throw new Error("Permission denied");
+      }
+
+      group.members = group.members.filter(m => m.user.toString() !== userId.toString());
+      
+      // If the removed user was an admin, remove from admins array too
+      group.admins = group.admins.filter(id => id.toString() !== userId.toString());
+
+      // If no members left, deactivate group
+      if (group.members.length === 0) {
+        group.isActive = false;
+      }
+
+      await group.save();
+      return group;
+    } catch (error) {
+      throw new Error(`Error removing group member: ${error.message}`);
     }
   }
 }
