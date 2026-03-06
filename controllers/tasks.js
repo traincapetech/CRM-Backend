@@ -150,6 +150,34 @@ exports.createTask = async (req, res) => {
 
     const task = await Task.create(req.body);
 
+    // Fetch the populated task so we can access the assigner's name
+    const populatedTask = await Task.findById(task._id).populate("assignedBy", "fullName");
+
+    // Send instant notification to the assigned user
+    try {
+      const io = req.app.get("io");
+      if (io && task.assignedTo) {
+        const assignedToId = task.assignedTo.toString();
+        const assignerName = populatedTask.assignedBy ? populatedTask.assignedBy.fullName : "A Manager";
+
+        // Emit taskAssigned event to the assigned employee's room (room = plain userId)
+        io.to(assignedToId).emit("taskAssigned", {
+          taskId: task._id.toString(),
+          taskTitle: task.title,
+          assignedBy: assignerName,
+          assignedAt: task.createdAt || Date.now()
+        });
+
+        // Debug: How many sockets are in the room?
+        const room = io.sockets.adapter.rooms.get(assignedToId);
+        const socketsInRoom = room ? room.size : 0;
+        console.log(`📋 taskAssigned emitted to room "${assignedToId}" — ${socketsInRoom} socket(s) in room`);
+      }
+    } catch (notifyError) {
+      console.error("Error sending task assignment notification:", notifyError);
+      // Don't fail the request if notification tracking fails
+    }
+
     res.status(201).json({
       success: true,
       data: task,
@@ -185,6 +213,7 @@ exports.updateTask = async (req, res) => {
       req.user.role === "IT Manager" && task.department === "IT";
 
     const previousStatus = task.status;
+    const previousAssignedTo = task.assignedTo?._id?.toString() || task.assignedTo?.toString();
 
     // Update completed status if provided
     if (req.body.completed !== undefined) {
@@ -271,6 +300,30 @@ exports.updateTask = async (req, res) => {
           notifyError,
         );
         // Don't fail the request if notification fails
+      }
+    }
+
+    // Send instant notification if task is newly assigned/re-assigned to a user
+    if (req.body.assignedTo && req.body.assignedTo.toString() !== previousAssignedTo) {
+      try {
+        const io = req.app.get("io");
+        if (io && task.assignedTo) {
+          const assignedToId = task.assignedTo._id?.toString() || task.assignedTo.toString();
+          const assignerName = req.user.fullName || (task.assignedBy ? task.assignedBy.fullName : "A Manager");
+
+          io.to(assignedToId).emit("taskAssigned", {
+            taskId: task._id.toString(),
+            taskTitle: task.title,
+            assignedBy: assignerName,
+            assignedAt: Date.now()
+          });
+
+          console.log(
+            `📋 Task reassignment notification sent to user-${assignedToId} for task: ${task.title}`
+          );
+        }
+      } catch (notifyError) {
+        console.error("Error sending task reassignment notification:", notifyError);
       }
     }
 

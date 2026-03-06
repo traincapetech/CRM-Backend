@@ -125,9 +125,9 @@ const io = socketIo(server, {
   },
 });
 
-// // Make io available to other modules
-// app.set("io", io);
-// module.exports.io = io;
+// Make io available to other modules
+app.set("io", io);
+module.exports.io = io;
 
 // // Chat service for Socket.IO
 // const ChatService = require("./services/chatService");

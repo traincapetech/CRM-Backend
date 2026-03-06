@@ -9,7 +9,7 @@ const attendanceSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: function() {
+    required: function () {
       // userId is required only if it's not an admin-created record
       return !this.isAdminCreated;
     }
@@ -20,7 +20,7 @@ const attendanceSchema = new mongoose.Schema({
   },
   checkIn: {
     type: Date,
-    required: function() {
+    required: function () {
       // checkIn is required only if it's not an admin-created record
       return !this.isAdminCreated;
     }
@@ -70,27 +70,44 @@ const attendanceSchema = new mongoose.Schema({
 attendanceSchema.index({ employeeId: 1, date: 1 }, { unique: true });
 
 // Virtual for formatted date
-attendanceSchema.virtual('formattedDate').get(function() {
+attendanceSchema.virtual('formattedDate').get(function () {
   return this.date.toDateString();
 });
 
-// Method to calculate total hours
-attendanceSchema.methods.calculateTotalHours = function() {
+// Method to calculate total hours and determine status
+attendanceSchema.methods.calculateTotalHours = async function () {
   if (this.checkIn && this.checkOut) {
     const diff = this.checkOut - this.checkIn;
     this.totalHours = diff / (1000 * 60 * 60); // Convert to hours
-    
-    // Standard working hours (8 hours)
-    const standardHours = 8;
+
+    // Standard working hours defaults
+    let standardHours = 8;
+    let halfDayThreshold = 4;
+    let presentThreshold = 7;
+
+    try {
+      // Determine if the employee is an INTERN
+      const Employee = mongoose.model('Employee');
+      const employee = await Employee.findById(this.employeeId);
+
+      if (employee && employee.employmentType === 'INTERN') {
+        halfDayThreshold = 3;
+        presentThreshold = 5.5;
+        // Intern standard hours can remain 8 for overtime purposes unless requested otherwise
+      }
+    } catch (err) {
+      console.error('Error fetching employee for attendance calculation:', err);
+    }
+
     if (this.totalHours > standardHours) {
       this.isOvertime = true;
       this.overtimeHours = this.totalHours - standardHours;
     }
-    
-    // Determine status based on hours
-    if (this.totalHours < 4) {
+
+    // Determine status based on hours and thresholds
+    if (this.totalHours < halfDayThreshold) {
       this.status = 'HALF_DAY';
-    } else if (this.totalHours < 7) {
+    } else if (this.totalHours < presentThreshold) {
       this.status = 'EARLY_LEAVE';
     } else {
       this.status = 'PRESENT';
@@ -99,9 +116,9 @@ attendanceSchema.methods.calculateTotalHours = function() {
 };
 
 // Pre-save middleware to calculate hours
-attendanceSchema.pre('save', function(next) {
+attendanceSchema.pre('save', async function (next) {
   if (this.checkIn && this.checkOut) {
-    this.calculateTotalHours();
+    await this.calculateTotalHours();
   }
   next();
 });
