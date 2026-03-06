@@ -16,32 +16,46 @@ const init = (ioInstance) => {
  * @param {String} params.recipient - User ID
  * @param {String} params.type - Notification type
  * @param {String} params.ticketId - Ticket ID
+ * @param {String} params.questionnaireId - Questionnaire ID
  * @param {String} params.message - Notification text
+
  */
-const createNotification = async ({ recipient, type, ticketId, message }) => {
+const createNotification = async ({ recipient, type, ticketId, questionnaireId, message }) => {
   try {
-    const notification = await Notification.create({
+    const notificationData = {
       recipient,
       type,
       ticketId,
       message,
-    });
+    };
+
+    if (questionnaireId) {
+      notificationData.questionnaireId = questionnaireId;
+    }
+
+    const notification = await Notification.create(notificationData);
+
+
 
     // Send via socket if io is initialized
     if (io) {
-      // Users should join a room named `user_${userId}` on connection
+      // Users should join a room named `user-${userId}` on connection
       io.to(`user-${recipient}`).emit("new_notification", {
         _id: notification._id,
         type,
         ticketId,
+        questionnaireId,
         message,
         isRead: false,
         createdAt: notification.createdAt,
       });
+
       
       // Also emit a general update to refresh unread count
       io.to(`user-${recipient}`).emit("notification_count_update");
     }
+
+
 
     return notification;
   } catch (error) {
@@ -72,7 +86,12 @@ const broadcastTicketUpdate = (ticketId, data = {}) => {
  */
 const broadcastToRole = (role, event, data = {}) => {
   if (io) {
-    io.to(`role-${role}`).emit(event, data);
+    const room = `role-${role}`;
+    // Get number of sockets in room for debugging
+    const sockets = io.sockets.adapter.rooms.get(room);
+    console.log(`📢 [BROADCAST] ${room}: Sending ${event}, Sockets in room: ${sockets ? sockets.size : 0}`);
+    
+    io.to(room).emit(event, data);
   }
 };
 
@@ -84,9 +103,18 @@ const broadcastToRole = (role, event, data = {}) => {
  */
 const broadcastToUser = (userId, event, data = {}) => {
   if (io) {
-    io.to(`user-${userId}`).emit(event, data);
+    const room = `user-${userId}`;
+    // Get number of sockets in room for debugging
+    const sockets = io.sockets.adapter.rooms.get(room);
+    console.log(`📢 [BROADCAST] ${room}: Sending ${event}, Sockets in room: ${sockets ? sockets.size : 0}`);
+
+    io.to(room).emit(event, data);
   }
 };
+
+
+
+
 
 module.exports = {
   init,

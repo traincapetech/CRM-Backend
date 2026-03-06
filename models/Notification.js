@@ -18,14 +18,24 @@ const notificationSchema = new Schema(
         "NEW_MESSAGE",
         "SLA_BREACH",
         "TICKET_REOPENED",
+        "SALARY_PAYOUT",
+        "ACTIVITY",
       ],
+
+
       required: true,
     },
     ticketId: {
       type: Schema.Types.ObjectId,
       ref: "Ticket",
-      required: true,
+      required: false,
     },
+    questionnaireId: {
+      type: Schema.Types.ObjectId,
+      ref: "Questionnaire",
+      required: false,
+    },
+
     message: {
       type: String,
       required: true,

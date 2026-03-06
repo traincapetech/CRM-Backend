@@ -97,55 +97,130 @@ router.post(
 router.get(
   "/admin/all-employees",
   protect,
-  authorize("Admin", "HR"),
+  authorize("Admin", "HR", "Manager"),
   async (req, res) => {
     try {
       const PerformanceSummary = require("../models/PerformanceSummary");
+      const DailyPerformanceRecord = require("../models/DailyPerformanceRecord");
       const User = require("../models/User");
       const PerformanceCalculationService = require("../services/performanceCalculation");
 
-      // Ensure all active employees with KPI-eligible roles have fresh calculations
-      const eligibleEmployees = await User.find({
-        active: true,
-        role: { $in: ["Lead Person", "Sales Person", "Manager"] },
-      }).select("_id fullName role");
+      const { month, year } = req.query;
+      const now = new Date();
+      const currentMonth = now.getMonth() + 1; // 1-12
+      const currentYear = now.getFullYear();
 
-      const today = new Date();
-      for (const emp of eligibleEmployees) {
-        try {
-          await PerformanceCalculationService.calculateEmployeePerformance(
-            emp._id,
-            today,
-          );
-        } catch (calcErr) {
-          // If calculation fails (e.g., no KPIs for role), ensure at least a summary exists
-          const existingSummary = await PerformanceSummary.findOne({
-            employeeId: emp._id,
-          });
-          if (!existingSummary) {
-            await PerformanceSummary.create({
+      const isHistorical =
+        (year && parseInt(year) < currentYear) ||
+        (year &&
+          parseInt(year) === currentYear &&
+          month &&
+          parseInt(month) < currentMonth);
+
+      if (!isHistorical) {
+        // --- CURRENT MONTH LOGIC (Default) ---
+        // Ensure all active employees with KPI-eligible roles have fresh calculations
+        const eligibleEmployees = await User.find({
+          active: true,
+          role: { $in: ["Lead Person", "Sales Person", "Manager"] },
+        }).select("_id fullName role");
+
+        const today = new Date();
+        for (const emp of eligibleEmployees) {
+          try {
+            await PerformanceCalculationService.calculateEmployeePerformance(
+              emp._id,
+              today,
+            );
+          } catch (calcErr) {
+            // If calculation fails, ensure at least a summary exists
+            const existingSummary = await PerformanceSummary.findOne({
               employeeId: emp._id,
-              currentRating: 0,
-              ratingTier: "poor",
-              stars: 1,
             });
+            if (!existingSummary) {
+              await PerformanceSummary.create({
+                employeeId: emp._id,
+                currentRating: 0,
+                ratingTier: "poor",
+                stars: 1,
+              });
+            }
           }
+        }
+
+        const summaries = await PerformanceSummary.find({})
+          .populate("employeeId", "fullName email role active")
+          .sort({ currentRating: -1 });
+
+        const validSummaries = summaries.filter(
+          (s) => s.employeeId && s.employeeId.active !== false,
+        );
+
+        return res.status(200).json({
+          success: true,
+          count: validSummaries.length,
+          data: validSummaries,
+        });
+      }
+
+      // --- HISTORICAL AGGREGATION LOGIC ---
+      const targetMonth = parseInt(month);
+      const targetYear = parseInt(year);
+
+      // Create date range for the target month
+      const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
+      const endOfMonth = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
+      // Aggregate DailyPerformanceRecord for the month
+      const historicalData = await DailyPerformanceRecord.aggregate([
+        {
+          $match: {
+            date: { $gte: startOfMonth, $lte: endOfMonth },
+          },
+        },
+        {
+          $group: {
+            _id: "$employeeId",
+            avgScore: { $avg: "$overallScore" },
+            recordsCount: { $sum: 1 },
+            // We can also aggregate averages if they were stored per record, 
+            // but usually we just want the monthly average here.
+          },
+        },
+        {
+          $sort: { avgScore: -1 },
+        },
+      ]);
+
+      // Populate user info
+      const results = [];
+      for (const item of historicalData) {
+        const user = await User.findById(item._id).select(
+          "fullName email role active",
+        );
+        if (user && user.active !== false) {
+          results.push({
+            employeeId: user,
+            currentRating: item.avgScore,
+            ratingTier: PerformanceCalculationService.getRatingTier(
+              item.avgScore,
+            ),
+            stars: PerformanceCalculationService.getStars(item.avgScore),
+            isHistorical: true,
+            month: targetMonth,
+            year: targetYear,
+            averages: {
+              // For historical month, we treat the average of that month as the primary stat
+              last30Days: item.avgScore,
+            },
+          });
         }
       }
 
-      const summaries = await PerformanceSummary.find({})
-        .populate("employeeId", "fullName email role active")
-        .sort({ currentRating: -1 });
-
-      // Filter out summaries where employeeId might be null (deleted users) or inactive
-      const validSummaries = summaries.filter(
-        (s) => s.employeeId && s.employeeId.active !== false,
-      );
-
       res.status(200).json({
         success: true,
-        count: validSummaries.length,
-        data: validSummaries,
+        count: results.length,
+        data: results,
       });
     } catch (error) {
       console.error("Error fetching all employee performance:", error);

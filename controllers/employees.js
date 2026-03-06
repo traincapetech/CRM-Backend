@@ -126,6 +126,13 @@ exports.getEmployees = async (req, res) => {
     // Transform employees: map individual document fields to documents object
     const transformedEmployees = employees.map((emp) => {
       const empObj = emp.toObject();
+
+      // Decrypt PII fields for authorized users (Admin, HR, Manager, IT Manager)
+      if (["Admin", "HR", "Manager", "IT Manager"].includes(req.user.role)) {
+        const decrypted = emp.getDecryptedPII();
+        Object.assign(empObj, decrypted);
+      }
+
       // If documents object is empty but individual fields exist, map them
       if (
         (!empObj.documents || Object.keys(empObj.documents).length === 0) &&
@@ -234,6 +241,13 @@ exports.getEmployee = async (req, res) => {
 
     // Transform: map individual document fields to documents object
     const empObj = employee.toObject();
+    
+    // Decrypt PII fields for authorized users (Admin, HR, Manager, IT Manager)
+    if (["Admin", "HR", "Manager", "IT Manager"].includes(req.user.role)) {
+      const decrypted = employee.getDecryptedPII();
+      Object.assign(empObj, decrypted);
+    }
+
     if (
       (!empObj.documents || Object.keys(empObj.documents).length === 0) &&
       (empObj.photograph ||
@@ -319,6 +333,13 @@ exports.getEmployeeByUserId = async (req, res) => {
 
     // Transform: map individual document fields to documents object
     const empObj = employee.toObject();
+
+    // Decrypt PII fields for authorized users (Admin, HR, Manager, IT Manager)
+    if (["Admin", "HR", "Manager", "IT Manager"].includes(req.user.role)) {
+      const decrypted = employee.getDecryptedPII();
+      Object.assign(empObj, decrypted);
+    }
+
     if (
       (!empObj.documents || Object.keys(empObj.documents).length === 0) &&
       (empObj.photograph ||
@@ -1180,11 +1201,15 @@ exports.updatePaymentDetails = async (req, res) => {
       });
     }
 
-    // Check authorization - Only Admin can update payment details
-    if (req.user.role !== "Admin") {
+    // Check authorization - Admin, HR, and Manager can update payment details
+    // Employees can also update their own payment details
+    // Only Admin can VERIFY with Paytm (creates Beneficiary ID)
+    const canManagePayments = ["Admin", "HR", "Manager"].includes(req.user.role);
+    const isOwnRecord = employee.userId && employee.userId.toString() === req.user.id;
+    if (!canManagePayments && !isOwnRecord) {
       return res.status(403).json({
         success: false,
-        message: "Only Admin can update payment details",
+        message: "Not authorized to update payment details. Contact your Admin or HR.",
       });
     }
 
@@ -1265,11 +1290,21 @@ exports.updatePaymentDetails = async (req, res) => {
 
     await employee.save();
 
-    // Return employee data (bank account number will be encrypted)
+    // Return employee data (bank account number will be decrypted for authorized users)
     const employeeObj = employee.toObject();
-    // Don't expose encrypted bank account number in response
-    if (employeeObj.bankAccountNumber) {
-      employeeObj.bankAccountNumber = "***ENCRYPTED***";
+
+    // Decrypt PII fields for authorized users (Admin, HR, Manager, IT Manager)
+    if (["Admin", "HR", "Manager", "IT Manager"].includes(req.user.role)) {
+      const decrypted = employee.getDecryptedPII();
+      Object.assign(employeeObj, decrypted);
+    } else {
+      // For non-authorized users, mask it
+      if (employeeObj.bankAccountNumber) {
+        employeeObj.bankAccountNumber = "***ENCRYPTED***";
+      }
+      if (employeeObj.upiId) {
+        employeeObj.upiId = "***ENCRYPTED***";
+      }
     }
 
     res.status(200).json({
@@ -1301,11 +1336,11 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    // Check authorization - Only Admin can verify payment details
-    if (req.user.role !== "Admin") {
+    // Check authorization - Admin, HR, and Manager can verify payment details
+    if (!["Admin", "HR", "Manager"].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: "Only Admin can verify payment details",
+        message: "Not authorized to verify payment details",
       });
     }
 
@@ -1456,6 +1491,23 @@ exports.verifyPayment = async (req, res) => {
     employee.paytmVerified = true;
 
     await employee.save();
+
+    // Phase 6: Audit Log (Verification)
+    try {
+      const PayoutAuditLog = require("../models/PayoutAuditLog");
+      await PayoutAuditLog.create({
+        employeeId: employee._id,
+        action: 'VERIFICATION_SUCCESS',
+        status: 'SUCCESS',
+        details: { 
+          message: 'Payment details verified with Paytm',
+          beneficiaryId: employee.paytmBeneficiaryId
+        },
+        performedBy: req.user.id
+      });
+    } catch (logError) {
+      console.error('Error logging verification:', logError);
+    }
 
     res.status(200).json({
       success: true,

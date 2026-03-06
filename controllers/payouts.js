@@ -8,6 +8,7 @@ const Payroll = require('../models/Payroll');
 const Employee = require('../models/Employee');
 const paytmService = require('../services/paytmService');
 const { getPayoutStatusLabel, formatAmount } = require('../utils/payoutHelpers');
+const PayoutAuditLog = require('../models/PayoutAuditLog');
 
 // @desc    Get payout status for a payroll
 // @route   GET /api/payouts/payroll/:payrollId
@@ -54,6 +55,17 @@ exports.getPayrollPayoutStatus = async (req, res) => {
       payroll.paytmPayoutStatus = payoutStatus.status === 'SUCCESS' ? 'SUCCESS' : 
                                    payoutStatus.status === 'FAILED' ? 'FAILED' : 'PENDING';
       await payroll.save();
+
+      // Phase 6: Audit Log (Status Check)
+      await PayoutAuditLog.create({
+        payrollId: payroll._id,
+        employeeId: payroll.employeeId._id,
+        action: 'STATUS_CHECK',
+        status: payroll.paytmPayoutStatus,
+        amount: payroll.netSalary,
+        paytmTransactionId: payroll.paytmTransactionId,
+        details: payoutStatus
+      });
 
       res.status(200).json({
         success: true,
@@ -227,6 +239,18 @@ exports.retryPayout = async (req, res) => {
     
     await payroll.save();
 
+    // Phase 6: Audit Log (Retry)
+    await PayoutAuditLog.create({
+      payrollId: payroll._id,
+      employeeId: payroll.employeeId._id,
+      action: 'RETRY',
+      status: payout.status,
+      amount: payroll.netSalary,
+      paytmTransactionId: payout.transactionId,
+      details: payout,
+      performedBy: req.user.id
+    });
+
     res.status(200).json({
       success: true,
       data: {
@@ -243,6 +267,74 @@ exports.retryPayout = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || 'Server error'
+    });
+  }
+};
+
+// @desc    Get Paytm account balance
+// @route   GET /api/payouts/balance
+// @access  Private (Admin only)
+exports.getAccountBalance = async (req, res) => {
+  try {
+    // Check authorization
+    if (req.user.role !== 'Admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only Admin can view account balance'
+      });
+    }
+
+    const paytmService = require('../services/paytmService');
+    const balanceData = await paytmService.getAccountBalance();
+
+    res.status(200).json({
+      success: true,
+      data: balanceData
+    });
+  } catch (error) {
+    console.error('Error getting account balance:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error'
+    });
+  }
+};
+// @desc    Get payout audit logs
+// @route   GET /api/payouts/audit-logs/:payrollId?
+// @access  Private (Admin/HR/Manager)
+exports.getAuditLogs = async (req, res) => {
+  try {
+    // Check authorization
+    if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to view audit logs'
+      });
+    }
+
+    const { payrollId } = req.params;
+    const query = {};
+
+    if (payrollId) {
+      query.payrollId = payrollId;
+    }
+
+    const logs = await PayoutAuditLog.find(query)
+      .populate('employeeId', 'fullName')
+      .populate('performedBy', 'fullName')
+      .sort('-createdAt')
+      .limit(50);
+
+    res.status(200).json({
+      success: true,
+      count: logs.length,
+      data: logs
+    });
+  } catch (error) {
+    console.error('Error fetching audit logs:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching audit logs'
     });
   }
 };

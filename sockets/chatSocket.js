@@ -6,11 +6,26 @@ module.exports = (io, socket) => {
   console.log("Chat socket connected:", socket.id);
 
   // Join personal room for 1-to-1 messages
-  socket.on("join-user-room", (userId) => {
-    socket.join(userId);
+  socket.on("join-user-room", async (userId) => {
+    socket.join(`user-${userId}`);
     socket.data.userId = userId; // Store userId in socket data
-    console.log(`User ${userId} joined their personal room`);
+    
+    try {
+      const user = await User.findById(userId);
+      if (user && user.role) {
+        socket.join(`role-${user.role}`);
+        console.log(`✅ [SOCKET] User ${userId} joined standardized role room: role-${user.role}`);
+      }
+
+    } catch (err) {
+      console.error("Error joining role room:", err);
+    }
+    
+    console.log(`User ${userId} joined their personal room user-${userId}`);
   });
+
+
+
 
   // Send a direct message
   socket.on("sendMessage", async (data) => {
@@ -26,7 +41,9 @@ module.exports = (io, socket) => {
       });
 
       // Send to recipient
-      io.to(recipientId).emit("newMessage", {
+      io.to(`user-${recipientId}`).emit("newMessage", {
+
+
         _id: message._id,
         chatId: message.chatId,
         senderId: message.senderId,
@@ -37,6 +54,7 @@ module.exports = (io, socket) => {
         timestamp: message.timestamp,
         isRead: message.isRead,
       });
+
 
       // Confirmation to sender
       socket.emit("messageDelivered", {

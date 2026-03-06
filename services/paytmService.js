@@ -113,6 +113,7 @@ const createBeneficiary = async (beneficiaryData) => {
         account: maskAccountNumber(bankDetails.accountNumber),
         ifsc: bankDetails.ifsc.toUpperCase()
       });
+      console.log('Debug: Sending raw account number to Paytm API - Length:', bankDetails.accountNumber?.length);
     } else if (paymentMode === 'upi') {
       if (!upiId) {
         throw new Error('UPI ID is required for UPI transfers');
@@ -154,9 +155,11 @@ const createBeneficiary = async (beneficiaryData) => {
       paymentMode: paymentMode
     });
     
-    // Make API call - ONLY Content-Type header required
+    // Make API call - Headers required for Paytm Payouts
     const response = await axios.post(url, requestBody, {
       headers: {
+        'x-mid': merchantId,
+        'x-checksum': checksum,
         'Content-Type': 'application/json'
       }
     });
@@ -252,9 +255,8 @@ const createPayout = async (payoutData) => {
     }
     
     // Amount should be in rupees (Paytm accepts rupees, not paise)
-    const amountInRupees = typeof amount === 'number' && amount > 1000 
-      ? amount / 100  // If in paise, convert to rupees
-      : amount;
+    // BUG FIX: Removed ambiguous heuristic that divided amount by 100 if > 1000
+    const amountInRupees = amount;
     
     // Build payout request - Paytm Payouts API v1.2 format
     const requestBody = {
@@ -286,9 +288,11 @@ const createPayout = async (payoutData) => {
       transferMode: transferMode
     });
     
-    // Make API call - ONLY Content-Type header required
+    // Make API call - Headers required for Paytm Payouts
     const response = await axios.post(url, requestBody, {
       headers: {
+        'x-mid': merchantId,
+        'x-checksum': checksum,
         'Content-Type': 'application/json'
       }
     });
@@ -416,19 +420,21 @@ const getPayoutStatus = async (transferId) => {
  */
 const handlePayoutCallback = async (callbackData) => {
   try {
-    // Verify checksum if provided
-    if (callbackData.checksum) {
-      const merchantKey = process.env.PAYTM_MERCHANT_KEY;
-      if (!merchantKey) {
-        throw new Error('PAYTM_MERCHANT_KEY is required for callback verification');
-      }
-      
-      const { checksum, ...dataWithoutChecksum } = callbackData;
-      const calculatedChecksum = await generateChecksum(dataWithoutChecksum, merchantKey);
-      
-      if (calculatedChecksum !== checksum) {
-        throw new Error('Invalid checksum in Paytm callback');
-      }
+    // Verify checksum - MANDATORY for security
+    if (!callbackData.checksum) {
+      throw new Error('Missing checksum in Paytm callback');
+    }
+    
+    const merchantKey = process.env.PAYTM_MERCHANT_KEY;
+    if (!merchantKey) {
+      throw new Error('PAYTM_MERCHANT_KEY is required for callback verification');
+    }
+    
+    const { checksum, ...dataWithoutChecksum } = callbackData;
+    const calculatedChecksum = await generateChecksum(dataWithoutChecksum, merchantKey);
+    
+    if (calculatedChecksum !== checksum) {
+      throw new Error('Invalid checksum in Paytm callback');
     }
     
     return {
@@ -445,9 +451,66 @@ const handlePayoutCallback = async (callbackData) => {
   }
 };
 
+/**
+ * Get Paytm Account Balance
+ * Endpoint: POST /payout/v1/getBalance
+ * 
+ * @returns {Promise<Object>} - Account balance details
+ */
+const getAccountBalance = async () => {
+  try {
+    const merchantId = process.env.PAYTM_MERCHANT_ID;
+    const merchantKey = process.env.PAYTM_MERCHANT_KEY;
+    
+    if (!merchantId || !merchantKey) {
+      throw new Error('PAYTM_MERCHANT_ID and PAYTM_MERCHANT_KEY environment variables are required');
+    }
+    
+    // Build balance request
+    // Note: Some versions of Paytm API require an empty object or just mid
+    const requestBody = {
+      mid: merchantId
+    };
+    
+    // Generate checksum from body WITHOUT checksum field
+    const checksum = await generateChecksum(requestBody, merchantKey);
+    
+    // Add checksum to request body
+    requestBody.checksum = checksum;
+    
+    // Paytm Payouts API endpoint: POST /payout/v1/getBalance
+    const url = `${PAYTM_BASE_URL}/payout/v1/getBalance`;
+    
+    const response = await axios.post(url, requestBody, {
+      headers: {
+        'x-mid': merchantId,
+        'x-checksum': checksum,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (response.data && (response.data.status === 'SUCCESS' || response.data.success === true)) {
+      return {
+        balance: response.data.balance || 0,
+        currency: response.data.currency || 'INR',
+        message: response.data.message || 'Balance fetched successfully'
+      };
+    } else {
+      throw new Error(response.data?.message || 'Failed to fetch account balance');
+    }
+  } catch (error) {
+    console.error('Error fetching Paytm account balance:', error.message);
+    if (error.response) {
+      throw new Error(`Failed to fetch account balance: ${error.response.data?.message || error.message}`);
+    }
+    throw error;
+  }
+};
+
 module.exports = {
   createBeneficiary,
   createPayout,
   getPayoutStatus,
-  handlePayoutCallback
+  handlePayoutCallback,
+  getAccountBalance
 };

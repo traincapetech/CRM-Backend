@@ -1,5 +1,7 @@
 const Payroll = require("../models/Payroll");
 const Employee = require("../models/Employee");
+const PayoutAuditLog = require("../models/PayoutAuditLog");
+const notificationService = require("../services/notificationService");
 const Attendance = require("../models/Attendance");
 const Expense = require("../models/Expense"); // Added Expense model
 const PDFDocument = require("pdfkit");
@@ -727,8 +729,13 @@ exports.approvePayroll = async (req, res) => {
     payroll.approvedDate = new Date();
 
     // Trigger Paytm payout if employee has verified payment details
-    // Migration Note: Replaced Razorpay payout logic with Paytm payout
+    // IDEMPOTENCY CHECK: Prevent duplicate payouts if one is already success or pending
+    const hasActivePayout = payroll.paytmTransactionId && 
+                          payroll.paytmPayoutStatus && 
+                          ['SUCCESS', 'PENDING', 'PROCESSING'].includes(payroll.paytmPayoutStatus);
+
     if (
+      !hasActivePayout &&
       payroll.employeeId &&
       payroll.employeeId.paytmVerified &&
       payroll.employeeId.paytmBeneficiaryId
@@ -755,6 +762,18 @@ exports.approvePayroll = async (req, res) => {
 
         const payout = await paytmService.createPayout(payoutData);
 
+        // Phase 6: Audit Log
+        await PayoutAuditLog.create({
+          payrollId: payroll._id,
+          employeeId: payroll.employeeId._id,
+          action: "INITIATED",
+          status: payout.status,
+          amount: payroll.netSalary,
+          paytmTransactionId: payout.transactionId,
+          details: payout,
+          performedBy: req.user.id
+        });
+
         // Update payroll with Paytm payout details (replaces Razorpay fields)
         payroll.paytmTransactionId = payout.transactionId;
         payroll.paytmPayoutStatus =
@@ -768,6 +787,22 @@ exports.approvePayroll = async (req, res) => {
         );
       } catch (payoutError) {
         console.error("Error creating Paytm payout:", payoutError);
+        
+        // Phase 6: Audit Log (Failure)
+        try {
+          await PayoutAuditLog.create({
+            payrollId: payroll._id,
+            employeeId: payroll.employeeId._id,
+            action: "INITIATED",
+            status: "FAILED",
+            amount: payroll.netSalary,
+            details: { error: payoutError.message, stack: payoutError.stack },
+            performedBy: req.user.id
+          });
+        } catch (logError) {
+          console.error("Error creating audit log:", logError);
+        }
+
         // Don't fail the approval if payout fails - just log the error
         // Payroll will still be approved, but payout will need to be processed manually
         payroll.paytmPayoutStatus = "FAILED";
@@ -836,7 +871,7 @@ exports.deletePayroll = async (req, res) => {
     );
     console.log("Reset associated incentives");
 
-    // Unlink expenses
+    // Unlink associated expenses
     const Expense = require("../models/Expense");
     await Expense.updateMany(
       { payrollId: payroll._id },
@@ -846,6 +881,39 @@ exports.deletePayroll = async (req, res) => {
       },
     );
     console.log("Unlinked associated expenses");
+
+    // REVERSE ADVANCE DEDUCTIONS
+    const EmployeeAdvance = require("../models/EmployeeAdvance");
+    const affectedAdvances = await EmployeeAdvance.find({
+      "deductionHistory.payrollId": payroll._id,
+    });
+
+    if (affectedAdvances.length > 0) {
+      for (const advance of affectedAdvances) {
+        // Find the history entry for this payroll
+        const historyIndex = advance.deductionHistory.findIndex(
+          (h) => h.payrollId && h.payrollId.toString() === payroll._id.toString(),
+        );
+
+        if (historyIndex !== -1) {
+          const deductionAmount = advance.deductionHistory[historyIndex].deductedAmount;
+          
+          // Restore the amount
+          advance.remainingAmount += deductionAmount;
+          
+          // Re-activate if it was completed
+          if (advance.status === "completed") {
+            advance.status = "active";
+          }
+          
+          // Remove from history
+          advance.deductionHistory.splice(historyIndex, 1);
+          
+          await advance.save();
+          console.log(`🏦 Reversed deduction of Rs. ${deductionAmount} for advance ${advance._id}`);
+        }
+      }
+    }
 
     await Payroll.findByIdAndDelete(req.params.id);
     console.log("Payroll deleted successfully");
@@ -1235,66 +1303,6 @@ const generatePDFContent = (doc, payroll) => {
   );
 };
 
-// @desc    Delete payroll
-// @route   DELETE /api/payroll/:id
-// @access  Private (Admin/HR/Manager)
-exports.deletePayroll = async (req, res) => {
-  try {
-    console.log("Delete payroll request received for ID:", req.params.id);
-    console.log("User role:", req.user.role);
-
-    // Check authorization
-    if (!["Admin", "HR", "Manager"].includes(req.user.role)) {
-      console.log("Authorization failed - user role not allowed");
-      return res.status(403).json({
-        success: false,
-        message: "Not authorized to delete payroll",
-      });
-    }
-
-    const payroll = await Payroll.findById(req.params.id);
-    if (!payroll) {
-      console.log("Payroll not found with ID:", req.params.id);
-      return res.status(404).json({
-        success: false,
-        message: "Payroll record not found",
-      });
-    }
-
-    console.log("Payroll found with status:", payroll.status);
-
-    console.log("Attempting to delete payroll...");
-
-    // Delete associated salary slip file if exists
-    if (payroll.salarySlipPath && fs.existsSync(payroll.salarySlipPath)) {
-      fs.unlinkSync(payroll.salarySlipPath);
-      console.log("Deleted salary slip file");
-    }
-
-    // Reset associated incentives if any
-    const Incentive = require("../models/Incentive");
-    await Incentive.updateMany(
-      { payrollId: payroll._id },
-      { $unset: { payrollId: 1 } },
-    );
-    console.log("Reset associated incentives");
-
-    await Payroll.findByIdAndDelete(req.params.id);
-    console.log("Payroll deleted successfully");
-
-    res.status(200).json({
-      success: true,
-      data: {},
-      message: "Payroll deleted successfully",
-    });
-  } catch (error) {
-    console.error("Delete payroll error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
-  }
-};
 
 // @desc    Export payroll report for a month as PDF
 // @route   GET /api/payroll/export-report

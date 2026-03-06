@@ -332,7 +332,98 @@ const assignKPIToEmployees = async (req, res) => {
 const getEmployeePerformance = async (req, res) => {
   try {
     const employeeId = req.params.id;
+    const { month, year } = req.query;
 
+    const PerformanceCalculationService = require("../services/performanceCalculation");
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+
+    // Check if we are requesting current or historical data
+    const isHistorical =
+      year && month && (parseInt(year) < currentYear || (parseInt(year) === currentYear && parseInt(month) < currentMonth));
+
+    if (isHistorical) {
+      const targetMonth = parseInt(month);
+      const targetYear = parseInt(year);
+      const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
+      const endOfMonth = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+      const periodKey = `${targetYear}-${targetMonth.toString().padStart(2, "0")}`;
+
+      // 1. Aggregate Daily Records for historical summary
+      const records = await DailyPerformanceRecord.find({
+        employeeId,
+        date: { $gte: startOfMonth, $lte: endOfMonth },
+      }).sort({ date: 1 });
+
+      if (records.length === 0) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            summary: {
+              employeeId: await User.findById(employeeId).select("fullName email role"),
+              currentRating: 0,
+              ratingTier: "N/A",
+              stars: 0,
+              isHistorical: true,
+              month: targetMonth,
+              year: targetYear
+            },
+            targets: [],
+            recentRecords: []
+          }
+        });
+      }
+
+      const avgScore = records.reduce((sum, r) => sum + r.overallScore, 0) / records.length;
+      
+      // Fetch CURRENT summary to get today's rolling averages even if viewing historical
+      const currentStats = await PerformanceSummary.findOne({ employeeId });
+
+      const summary = {
+        employeeId: await User.findById(employeeId).select("fullName email role"),
+        currentRating: avgScore,
+        ratingTier: PerformanceCalculationService.getRatingTier(avgScore),
+        stars: PerformanceCalculationService.getStars(avgScore),
+        isHistorical: true,
+        month: targetMonth,
+        year: targetYear,
+        lastCalculated: records[records.length - 1].calculatedAt,
+        averages: currentStats?.averages || {
+          last7Days: 0,
+          last30Days: avgScore, // Fallback to month avg if no current stats
+          last90Days: 0
+        }
+      };
+
+      // 2. Fetch targets for that specific period
+      const targets = await EmployeeTarget.find({
+        employeeId,
+        "period.periodKey": periodKey
+      }).populate("kpiId");
+
+      // MERGE ACTUALS: Inject monthly aggregated actuals into targets
+      // For historical, we want the summary of that month, not just the "latest" day.
+      // But DailyPerformanceRecord stores scores per day.
+      // EmployeeTarget might have a "monthly" target record with its own actuals.
+      
+      const enrichedTargets = targets.map((t) => {
+        const tObj = t.toObject();
+        // EmployeeTarget usually stores the monthly calculated actual/score
+        return tObj;
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          summary,
+          targets: enrichedTargets,
+          recentRecords: records.reverse() // Current dashboard expects desc order
+        },
+      });
+    }
+
+    // --- CURRENT MONTH LOGIC (Existing) ---
     // Get performance summary
     let summary = await PerformanceSummary.findOne({ employeeId }).populate(
       "employeeId",
@@ -344,7 +435,6 @@ const getEmployeePerformance = async (req, res) => {
       console.log(
         `No summary for ${employeeId}, triggering initial calculation...`,
       );
-      const PerformanceCalculationService = require("../services/performanceCalculation");
       const today = new Date();
       await PerformanceCalculationService.calculateEmployeePerformance(
         employeeId,
@@ -373,13 +463,12 @@ const getEmployeePerformance = async (req, res) => {
     const rawTargets = await EmployeeTarget.find({ employeeId })
       .populate("kpiId")
       .sort({ "period.startDate": -1 })
-      .limit(20); // Increase limit to ensure we catch recent ones
+      .limit(20); 
 
     // Deduplicate: Keep only the latest target per KPI
     const uniqueTargetsMap = new Map();
     rawTargets.forEach((t) => {
-      // Filter out deleted KPIs or KPIs that don't match role
-      if (t.kpiId && t.kpiId.role === summary.employeeId.role) {
+      if (t.kpiId && summary.employeeId && t.kpiId.role === summary.employeeId.role) {
         const kpiId = t.kpiId._id.toString();
         if (!uniqueTargetsMap.has(kpiId)) {
           uniqueTargetsMap.set(kpiId, t);
@@ -402,7 +491,6 @@ const getEmployeePerformance = async (req, res) => {
     // MERGE ACTUALS: Inject today's/latest actuals into static targets
     const latestRecord = recentRecords.length > 0 ? recentRecords[0] : null;
 
-    // Create a map of KPI ID -> Score Object
     const kpiScoreMap = {};
     if (latestRecord && latestRecord.kpiScores) {
       latestRecord.kpiScores.forEach((score) => {
@@ -412,7 +500,6 @@ const getEmployeePerformance = async (req, res) => {
       });
     }
 
-    // Merge into targets
     const enrichedTargets = targets.map((t) => {
       const tObj = t.toObject();
       const kpiId = t.kpiId._id.toString();
@@ -420,9 +507,9 @@ const getEmployeePerformance = async (req, res) => {
       if (kpiScoreMap[kpiId]) {
         tObj.actual = kpiScoreMap[kpiId].actual;
         tObj.score = kpiScoreMap[kpiId].score;
-        tObj.status = kpiScoreMap[kpiId].status; // Update status based on today's performance
-        tObj.pacedTarget = kpiScoreMap[kpiId].target; // The time-prorated target for today
-        tObj.baseTarget = kpiScoreMap[kpiId].baseTarget; // The full period's target
+        tObj.status = kpiScoreMap[kpiId].status; 
+        tObj.pacedTarget = kpiScoreMap[kpiId].target; 
+        tObj.baseTarget = kpiScoreMap[kpiId].baseTarget; 
       }
       return tObj;
     });
@@ -431,7 +518,7 @@ const getEmployeePerformance = async (req, res) => {
       success: true,
       data: {
         summary,
-        targets: enrichedTargets, // Send enriched targets
+        targets: enrichedTargets,
         recentRecords,
       },
     });

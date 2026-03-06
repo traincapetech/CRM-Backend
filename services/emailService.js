@@ -427,6 +427,89 @@ const sendTicketStatusUpdateEmail = async (ticket, user) => {
     console.error("Error sending ticket status email:", error);
   }
 };
+// Salary Payout Notification Email
+const sendSalaryPayoutEmail = async (employee, payroll) => {
+  try {
+    if (!employee || !employee.email) {
+      console.log("❌ Employee email not available for Salary Payout notification");
+      return { success: false, message: "Employee email not available" };
+    }
+
+    const senderEmail = process.env.ACCOUNTS_EMAIL || process.env.HR_EMAIL || process.env.EMAIL_USER;
+    if (!senderEmail) {
+      console.warn("⚠️ No sender email configured for Salary Payout notification.");
+    }
+    
+    const transporter = createTransporter(senderEmail || "accounts@traincapetech.in");
+
+    const isSuccess = payroll.paytmPayoutStatus === "SUCCESS";
+    const statusColor = isSuccess ? "#16a34a" : "#dc2626";
+    const statusText = isSuccess ? "Successfully Processed" : "Failed / Action Required";
+
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+        <h2 style="color: ${statusColor}; text-align: center;">Salary Payout Notification</h2>
+        
+        <p>Dear ${employee.fullName},</p>
+        
+        <p>This is to inform you about the status of your salary payout for <strong>${payroll.monthName} ${payroll.year}</strong>.</p>
+        
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; margin: 20px 0; border-radius: 6px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 5px 0; color: #64748b; width: 40%;">Status:</td>
+              <td style="padding: 5px 0; color: ${statusColor}; font-weight: bold;">${statusText}</td>
+            </tr>
+            <tr>
+              <td style="padding: 5px 0; color: #64748b;">Amount:</td>
+              <td style="padding: 5px 0; font-weight: bold;">₹${(payroll.netSalary || 0).toLocaleString('en-IN')}</td>
+            </tr>
+            ${isSuccess && payroll.paytmTransactionId ? `
+            <tr>
+              <td style="padding: 5px 0; color: #64748b;">Reference ID:</td>
+              <td style="padding: 5px 0; font-family: monospace;">${payroll.paytmTransactionId}</td>
+            </tr>
+            ` : ""}
+            <tr>
+              <td style="padding: 5px 0; color: #64748b;">Payment Mode:</td>
+              <td style="padding: 5px 0;">${employee.paymentMode || "Bank Transfer"}</td>
+            </tr>
+          </table>
+        </div>
+
+        ${isSuccess ? `
+          <p>The funds have been transferred to your registered ${employee.paymentMode === 'UPI' ? 'UPI ID' : 'Bank Account'}. It may take some time to reflect in your statement depending on your bank's processing time.</p>
+        ` : `
+          <p style="color: #991b1b; font-weight: bold;">Unfortunately, the automated transaction could not be completed. Our accounts team has been notified and they will work to resolve this manually or retry the transaction shortly.</p>
+        `}
+        
+        <p>If you have any questions, please contact the HR or Accounts department.</p>
+        
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
+        <p style="font-size: 12px; color: #94a3b8; text-align: center;">
+          This is an automated message from Traincape Technology Pvt Ltd CRM.<br>
+          © ${new Date().getFullYear()} Traincape CRM
+        </p>
+      </div>
+    `;
+
+    const mailOptions = {
+      from: `"Traincape Accounts" <${senderEmail || "accounts@traincapetech.in"}>`,
+      to: employee.email,
+      subject: `${isSuccess ? "✅" : "⚠️"} Salary Payout Status: ${payroll.monthName} ${payroll.year}`,
+      html: emailHtml,
+    };
+
+    const result = await transporter.sendMail(mailOptions);
+    console.log(`✅ Salary payout email (${payroll.paytmPayoutStatus}) sent to ${employee.email}`);
+
+    return { success: true, messageId: result.messageId };
+  } catch (error) {
+    console.error("❌ Error sending salary payout email:", error);
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   sendPaymentConfirmationEmail,
   sendServiceDeliveryEmail,
@@ -434,4 +517,5 @@ module.exports = {
   sendTicketCreatedEmail,
   sendTicketAssignedEmail,
   sendTicketStatusUpdateEmail,
+  sendSalaryPayoutEmail,
 };

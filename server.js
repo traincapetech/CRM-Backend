@@ -83,6 +83,7 @@ const itProjectsRoutes = require("./routes/itProjects");
 const emailCampaignRoutes = require("./routes/emailCampaigns");
 const emailTemplateRoutes = require("./routes/emailTemplates");
 const workflowRoutes = require("./routes/workflows");
+const questionnaireRoutes = require("./routes/questionnaireRoutes");
 const payoutRoutes = require("./routes/payouts");
 const paytmRoutes = require("./routes/paytm");
 const biometricRoutes = require("./routes/biometric");
@@ -125,23 +126,13 @@ const io = socketIo(server, {
   },
 });
 
+// Initialize notification service with shared io instance
+const notificationService = require("./services/notificationService");
+notificationService.init(io);
+
 // Make io available to other modules
 app.set("io", io);
 module.exports.io = io;
-
-// // Chat service for Socket.IO
-// const ChatService = require("./services/chatService");
-
-// // Socket.IO connection handling
-// io.on("connection", (socket) => {
-//   console.log("User connected:", socket.id);
-
-//   // Check if this is a guest connection
-//   const isGuest = socket.handshake.query.isGuest === "true";
-//   const guestId = socket.handshake.query.guestId;
-
-//   if (isGuest) {
-//     console.log("Guest connected:", guestId);
 
 //     // Handle guest joining their room
 //     socket.on("join-guest-room", (guestId) => {
@@ -485,6 +476,8 @@ app.use("/api/it-projects", itProjectsRoutes);
 app.use("/api/email-campaigns", emailCampaignRoutes);
 app.use("/api/email-templates", emailTemplateRoutes);
 app.use("/api/workflows", workflowRoutes);
+app.use("/api/questionnaires", questionnaireRoutes);
+
 app.use("/api/test-roles", testRolesRoutes);
 app.use("/api/test-groups", testGroupsRoutes);
 app.use("/api/test-questions", testQuestionsRoutes);
@@ -502,6 +495,8 @@ app.use("/api/search", searchRoutes); // Mount Search Routes
 app.use("/api/tickets", ticketRoutes); // Mount Ticket Routes
 app.use("/api/departments", departmentRoutes); // Mount Department Routes
 app.use("/api/notifications", notificationRoutes); // Mount Notification Routes
+app.use("/api/questionnaires", questionnaireRoutes); // Mount Questionnaire Routes
+
 app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarterly Incentives Routes
 
 // Basic route for testing

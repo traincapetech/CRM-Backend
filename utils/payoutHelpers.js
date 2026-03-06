@@ -85,6 +85,7 @@ const getPayoutStatusLabel = (status) => {
   const statusLabels = {
     'PENDING': 'Pending',
     'PROCESSING': 'Processing',
+    'SUCCESS': 'Success',
     'PROCESSED': 'Processed',
     'FAILED': 'Failed',
     'CANCELLED': 'Cancelled',
