@@ -63,13 +63,29 @@ exports.getLeads = async (req, res) => {
     if (req.query.source) {
       query = query.where("source").equals(req.query.source);
     }
+    
+    // Filter by Country
+    if (req.query.country) {
+      query = query.where("country").equals(req.query.country);
+    }
 
+    // Filter by Course
+    if (req.query.course) {
+      query = query.where("course").equals(req.query.course);
+    }
     // Filter by Assigned To (only for Admin/Manager)
     if (
       (req.user.role === "Admin" || req.user.role === "Manager") &&
       req.query.assignedTo
     ) {
       query = query.where("assignedTo").equals(req.query.assignedTo);
+    }
+    // Filter by Lead Person (only for Admin/Manager)
+    if (
+      (req.user.role === "Admin" || req.user.role === "Manager") &&
+      req.query.leadPerson
+    ) {
+      query = query.where("leadPerson").equals(req.query.leadPerson);
     }
 
     // Filter by Status

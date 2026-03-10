@@ -227,6 +227,7 @@ exports.validate2FA = async (req, res) => {
         roles: permissionPayload.roleNames,
         permissions: permissionPayload.permissions,
         twoFactorEnabled: user.twoFactorEnabled,
+        createdAt: user.createdAt,
       },
     });
   } catch (error) {
