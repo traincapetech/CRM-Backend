@@ -104,6 +104,9 @@ const ticketRoutes = require("./routes/ticket");
 const departmentRoutes = require("./routes/department");
 const notificationRoutes = require("./routes/notifications");
 const quarterlyIncentivesRoutes = require("./routes/quarterlyIncentives");
+const holidayRoutes = require("./routes/holidays");
+const holidayController = require("./controllers/holidays");
+
 const app = express();
 const server = http.createServer(app);
 
@@ -130,9 +133,8 @@ const io = socketIo(server, {
 const notificationService = require("./services/notificationService");
 notificationService.init(io);
 
-// Make io available to other modules
-app.set("io", io);
-module.exports.io = io;
+// // Make io available to other modules
+
 
 //     // Handle guest joining their room
 //     socket.on("join-guest-room", (guestId) => {
@@ -497,6 +499,7 @@ app.use("/api/departments", departmentRoutes); // Mount Department Routes
 app.use("/api/notifications", notificationRoutes); // Mount Notification Routes
 app.use("/api/questionnaires", questionnaireRoutes); // Mount Questionnaire Routes
 
+app.use("/api/holidays", holidayRoutes);
 app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarterly Incentives Routes
 
 // Basic route for testing

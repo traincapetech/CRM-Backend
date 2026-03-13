@@ -6,6 +6,7 @@ const {
   getEmployees,
   getEmployee,
   getEmployeeByUserId,
+  getTeamDirectory,
   createEmployee,
   updateEmployee,
   deleteEmployee,
@@ -60,6 +61,10 @@ router.route('/roles/:id')
 // Fix IT Interns employmentType
 router.route('/fix-it-interns')
   .post(protect, fixITInterns);
+
+// Team directory - sanitized, accessible to all authenticated users (no PII)
+router.route('/team-directory')
+  .get(protect, getTeamDirectory);
 
 // Employee routes - accessible to all authenticated users
 router.route('/')

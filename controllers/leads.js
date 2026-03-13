@@ -631,6 +631,10 @@ exports.updateLead = async (req, res) => {
       assignedTo: "assignedTo",
       leadPerson: "leadPerson",
       feedback: "feedback",
+      // Date Mapping
+      customCreatedAt: "createdAt",
+      DATE: "createdAt",
+      createdAt: "createdAt"
     };
 
     // 1. Map fields from keys if present
@@ -1667,6 +1671,79 @@ exports.getLeadStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message,
+    });
+  }
+};
+// @desc    Bulk Update leads
+// @route   PUT /api/leads/bulk-update
+// @access  Private (Admin, Manager, Lead Person)
+exports.bulkUpdateLeads = async (req, res) => {
+  try {
+    const { leadIds, updateData } = req.body;
+
+    if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an array of lead IDs",
+      });
+    }
+
+    if (!updateData || Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide data to update",
+      });
+    }
+
+    // Sanitize updateData - only allow specific fields for bulk update
+    const allowedFields = ["status", "assignedTo", "leadPerson"];
+    const sanitizedData = {};
+    allowedFields.forEach((field) => {
+      if (updateData[field] !== undefined) {
+        sanitizedData[field] = updateData[field];
+      }
+    });
+
+    if (Object.keys(sanitizedData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields provided for bulk update",
+      });
+    }
+
+    sanitizedData.updatedAt = Date.now();
+
+    const result = await Lead.updateMany(
+      { _id: { $in: leadIds } },
+      { $set: sanitizedData }
+    );
+
+    // Trigger performance updates for affected users
+    // (In a real system, we might want to do this more efficiently if there are many)
+    if (sanitizedData.assignedTo || sanitizedData.leadPerson) {
+      const uniqueUserIds = new Set();
+      if (sanitizedData.assignedTo) uniqueUserIds.add(sanitizedData.assignedTo);
+      if (sanitizedData.leadPerson) uniqueUserIds.add(sanitizedData.leadPerson);
+
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const today = new Date();
+      
+      uniqueUserIds.forEach(userId => {
+        PerformanceCalculationService.calculateEmployeePerformance(userId, today)
+          .catch(err => console.error(`Bulk perf update error for ${userId}:`, err.message));
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully updated ${result.modifiedCount} leads`,
+      count: result.modifiedCount,
+    });
+  } catch (err) {
+    console.error("Error in bulkUpdateLeads:", err);
+    res.status(400).json({
+      success: false,
+      message: err.message,
     });
   }
 };

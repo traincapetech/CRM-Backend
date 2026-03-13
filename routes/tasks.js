@@ -9,6 +9,7 @@ const {
   addDependency,
   removeDependency,
   getSalesPersons,
+  getEmployeeImpact,
 } = require("../controllers/tasks");
 
 const router = express.Router();
@@ -45,5 +46,8 @@ router.delete(
   authorize("Admin", "Manager", "IT Manager"),
   removeDependency,
 );
+
+// Impact metrics
+router.get("/employee-impact/:userId", protect, getEmployeeImpact);
 
 module.exports = router;

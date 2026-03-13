@@ -11,7 +11,8 @@ const {
   importLeads,
   getAllCustomers,
   getRepeatCustomers,
-  getLeadStats
+  getLeadStats,
+  bulkUpdateLeads
 } = require('../controllers/leads');
 
 const { protect, authorize } = require('../middleware/auth');
@@ -19,6 +20,9 @@ const { cacheMiddleware, invalidateCache } = require('../middleware/cache');
 
 // All routes below this line require authentication
 router.use(protect);
+
+// Bulk update route
+router.put('/bulk-update', authorize('Admin', 'Manager', 'Lead Person'), bulkUpdateLeads);
 
 // Routes specific to roles
 router.route('/')

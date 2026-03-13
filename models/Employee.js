@@ -43,6 +43,9 @@ const employeeSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    exitDate: {
+      type: Date,
+    },
     salary: {
       type: Number,
       min: 0,
@@ -224,11 +227,11 @@ const employeeSchema = new mongoose.Schema(
 
 // PII fields to encrypt
 const PII_FIELDS = [
-  // "phoneNumber",
-  // "whatsappNumber",
-  // "currentAddress",
-  // "permanentAddress",
-  // "dateOfBirth",
+  "phoneNumber",
+  "whatsappNumber",
+  "currentAddress",
+  "permanentAddress",
+  "dateOfBirth",
   "aadharCard",
   "panCard",
   "bankAccountNumber",
@@ -250,6 +253,49 @@ employeeSchema.pre("save", function (next) {
     return next(error);
   }
 });
+
+// Helper function to encrypt fields in update operations
+const encryptUpdateFields = function (next) {
+  try {
+    const update = this.getUpdate();
+    if (!update) return next();
+
+    // Handle $set operator
+    if (update.$set) {
+      for (const field of PII_FIELDS) {
+        if (update.$set[field]) {
+          update.$set[field] = encrypt(update.$set[field]);
+        }
+      }
+    }
+
+    // Handle $setOnInsert operator
+    if (update.$setOnInsert) {
+      for (const field of PII_FIELDS) {
+        if (update.$setOnInsert[field]) {
+          update.$setOnInsert[field] = encrypt(update.$setOnInsert[field]);
+        }
+      }
+    }
+
+    // Handle direct field updates (without $set - discouraged but possible)
+    for (const field of PII_FIELDS) {
+      if (update[field] && typeof update[field] !== 'object') {
+        update[field] = encrypt(update[field]);
+      }
+    }
+
+    next();
+  } catch (error) {
+    console.error("Error encrypting fields in update:", error);
+    next(error);
+  }
+};
+
+// Encrypt PII fields before updating
+employeeSchema.pre("findOneAndUpdate", encryptUpdateFields);
+employeeSchema.pre("updateOne", encryptUpdateFields);
+employeeSchema.pre("updateMany", encryptUpdateFields);
 
 // Decrypt all PII fields for authorized access
 employeeSchema.methods.getDecryptedPII = function () {

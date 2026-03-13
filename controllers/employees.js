@@ -242,8 +242,11 @@ exports.getEmployee = async (req, res) => {
     // Transform: map individual document fields to documents object
     const empObj = employee.toObject();
     
-    // Decrypt PII fields for authorized users (Admin, HR, Manager, IT Manager)
-    if (["Admin", "HR", "Manager", "IT Manager"].includes(req.user.role)) {
+    // Decrypt PII fields for authorized users (Admin, HR, Manager, IT Manager) AND for users viewing their own profile
+    if (
+      ["Admin", "HR", "Manager", "IT Manager"].includes(req.user.role) ||
+      employee.userId?.toString() === req.user.id
+    ) {
       const decrypted = employee.getDecryptedPII();
       Object.assign(empObj, decrypted);
     }
@@ -334,8 +337,11 @@ exports.getEmployeeByUserId = async (req, res) => {
     // Transform: map individual document fields to documents object
     const empObj = employee.toObject();
 
-    // Decrypt PII fields for authorized users (Admin, HR, Manager, IT Manager)
-    if (["Admin", "HR", "Manager", "IT Manager"].includes(req.user.role)) {
+    // Decrypt PII fields for authorized users (Admin, HR, Manager, IT Manager) AND for users viewing their own profile
+    if (
+      ["Admin", "HR", "Manager", "IT Manager"].includes(req.user.role) ||
+      employee.userId?.toString() === req.user.id
+    ) {
       const decrypted = employee.getDecryptedPII();
       Object.assign(empObj, decrypted);
     }
@@ -372,6 +378,94 @@ exports.getEmployeeByUserId = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server Error",
+    });
+  }
+};
+
+// @desc    Get team directory (sanitized - no PII, accessible to all authenticated users)
+// @route   GET /api/employees/team-directory
+// @access  Private (all roles)
+exports.getTeamDirectory = async (req, res) => {
+  try {
+    const employees = await Employee.find({})
+      .populate('department', 'name')
+      .populate('role', 'name description')
+      .populate('hrId', 'fullName email')
+      .lean();
+
+    // Find all Managers and Admins to use as potential reporting managers
+    const managersAndAdmins = employees.filter(emp => {
+      const roleName = emp.role?.name?.toLowerCase() || '';
+      return roleName.includes('manager') || roleName.includes('admin');
+    });
+
+    const admins = managersAndAdmins.filter(emp => 
+      emp.role?.name?.toLowerCase().includes('admin')
+    );
+
+    // Strip all PII and sensitive fields, keep only public work-context data
+    const sanitized = employees.map((emp) => {
+      const roleName = emp.role?.name?.toLowerCase() || '';
+      const isManager = roleName.includes('manager') && !roleName.includes('admin');
+      const isAdmin = roleName.includes('admin');
+      
+      let reportingManager = null;
+      
+      if (isAdmin) {
+        // For Admin: show self or another Admin
+        reportingManager = emp.fullName;
+      } else if (isManager) {
+        // For Manager: show Admin
+        reportingManager = admins.length > 0 ? admins[0].fullName : 'Admin';
+      } else {
+        // For regular employees: show Department Manager
+        const deptManager = managersAndAdmins.find(m => 
+          m.department?._id?.toString() === emp.department?._id?.toString() &&
+          m.role?.name?.toLowerCase().includes('manager') &&
+          !m.role?.name?.toLowerCase().includes('admin')
+        );
+        reportingManager = deptManager ? deptManager.fullName : (admins.length > 0 ? admins[0].fullName : 'Admin');
+      }
+
+      return {
+        _id: emp._id,
+        fullName: emp.fullName,
+        email: emp.email,
+        role: emp.role,
+        department: emp.department,
+        status: emp.status,
+        employmentType: emp.employmentType,
+        joiningDate: emp.joiningDate,
+        exitDate: emp.exitDate || null,
+        skills: emp.skills || [],
+        linkedInUrl: emp.linkedInUrl || null,
+        photograph: emp.photograph || null,
+        biometricCode: emp.biometricCode || null,
+        projectAssignments: emp.projectAssignments || [],
+        collegeName: emp.collegeName || null,
+        reportingManager: reportingManager, // Logic as requested
+        internshipDuration: emp.internshipDuration || null,
+        internshipStartDate: emp.internshipStartDate || null,
+        internshipEndDate: emp.internshipEndDate || null,
+        hrId: emp.hrId || null,
+        userId: emp.userId || null,
+        createdAt: emp.createdAt,
+      };
+    });
+
+    // Sort by name as a default secondary sort
+    sanitized.sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+    res.status(200).json({
+      success: true,
+      count: sanitized.length,
+      data: sanitized,
+    });
+  } catch (err) {
+    console.error('Error fetching team directory:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
     });
   }
 };

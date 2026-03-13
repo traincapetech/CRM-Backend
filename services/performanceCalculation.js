@@ -109,15 +109,16 @@ class PerformanceCalculationService {
   }
 
   /**
-   * Helper to count working days (Mon-Sat) between two dates inclusive
+   * Helper to count working days (Mon-Sat) between two dates inclusive, excluding holidays
    */
-  static getWorkingDays(startDate, endDate) {
+  static getWorkingDays(startDate, endDate, holidays = []) {
     let count = 0;
     const curDate = new Date(startDate.getTime());
     while (curDate <= endDate) {
       const dayOfWeek = curDate.getDay();
-      if (dayOfWeek !== 0) {
-        // 0 is Sunday
+      const dateStr = `${curDate.getFullYear()}-${(curDate.getMonth() + 1).toString().padStart(2, "0")}-${curDate.getDate().toString().padStart(2, "0")}`;
+      if (dayOfWeek !== 0 && !holidays.includes(dateStr)) {
+        // 0 is Sunday, also skip if in holidays array
         count++;
       }
       curDate.setDate(curDate.getDate() + 1);
@@ -128,15 +129,15 @@ class PerformanceCalculationService {
   /**
    * Get the pacing ratio (elapsed working / total working duration) for prorated goals.
    * e.g., On Day 15 of a 30-day month, ratio represents 13 working days / 26 total working days.
-   * This prevents employees from "failing" mid-period and doesn't penalize them for Sundays.
+   * This prevents employees from "failing" mid-period and doesn't penalize them for Sundays or Holidays.
    */
-  static getPacingRatio(date, frequency) {
+  static getPacingRatio(date, frequency, holidays = []) {
     if (frequency === "daily") return 1;
 
     const { start, end } = this.getDateRange(date, frequency);
 
-    // Total working days in the period
-    const totalWorkingDays = this.getWorkingDays(start, end);
+    // Total working days in the period (excluding Sundays and Holidays)
+    const totalWorkingDays = this.getWorkingDays(start, end, holidays);
     if (totalWorkingDays === 0) return 1; // Prevent division by zero
 
     // Elapsed duration from start to the current date (end of the specific day)
@@ -146,7 +147,7 @@ class PerformanceCalculationService {
     // If the calculation date is past the end of the period, cap at 1
     if (currentEnd.getTime() >= end.getTime()) return 1;
 
-    const elapsedWorkingDays = this.getWorkingDays(start, currentEnd);
+    const elapsedWorkingDays = this.getWorkingDays(start, currentEnd, holidays);
 
     // For safety, ensure it's between >0 and <= 1
     const ratio = Math.max(
@@ -230,15 +231,26 @@ class PerformanceCalculationService {
         return;
       }
 
-      const dateKey = date.toISOString().split("T")[0]; // YYYY-MM-DD
+      const dateKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`; // YYYY-MM-DD
 
-      // Check attendance for this day
-      // Date matching logic: get the start and end of the specified date
+      // Check if this date is a full-day holiday
+      const Holiday = require("../models/Holiday");
       const startOfDay = new Date(date);
       startOfDay.setHours(0, 0, 0, 0);
       const endOfDay = new Date(date);
       endOfDay.setHours(23, 59, 59, 999);
 
+      const holidayRecord = await Holiday.findOne({
+        date: { $gte: startOfDay, $lte: endOfDay },
+      });
+
+      if (holidayRecord && holidayRecord.type === "full-day") {
+        console.log(`🎉 Skipping full-day holiday: ${holidayRecord.name} on ${dateKey}`);
+        return;
+      }
+
+      // Check attendance for this day
+      // Date matching logic: get the start and end of the specified date
       const attendanceRecord = await Attendance.findOne({
         userId: employeeId,
         date: { $gte: startOfDay, $lte: endOfDay },
@@ -302,8 +314,19 @@ class PerformanceCalculationService {
           }
         }
 
-        // 2. Pace (prorate) the targets based on elapsed time
-        const ratio = this.getPacingRatio(date, kpi.frequency);
+        // 2. Load holidays for the relevant period to calculate pacing accurately
+        const periodHolidays = await Holiday.find({
+          date: { $gte: startDate, $lte: endDate },
+          type: "full-day",
+        }).select("date");
+
+        const holidayDates = periodHolidays.map((h) => {
+          const hd = new Date(h.date);
+          return `${hd.getFullYear()}-${(hd.getMonth() + 1).toString().padStart(2, "0")}-${hd.getDate().toString().padStart(2, "0")}`;
+        });
+
+        // 3. Pace (prorate) the targets based on elapsed time (excluding Sundays/Holidays)
+        const ratio = this.getPacingRatio(date, kpi.frequency, holidayDates);
         const pacedThresholds = {
           minimum: activeThresholds.minimum * ratio,
           target: activeThresholds.target * ratio,
@@ -462,27 +485,69 @@ class PerformanceCalculationService {
         date: { $gte: ninetyDaysAgo },
       });
 
-      // Calculate averages
-      const avg7 =
-        last7Records.length > 0
-          ? last7Records.reduce((sum, r) => sum + r.overallScore, 0) /
-            last7Records.length
-          : 0;
+      const Holiday = require("../models/Holiday");
 
-      const avg30 =
-        last30Records.length > 0
-          ? last30Records.reduce((sum, r) => sum + r.overallScore, 0) /
-            last30Records.length
-          : 0;
+      // We need to calculate based on actual working days (excluding Sundays & Holidays)
+      // Helper function for safe division
+      const getAvg = (records, expectedWorkingDays) => {
+        if (expectedWorkingDays <= 0) return 0;
+        const totalScore = records.reduce((sum, r) => sum + r.overallScore, 0);
+        return parseFloat((totalScore / expectedWorkingDays).toFixed(2));
+      };
 
-      const avg90 =
-        last90Records.length > 0
-          ? last90Records.reduce((sum, r) => sum + r.overallScore, 0) /
-            last90Records.length
-          : 0;
+      // 1. Trailing Averages (Past 7, 30, 90 Days)
+      const fetchTrailingHolidays = async (startDate, endDate) => {
+        const hols = await Holiday.find({ date: { $gte: startDate, $lte: endDate }, type: "full-day" });
+        return hols.map(h => `${h.date.getFullYear()}-${(h.date.getMonth() + 1).toString().padStart(2, "0")}-${h.date.getDate().toString().padStart(2, "0")}`);
+      };
 
-      // Current rating is based on 30-day average
-      const currentRating = avg30;
+      const hols7 = await fetchTrailingHolidays(sevenDaysAgo, now);
+      const expected7 = this.getWorkingDays(sevenDaysAgo, now, hols7);
+      const avg7 = getAvg(last7Records, expected7);
+
+      const hols30 = await fetchTrailingHolidays(thirtyDaysAgo, now);
+      const expected30 = this.getWorkingDays(thirtyDaysAgo, now, hols30);
+      const avg30 = getAvg(last30Records, expected30);
+
+      const hols90 = await fetchTrailingHolidays(ninetyDaysAgo, now);
+      const expected90 = this.getWorkingDays(ninetyDaysAgo, now, hols90);
+      const avg90 = getAvg(last90Records, expected90);
+
+      // 2. Calendar Month Averages (Current Month & Previous Month)
+      const calcMonthAvg = async (targetDate) => {
+        const y = targetDate.getFullYear();
+        const m = targetDate.getMonth();
+        
+        // Start from 1st of month. End date is either today (if current month) or last day of month
+        const startOfMonth = new Date(y, m, 1);
+        startOfMonth.setHours(0, 0, 0, 0);
+        
+        let endOfPeriod;
+        if (y === now.getFullYear() && m === now.getMonth()) {
+          endOfPeriod = new Date(now);
+        } else {
+          endOfPeriod = new Date(y, m + 1, 0);
+        }
+        endOfPeriod.setHours(23, 59, 59, 999);
+
+        const records = await DailyPerformanceRecord.find({
+          employeeId,
+          date: { $gte: startOfMonth, $lte: endOfPeriod }
+        });
+
+        const hols = await fetchTrailingHolidays(startOfMonth, endOfPeriod);
+        const expectedDays = this.getWorkingDays(startOfMonth, endOfPeriod, hols);
+        return getAvg(records, expectedDays);
+      };
+
+      const thisMonthAvg = await calcMonthAvg(now);
+      
+      const lastMonthDate = new Date(now);
+      lastMonthDate.setMonth(now.getMonth() - 1);
+      const previousMonthAvg = await calcMonthAvg(lastMonthDate);
+
+      // Current rating is based on THIS MONTH average
+      const currentRating = thisMonthAvg;
       const ratingTier = this.getRatingTier(currentRating);
       const stars = this.getStars(currentRating);
 
@@ -551,6 +616,8 @@ class PerformanceCalculationService {
             last7Days: avg7,
             last30Days: avg30,
             last90Days: avg90,
+            thisMonth: thisMonthAvg,
+            previousMonth: previousMonthAvg,
           },
           lastCalculated: new Date(),
         },
@@ -632,6 +699,25 @@ class PerformanceCalculationService {
       console.log(
         `\n🚀 Starting daily performance calculation for ${date.toDateString()}...`,
       );
+
+      // Check if today is a holiday
+      const Holiday = require("../models/Holiday");
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const todayHoliday = await Holiday.findOne({
+        date: { $gte: startOfDay, $lte: endOfDay },
+        type: "full-day",
+      });
+
+      if (todayHoliday) {
+        console.log(
+          `🎉 Skipping calculation for entire workforce — Holiday: ${todayHoliday.name}`,
+        );
+        return { successCount: 0, errorCount: 0, total: 0, skippedReason: "holiday" };
+      }
 
       // Get all active employees
       const employees = await User.find({

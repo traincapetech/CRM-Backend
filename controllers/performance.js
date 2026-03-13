@@ -375,7 +375,16 @@ const getEmployeePerformance = async (req, res) => {
         });
       }
 
-      const avgScore = records.reduce((sum, r) => sum + r.overallScore, 0) / records.length;
+      const Holiday = require("../models/Holiday");
+      const hols = await Holiday.find({ date: { $gte: startOfMonth, $lte: endOfMonth }, type: "full-day" });
+      const holidayDates = hols.map(h => {
+        const hd = new Date(h.date);
+        return `${hd.getFullYear()}-${(hd.getMonth() + 1).toString().padStart(2, "0")}-${hd.getDate().toString().padStart(2, "0")}`;
+      });
+      
+      const expectedDays = PerformanceCalculationService.getWorkingDays(startOfMonth, endOfMonth, holidayDates);
+      const totalScore = records.reduce((sum, r) => sum + r.overallScore, 0);
+      const avgScore = expectedDays > 0 ? parseFloat((totalScore / expectedDays).toFixed(2)) : 0;
       
       // Fetch CURRENT summary to get today's rolling averages even if viewing historical
       const currentStats = await PerformanceSummary.findOne({ employeeId });
@@ -389,10 +398,9 @@ const getEmployeePerformance = async (req, res) => {
         month: targetMonth,
         year: targetYear,
         lastCalculated: records[records.length - 1].calculatedAt,
-        averages: currentStats?.averages || {
-          last7Days: 0,
-          last30Days: avgScore, // Fallback to month avg if no current stats
-          last90Days: 0
+        averages: {
+          ...(currentStats?.averages?.toObject ? currentStats.averages.toObject() : currentStats?.averages || {}),
+          thisMonth: avgScore, // Override thisMonth for historical view
         }
       };
 

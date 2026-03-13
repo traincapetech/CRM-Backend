@@ -1,5 +1,8 @@
 const Task = require("../models/Task");
 const User = require("../models/User");
+const Lead = require("../models/Lead");
+const Sale = require("../models/Sale");
+const PerformanceSummary = require("../models/PerformanceSummary");
 
 // @desc    Get all tasks
 // @route   GET /api/tasks?department=IT
@@ -217,6 +220,11 @@ exports.updateTask = async (req, res) => {
 
     // Update completed status if provided
     if (req.body.completed !== undefined) {
+      // Prevent employee from resubmitting if already confirmed
+      if (previousStatus === "Manager Confirmed" && !isAdmin && !isManager && !isAssigner) {
+        return res.status(403).json({ success: false, message: "Task is already confirmed and cannot be resubmitted." });
+      }
+
       task.completed = req.body.completed;
       if (task.completed) {
         task.status = "Employee Completed";
@@ -228,6 +236,11 @@ exports.updateTask = async (req, res) => {
 
     // Assignee actions
     if (isAssignee) {
+      // Prevent assignee from changing status if confirmed
+      if (previousStatus === "Manager Confirmed" && !isAdmin && !isManager && !isAssigner) {
+        return res.status(403).json({ success: false, message: "Task is locked after manager confirmation." });
+      }
+
       const desired = req.body.status;
       const allowed = [
         "In Progress",
@@ -583,5 +596,112 @@ exports.getSalesPersons = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get employee impact metrics
+// @route   GET /api/tasks/employee-impact/:userId
+// @access  Private
+exports.getEmployeeImpact = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const role = req.query.role || "";
+
+    // Queries to run in parallel
+    const [tasks, leadsAssigned, leadPersonLeads, salesAsSalesPerson, leadPersonSales, performance] = await Promise.all([
+      Task.find({ assignedTo: userId }),
+      Lead.find({ assignedTo: userId }),
+      Lead.find({ leadPerson: userId }),
+      Sale.find({ salesPerson: userId }),
+      Sale.find({ leadPerson: userId }),
+      PerformanceSummary.findOne({ employeeId: userId })
+    ]);
+
+    // Role-agnostic task metrics
+    const totalTasks = tasks.length;
+    const completedTasks = tasks.filter(t => t.status === "Manager Confirmed" || t.status === "Employee Completed").length;
+    const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    
+    // Average completion time (days)
+    const completionTimes = tasks
+      .filter(t => (t.completedAt || t.confirmedAt) && t.createdAt)
+      .map(t => (new Date(t.completedAt || t.confirmedAt) - new Date(t.createdAt)) / (1000 * 60 * 60 * 24));
+    
+    // Average days - if less than 1, we still want to show a decimal for better granularity in the chart if needed, 
+    // but for the "Impact" summary we'll keep it as rounded/fixed as before or improved.
+    const avgDaysRaw = completionTimes.length > 0 
+      ? completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length
+      : 0;
+    
+    const avgCompletionDays = avgDaysRaw.toFixed(1);
+
+    const highPriorityTasks = tasks.filter(t => t.priority === "High" || t.priority === "Critical").length;
+    const highPriorityCompleted = tasks.filter(t => (t.priority === "High" || t.priority === "Critical") && (t.status === "Manager Confirmed" || t.status === "Employee Completed")).length;
+
+    // Response object
+    const impact = {
+      role,
+      tasks: {
+        total: totalTasks,
+        completed: completedTasks,
+        rate: Math.round(completionRate),
+        avgDays: parseFloat(avgCompletionDays),
+        highPriority: {
+          total: highPriorityTasks,
+          completed: highPriorityCompleted
+        }
+      },
+      performance: performance ? {
+        rating: Math.round(performance.currentRating),
+        stars: performance.stars,
+        tier: performance.ratingTier,
+        streak: performance.streak
+      } : null
+    };
+
+    // Role specific logic
+    const roleLower = role.toLowerCase();
+    
+    if (roleLower.includes("sales")) {
+      const totalSales = salesAsSalesPerson.length;
+      const leads = leadsAssigned.length;
+      
+      // Calculate Yield: 1 sale per 10 leads is 100% target yield (1:10 ratio)
+      // If leads are 100, target sales is 10. If actual sales is 15, yield is 150%.
+      const targetSales = Math.ceil(leads / 10);
+      const yieldScore = targetSales > 0 ? Math.round((totalSales / targetSales) * 100) : (totalSales > 0 ? 100 : 0);
+
+      impact.sales = {
+        leadsAssigned: leads,
+        converted: totalSales,
+        conversionRate: leads > 0 ? Math.round((totalSales / leads) * 100) : 0,
+        yieldScore: Math.round(yieldScore), // Benchmark against 1:10 ratio
+        totalSalesCount: totalSales
+      };
+    }
+
+    if (roleLower.includes("lead person") || roleLower.includes("lead")) {
+      const totalLeadSales = leadPersonSales.length;
+      const leadsGenerated = leadPersonLeads.length;
+      
+      const targetSales = Math.ceil(leadsGenerated / 10);
+      const yieldScore = targetSales > 0 ? Math.round((totalLeadSales / targetSales) * 100) : (totalLeadSales > 0 ? 100 : 0);
+
+      impact.leadGeneration = {
+        leadsGenerated: leadsGenerated,
+        leadsConverted: totalLeadSales,
+        conversionRate: leadsGenerated > 0 ? Math.round((totalLeadSales / leadsGenerated) * 100) : 0,
+        yieldScore: Math.round(yieldScore),
+        totalSalesCount: totalLeadSales
+      };
+    }
+
+    res.status(200).json({
+      success: true,
+      data: impact
+    });
+  } catch (error) {
+    console.error("Error fetching impact metrics:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };

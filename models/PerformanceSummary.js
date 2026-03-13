@@ -52,6 +52,7 @@ const PerformanceSummarySchema = new mongoose.Schema(
       last30Days: Number,
       last90Days: Number,
       thisMonth: Number,
+      previousMonth: Number,
       thisQuarter: Number,
     },
 
