@@ -163,8 +163,8 @@ exports.createTask = async (req, res) => {
         const assignedToId = task.assignedTo.toString();
         const assignerName = populatedTask.assignedBy ? populatedTask.assignedBy.fullName : "A Manager";
 
-        // Emit taskAssigned event to the assigned employee's room (room = plain userId)
-        io.to(assignedToId).emit("taskAssigned", {
+        // Emit taskAssigned event to the assigned employee's room (room = user-${userId})
+        io.to(`user-${assignedToId}`).emit("taskAssigned", {
           taskId: task._id.toString(),
           taskTitle: task.title,
           assignedBy: assignerName,
@@ -172,9 +172,9 @@ exports.createTask = async (req, res) => {
         });
 
         // Debug: How many sockets are in the room?
-        const room = io.sockets.adapter.rooms.get(assignedToId);
+        const room = io.sockets.adapter.rooms.get(`user-${assignedToId}`);
         const socketsInRoom = room ? room.size : 0;
-        console.log(`📋 taskAssigned emitted to room "${assignedToId}" — ${socketsInRoom} socket(s) in room`);
+        console.log(`📋 taskAssigned emitted to room "user-${assignedToId}" — ${socketsInRoom} socket(s) in room`);
       }
     } catch (notifyError) {
       console.error("Error sending task assignment notification:", notifyError);
@@ -324,7 +324,7 @@ exports.updateTask = async (req, res) => {
           const assignedToId = task.assignedTo._id?.toString() || task.assignedTo.toString();
           const assignerName = req.user.fullName || (task.assignedBy ? task.assignedBy.fullName : "A Manager");
 
-          io.to(assignedToId).emit("taskAssigned", {
+          io.to(`user-${assignedToId}`).emit("taskAssigned", {
             taskId: task._id.toString(),
             taskTitle: task.title,
             assignedBy: assignerName,

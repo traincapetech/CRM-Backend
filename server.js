@@ -129,6 +129,9 @@ const io = socketIo(server, {
   },
 });
 
+// Make io accessible to routers/controllers
+app.set("io", io);
+
 // Initialize notification service with shared io instance
 const notificationService = require("./services/notificationService");
 notificationService.init(io);
