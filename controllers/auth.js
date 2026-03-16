@@ -157,25 +157,17 @@ exports.login = async (req, res) => {
       "Found user:",
       user
         ? {
-            id: user._id,
-            email: user.email,
-            role: user.role,
-            active: user.active,
-          }
+          id: user._id,
+          email: user.email,
+          role: user.role,
+          active: user.active,
+        }
         : "Not found",
     );
 
-    // Check if user account is active
-    if (user.active === false) {
-      await recordLoginHistory(req, user._id, "FAILED", "Account Deactivated");
-      return res.status(403).json({
-        success: false,
-        message:
-          "Your account has been deactivated. Please contact your administrator.",
-      });
-    }
-
-    // Check if user is an IT Intern and internship has expired
+    // --- Internship Extension Pre-Check ---
+    // Run this BEFORE the user.active check so a deactivated intern with a
+    // valid extension can be re-activated before being blocked.
     if (user.role === "IT Intern") {
       const Employee = require("../models/Employee");
       const employee = await Employee.findOne({ userId: user._id });
@@ -187,25 +179,73 @@ exports.login = async (req, res) => {
         endDate.setHours(0, 0, 0, 0);
 
         if (today > endDate) {
-          // Auto-deactivate account if internship expired
-          user.active = false;
-          await user.save();
+          // Internship period is over — check for an active extension
+          if (employee.internshipExtensionEndDate) {
+            const extDate = new Date(employee.internshipExtensionEndDate);
+            extDate.setHours(0, 0, 0, 0);
 
-          await recordLoginHistory(
-            req,
-            user._id,
-            "FAILED",
-            "Internship Expired",
-          );
+            if (today <= extDate) {
+              // Extension is still valid — re-activate the user account if needed
+              if (user.active === false) {
+                user.active = true;
+                await user.save();
+              }
+              // Also update employee status to EXTENDED to reflect in UI
+              if (employee.status !== "EXTENDED") {
+                employee.status = "EXTENDED";
+                await employee.save();
+              }
+              // Allow the login to proceed (fall through to password check)
+            } else {
+              // Extension has also expired — deactivate account
+              user.active = false;
+              await user.save();
 
-          return res.status(403).json({
-            success: false,
-            message:
-              "Your internship has ended. Your account has been deactivated. Please contact your administrator.",
-          });
+              await recordLoginHistory(
+                req,
+                user._id,
+                "FAILED",
+                "Internship Extension Expired",
+              );
+
+              return res.status(403).json({
+                success: false,
+                message:
+                  "Your internship extension has also ended. Your account has been deactivated. Please contact your administrator.",
+              });
+            }
+          } else {
+            // No extension set — auto-deactivate account if internship expired
+            user.active = false;
+            await user.save();
+
+            await recordLoginHistory(
+              req,
+              user._id,
+              "FAILED",
+              "Internship Expired",
+            );
+
+            return res.status(403).json({
+              success: false,
+              message:
+                "Your internship has ended. Your account has been deactivated. Please contact your administrator.",
+            });
+          }
         }
       }
     }
+
+    // Check if user account is active (runs after extension re-activation above)
+    if (user.active === false) {
+      await recordLoginHistory(req, user._id, "FAILED", "Account Deactivated");
+      return res.status(403).json({
+        success: false,
+        message:
+          "Your account has been deactivated. Please contact your administrator.",
+      });
+    }
+
 
     // Check if password matches
     const isMatch = await user.matchPassword(password);
@@ -1529,9 +1569,9 @@ exports.updateUserWithDocuments = async (req, res) => {
       if (req.body.skills !== undefined) {
         employeeUpdateData.skills = req.body.skills
           ? req.body.skills
-              .split(",")
-              .map((skill) => skill.trim())
-              .filter((skill) => skill.length > 0)
+            .split(",")
+            .map((skill) => skill.trim())
+            .filter((skill) => skill.length > 0)
           : [];
       }
 

@@ -52,7 +52,7 @@ const employeeSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["ACTIVE", "INACTIVE", "TERMINATED", "COMPLETED"],
+      enum: ["ACTIVE", "INACTIVE", "TERMINATED", "COMPLETED", "EXTENDED"],
       default: "ACTIVE",
     },
     employmentType: {
@@ -86,6 +86,9 @@ const employeeSchema = new mongoose.Schema(
       type: Date,
     },
     internshipEndDate: {
+      type: Date,
+    },
+    internshipExtensionEndDate: {
       type: Date,
     },
     skills: [
