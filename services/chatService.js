@@ -9,7 +9,7 @@ class ChatService {
   static async getOrCreateChatRoom(senderId, recipientId) {
     try {
       // Create a consistent chatId regardless of who initiates
-      const chatId = [senderId, recipientId].sort().join("_");
+      const chatId = [senderId.toString(), recipientId.toString()].sort().join("_");
 
       // Check if chat room already exists
       let chatRoom = await ChatRoom.findOne({ chatId });
@@ -39,6 +39,7 @@ class ChatService {
         content,
         messageType = "text",
         attachments = [],
+        replyTo = null,
       } = messageData;
 
       // Get or create chat room
@@ -52,28 +53,34 @@ class ChatService {
         content,
         messageType,
         attachments,
+        replyTo,
         status: "sent",
         timestamp: new Date(),
       });
 
       const savedMessage = await message.save();
 
-      // Update chat room with last message info
+      // Update chat room with last message info and ENSURE IT IS NOT MARKED AS DELETED for these users
       await ChatRoom.findByIdAndUpdate(chatRoom._id, {
         lastMessage:
           content || (attachments.length > 0 ? "📎 Attachment" : "Message"),
         lastMessageTime: new Date(),
         $inc: {
-          [`unreadCount.${recipientId === chatRoom.senderId ? "senderId" : "recipientId"}`]: 1,
+          [`unreadCount.${recipientId.toString() === chatRoom.senderId.toString() ? "senderId" : "recipientId"}`]: 1,
         },
+        $pull: { deletedFor: { $in: [senderId, recipientId] } }
       });
 
-      // Populate sender and recipient info
-      await savedMessage.populate("senderId", "fullName email profilePicture");
-      await savedMessage.populate(
-        "recipientId",
-        "fullName email profilePicture",
-      );
+      // Populate sender, recipient, and replyTo info
+      await savedMessage.populate([
+        { path: "senderId", select: "fullName email profilePicture" },
+        { path: "recipientId", select: "fullName email profilePicture" },
+        { 
+          path: "replyTo", 
+          select: "content senderId",
+          populate: { path: "senderId", select: "fullName" }
+        }
+      ]);
 
       return savedMessage;
     } catch (error) {
@@ -90,9 +97,11 @@ class ChatService {
     search = "",
   ) {
     try {
-      const chatId = [senderId, recipientId].sort().join("_");
+      const chatId = [senderId.toString(), recipientId.toString()].sort().join("_");
+      const userObjectId = mongoose.Types.ObjectId.isValid(senderId) ? new mongoose.Types.ObjectId(senderId) : senderId;
+      const userIdStr = senderId.toString();
 
-      const query = { chatId };
+      const query = { chatId, deletedFor: { $nin: [userObjectId, userIdStr] } };
       if (search) {
         query.content = { $regex: search, $options: "i" };
       }
@@ -100,6 +109,11 @@ class ChatService {
       const messages = await ChatMessage.find(query)
         .populate("senderId", "fullName email profilePicture")
         .populate("recipientId", "fullName email profilePicture")
+        .populate({
+          path: "replyTo",
+          select: "content senderId",
+          populate: { path: "senderId", select: "fullName" }
+        })
         .sort({ timestamp: 1 })
         // If searching, we might want to return all matches or paginate differently,
         // but for now keeping pagination
@@ -112,24 +126,27 @@ class ChatService {
           {
             chatId,
             recipientId: senderId,
-            isRead: false,
+            "readBy.user": { $ne: senderId },
           },
           {
-            isRead: true,
+            $push: { readBy: { user: senderId, readAt: new Date() } },
             status: "read",
-            readAt: new Date(),
           },
         );
 
         // Reset unread count for the recipient
-        await ChatRoom.updateOne(
-          { chatId },
-          {
-            $set: {
-              [`unreadCount.${senderId}`]: 0,
+        const chatRoom = await ChatRoom.findOne({ chatId });
+        if (chatRoom) {
+          const field = senderId.toString() === chatRoom.senderId.toString() ? 'recipientId' : 'senderId';
+          await ChatRoom.updateOne(
+            { chatId },
+            {
+              $set: {
+                [`unreadCount.${field}`]: 0,
+              },
             },
-          },
-        );
+          );
+        }
       }
 
       return messages;
@@ -143,7 +160,7 @@ class ChatService {
     try {
       // Convert userId to ObjectId if it's a string
       const userObjectId =
-        typeof userId === "string" ? mongoose.Types.ObjectId(userId) : userId;
+        typeof userId === "string" ? new mongoose.Types.ObjectId(userId) : userId;
 
       // OPTIMIZATION 1: Use lean() for faster queries without full document overhead
       // OPTIMIZATION 2: Limit to recent chat rooms (last 30 days) to reduce data
@@ -153,6 +170,7 @@ class ChatService {
       const chatRooms = await ChatRoom.find({
         $or: [{ senderId: userObjectId }, { recipientId: userObjectId }],
         lastMessageTime: { $gte: thirtyDaysAgo }, // Only recent chats
+        deletedFor: { $ne: userObjectId }, // Filter out deleted rooms
       })
         .populate(
           "senderId",
@@ -166,53 +184,59 @@ class ChatService {
         .limit(20) // OPTIMIZATION 3: Limit to 20 most recent chats
         .lean(); // OPTIMIZATION 4: Use lean() for faster queries
 
-      // Format the response to include the other user's info
-      const formattedRooms = chatRooms
-        .map((room) => {
-          // Safety checks for populated fields
-          if (!room.senderId || !room.recipientId) {
-            console.warn(`Chat room ${room.chatId} has missing user data`);
-            return null;
-          }
+      // Format the response and calculate unread counts in parallel
+      const roomPromises = chatRooms.map(async (room) => {
+        // Safety checks for populated fields
+        if (!room.senderId || !room.recipientId) {
+          console.warn(`Chat room ${room.chatId} has missing user data`);
+          return null;
+        }
 
-          const senderIdStr = room.senderId._id
-            ? room.senderId._id.toString()
-            : room.senderId.toString();
-          const userIdStr = userObjectId.toString();
+        const senderIdStr = room.senderId._id
+          ? room.senderId._id.toString()
+          : room.senderId.toString();
+        const userIdStr = userObjectId.toString();
 
-          const isSender = senderIdStr === userIdStr;
-          const otherUser = isSender ? room.recipientId : room.senderId;
+        const isSender = senderIdStr === userIdStr;
+        const otherUser = isSender ? room.recipientId : room.senderId;
 
-          // Check if otherUser exists before accessing its properties
-          if (!otherUser || typeof otherUser !== "object") {
-            return null;
-          }
+        // Check if otherUser exists before accessing its properties
+        if (!otherUser || typeof otherUser !== "object") {
+          return null;
+        }
 
-          const unreadCount = isSender
-            ? room.unreadCount
-              ? room.unreadCount.senderId
-              : 0
-            : room.unreadCount
-              ? room.unreadCount.recipientId
-              : 0;
+        // Dynamically calculate unread count for DM to ensure accuracy
+        const unreadCount = await ChatMessage.countDocuments({
+          chatId: room.chatId,
+          recipientId: userObjectId,
+          senderId: { $ne: userObjectId },
+          "readBy.user": { $ne: userObjectId },
+          deletedFor: { $nin: [userObjectId, userIdStr] } // Also filter out unread messages that were deleted for me
+        });
 
-          return {
-            chatId: room.chatId,
-            otherUser: {
-              _id: otherUser._id,
-              fullName: otherUser.fullName || "Unknown User",
-              email: otherUser.email,
-              profilePicture: otherUser.profilePicture,
-              chatStatus: otherUser.chatStatus,
-              lastSeen: otherUser.lastSeen,
-            },
-            lastMessage: room.lastMessage,
-            lastMessageTime: room.lastMessageTime,
-            unreadCount: unreadCount || 0,
-          };
-        })
-        .filter((room) => room !== null); // Filter out null rooms
+        // Get the real last message that isn't deleted for this user
+        const lastValidMsg = await ChatMessage.findOne({
+          chatId: room.chatId,
+          deletedFor: { $nin: [userObjectId, userIdStr] }
+        }).sort({ timestamp: -1 }).lean();
 
+        return {
+          chatId: room.chatId,
+          otherUser: {
+            _id: otherUser._id,
+            fullName: otherUser.fullName || "Unknown User",
+            email: otherUser.email,
+            profilePicture: otherUser.profilePicture,
+            chatStatus: otherUser.chatStatus,
+            lastSeen: otherUser.lastSeen,
+          },
+          lastMessage: lastValidMsg ? (lastValidMsg.deletedEveryone ? "This message was deleted" : (lastValidMsg.content || (lastValidMsg.attachments?.length > 0 ? "📎 Attachment" : "Message"))) : "No messages",
+          lastMessageTime: lastValidMsg ? lastValidMsg.timestamp : room.lastMessageTime,
+          unreadCount: unreadCount,
+        };
+      });
+
+      const formattedRooms = (await Promise.all(roomPromises)).filter((room) => room !== null);
       return formattedRooms;
     } catch (error) {
       console.error("Critical error in getUserChatRooms:", error);
@@ -269,33 +293,54 @@ class ChatService {
   // Mark messages as read
   static async markMessagesAsRead(senderId, recipientId) {
     try {
-      const chatId = [senderId, recipientId].sort().join("_");
+      const chatId = [senderId.toString(), recipientId.toString()].sort().join("_");
 
       // Update messages
       await ChatMessage.updateMany(
         {
           chatId,
           recipientId,
-          isRead: false,
+          "readBy.user": { $ne: recipientId },
         },
         {
-          isRead: true,
+          $push: { readBy: { user: recipientId, readAt: new Date() } },
           status: "read",
-          readAt: new Date(),
         },
       );
 
       // Reset unread count for the recipient
-      await ChatRoom.updateOne(
-        { chatId },
-        {
-          $set: {
-            [`unreadCount.${recipientId}`]: 0,
+      const chatRoom = await ChatRoom.findOne({ chatId });
+      if (chatRoom) {
+        const field = recipientId.toString() === chatRoom.senderId.toString() ? 'senderId' : 'recipientId';
+        await ChatRoom.updateOne(
+          { chatId },
+          {
+            $set: {
+              [`unreadCount.${field}`]: 0,
+            },
           },
+        );
+      }
+    } catch (error) {
+      throw new Error(`Error marking messages as read: ${error.message}`);
+    }
+  }
+
+  // Mark group messages as read
+  static async markGroupMessagesAsRead(groupId, userId) {
+    try {
+      await ChatMessage.updateMany(
+        {
+          groupId,
+          "readBy.user": { $ne: userId },
+        },
+        {
+          $push: { readBy: { user: userId, readAt: new Date() } },
+          status: "read", // Also update status for consistency
         },
       );
     } catch (error) {
-      throw new Error(`Error marking messages as read: ${error.message}`);
+      throw new Error(`Error marking group messages as read: ${error.message}`);
     }
   }
 
@@ -323,7 +368,18 @@ class ChatService {
         members: formattedMembers
       });
 
-      await groupChat.save();
+      try {
+        await groupChat.save();
+      } catch (err) {
+        if (err.message && err.message.includes('groupId_1 dup key')) {
+          console.warn("Detected rogue groupId_1 index, dropping it...");
+          await GroupChat.collection.dropIndex('groupId_1').catch(() => {});
+          await groupChat.save();
+        } else {
+          throw err;
+        }
+      }
+
       return await groupChat.populate('members.user', 'fullName email profilePicture');
     } catch (error) {
       throw new Error(`Error creating group: ${error.message}`);
@@ -335,26 +391,54 @@ class ChatService {
     try {
       const groups = await GroupChat.find({
         'members.user': userId,
-        isActive: true
+        isActive: true,
+        deletedFor: { $ne: userId }
       })
       .populate('members.user', 'fullName email profilePicture')
       .populate('lastMessage.sender', 'fullName')
-      .sort({ updatedAt: -1 });
+      .sort({ updatedAt: -1 })
+      .lean();
 
-      return groups;
+      // Dynamically calculate unread count for each group
+      const groupsWithUnread = await Promise.all(groups.map(async (group) => {
+        const unreadCount = await ChatMessage.countDocuments({
+          groupId: group._id,
+          senderId: { $ne: userId }, // Don't count own messages as unread
+          "readBy.user": { $ne: userId },
+          deletedFor: { $nin: [mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(userId) : userId, userId.toString()] }
+        });
+        return { ...group, unreadCount };
+      }));
+
+      return groupsWithUnread;
     } catch (error) {
       throw new Error(`Error fetching user groups: ${error.message}`);
     }
   }
 
   // Get group messages
-  static async getGroupMessages(groupId, page = 1, limit = 50) {
+  static async getGroupMessages(groupId, userId, page = 1, limit = 50) {
     try {
-      const messages = await ChatMessage.find({ groupId })
+      const userObjectId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(userId) : userId;
+      const userIdStr = userId.toString();
+      const messages = await ChatMessage.find({ 
+        groupId, 
+        deletedFor: { $nin: [userObjectId, userIdStr] } 
+      })
         .populate("senderId", "fullName email profilePicture")
+        .populate({
+          path: "replyTo",
+          select: "content senderId",
+          populate: { path: "senderId", select: "fullName" }
+        })
         .sort({ timestamp: 1 })
         .limit(limit * 1)
         .skip((page - 1) * limit);
+
+      // Automatically mark as read if fetching first page
+      if (page === 1) {
+        await this.markGroupMessagesAsRead(groupId, userId);
+      }
 
       return messages;
     } catch (error) {
@@ -384,22 +468,31 @@ class ChatService {
         content,
         messageType,
         attachments,
+        replyTo: messageData.replyTo,
         status: "sent",
         timestamp: new Date(),
       });
 
       const savedMessage = await message.save();
 
-      // Update group last message
+      // Update group last message and RESTORE for anyone who had deleted it
       await GroupChat.findByIdAndUpdate(groupId, {
         lastMessage: {
           content: content || (attachments.length > 0 ? "📎 Attachment" : "Group Message"),
           sender: senderId,
           timestamp: new Date()
-        }
+        },
+        $set: { deletedFor: [] }
       });
 
-      await savedMessage.populate("senderId", "fullName email profilePicture");
+      await savedMessage.populate([
+        { path: "senderId", select: "fullName email profilePicture" },
+        { 
+          path: "replyTo", 
+          select: "content senderId",
+          populate: { path: "senderId", select: "fullName" }
+        }
+      ]);
       return savedMessage;
     } catch (error) {
       throw new Error(`Error saving group message: ${error.message}`);
@@ -458,6 +551,78 @@ class ChatService {
       return group;
     } catch (error) {
       throw new Error(`Error removing group member: ${error.message}`);
+    }
+  }
+
+  // Delete message (WhatsApp style)
+  static async deleteMessage(messageId, userId, deleteType) {
+    try {
+      const userObjectId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(userId) : userId;
+      const message = await ChatMessage.findById(messageId);
+      if (!message) throw new Error("Message not found");
+
+      if (deleteType === "everyone") {
+        if (message.senderId.toString() !== userId.toString()) {
+          throw new Error("You can only delete your own messages for everyone");
+        }
+        const diffInHours = (new Date() - new Date(message.timestamp)) / (1000 * 60 * 60);
+        if (diffInHours > 24) throw new Error("Cannot delete for everyone after 24 hours");
+        message.deletedEveryone = true;
+        message.content = "This message was deleted";
+        message.attachments = [];
+        message.isDeleted = true;
+      } else {
+        if (!message.deletedFor.some(id => id.toString() === userObjectId.toString())) {
+          message.deletedFor.push(userObjectId);
+        }
+      }
+      await message.save();
+      return message;
+    } catch (error) {
+      throw new Error(`Error deleting message: ${error.message}`);
+    }
+  }
+
+  // Clear chat history for a user
+  static async clearChat(roomId, userId, isGroup = false) {
+    try {
+      const userObjectId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(userId) : userId;
+      const query = isGroup ? { groupId: roomId } : { chatId: roomId };
+      
+      // Use $addToSet to ensure no duplicates and ensure we match both formats in the query
+      await ChatMessage.updateMany(
+        { ...query, deletedFor: { $nin: [userObjectId, userId.toString()] } }, 
+        { $addToSet: { deletedFor: userObjectId } }
+      );
+      return true;
+    } catch (error) {
+      throw new Error(`Error clearing chat: ${error.message}`);
+    }
+  }
+
+  // Delete chat (messages + hide from list)
+  static async deleteChat(roomId, userId, isGroup = false) {
+    try {
+      const userObjectId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(userId) : userId;
+      
+      // 1. Clear messages for this user
+      await this.clearChat(roomId, userId, isGroup);
+
+      // 2. Add user to deletedFor of the room/group
+      if (isGroup) {
+        await GroupChat.findByIdAndUpdate(roomId, {
+          $addToSet: { deletedFor: userObjectId }
+        });
+      } else {
+        // Find by chatId (format: user1_user2)
+        await ChatRoom.findOneAndUpdate(
+          { chatId: roomId },
+          { $addToSet: { deletedFor: userObjectId } }
+        );
+      }
+      return true;
+    } catch (error) {
+      throw new Error(`Error deleting chat: ${error.message}`);
     }
   }
 }

@@ -45,7 +45,7 @@ const getGroupMessages = async (req, res) => {
   try {
     const { groupId } = req.params;
     const { page, limit } = req.query;
-    const messages = await ChatService.getGroupMessages(groupId, page, limit);
+    const messages = await ChatService.getGroupMessages(groupId, req.user._id, page, limit);
     res.status(200).json({
       success: true,
       data: messages,

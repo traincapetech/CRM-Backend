@@ -22,6 +22,11 @@ const chatMessageSchema = new mongoose.Schema(
       ref: "GroupChat",
       required: false, // Optional for direct messages
     },
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ChatMessage",
+      required: false,
+    },
     content: {
       type: String,
       required: false, // Content is optional if there are attachments
@@ -45,20 +50,64 @@ const chatMessageSchema = new mongoose.Schema(
       enum: ["sent", "delivered", "read"],
       default: "sent",
     },
-    isRead: {
-      type: Boolean,
-      default: false,
-    },
-    readAt: {
-      type: Date,
-    },
+    readBy: [
+      {
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        readAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
     deliveredAt: {
       type: Date,
     },
+    deletedEveryone: {
+      type: Boolean,
+      default: false,
+    },
+    deletedFor: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
+    isEdited: {
+      type: Boolean,
+      default: false,
+    },
+    editHistory: [
+      {
+        content: String,
+        editedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
     timestamp: {
       type: Date,
       default: Date.now,
+      index: true,
     },
+    reactions: [
+      {
+        emoji: String,
+        users: [
+          {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+          },
+        ],
+      },
+    ],
   },
   {
     timestamps: true,

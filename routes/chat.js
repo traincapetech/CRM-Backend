@@ -44,7 +44,11 @@ const {
   getAllUsersForChat,
   updateChatStatus,
   markMessagesAsRead,
+  markGroupMessagesAsRead,
+  editMessage,
+  deleteMessage,
   uploadAttachment,
+  toggleReaction,
 } = require("../controllers/chatController");
 
 const {
@@ -67,6 +71,10 @@ router.post("/upload", upload.single("file"), uploadAttachment);
 router.post("/messages", sendMessage);
 router.get("/messages/:recipientId", getChatMessages);
 router.put("/messages/read/:senderId", markMessagesAsRead);
+router.put("/groups/:groupId/read", markGroupMessagesAsRead);
+router.put("/messages/:id", editMessage);
+router.delete("/messages/:id", deleteMessage);
+router.post("/messages/:id/reaction", toggleReaction);
 
 // Group routes
 router.post("/groups", createGroup);

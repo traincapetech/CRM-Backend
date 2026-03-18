@@ -215,7 +215,7 @@ router.delete('/remove-rajesh-duplicates', authorize('Admin', 'Manager'), async 
 router.route('/:id')
   .get(authorize('Lead Person','Sales Person', 'Manager', 'Admin'), getLead)
   .put(authorize('Lead Person', 'Manager', 'Admin', 'Sales Person'), updateLead)
-  .delete(authorize('Manager', 'Admin'), deleteLead);
+  .delete(authorize('Sales Person', 'Manager', 'Admin'), deleteLead);
 
 router.put('/:id/feedback', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), updateFeedback);
 

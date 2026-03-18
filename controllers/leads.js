@@ -445,26 +445,6 @@ exports.createLead = async (req, res) => {
       console.error("Performance update error (non-blocking):", perfError);
     }
 
-    // Emit Socket.IO event for Real-Time Notification to Assigned User
-    try {
-      const io = req.app.get("io");
-      if (io && lead.assignedTo && lead.assignedTo.toString() !== req.user._id.toString()) {
-        const assignedToId = lead.assignedTo.toString();
-        
-        io.to(`user-${assignedToId}`).emit("leadAssigned", {
-          leadId: lead._id,
-          leadName: lead.name,
-          course: lead.course,
-          assignedBy: req.user.fullName,
-          assignedById: req.user._id,
-          assignmentType: "new",
-        });
-        console.log(`📡 Emitted leadAssigned event to user-${assignedToId}`);
-      }
-    } catch (socketErr) {
-      console.error("Socket emission error (non-blocking):", socketErr);
-    }
-
     res.status(201).json({
       success: true,
       data: lead,
@@ -738,28 +718,6 @@ exports.updateLead = async (req, res) => {
       }
     } catch (perfError) {
       console.error("Performance update error (non-blocking):", perfError);
-    }
-
-    // Emit Socket.IO event if the lead was reassigned to someone else
-    try {
-      const io = req.app.get("io");
-      if (io && req.body["SALE PERSON"] && lead.assignedTo) {
-        const newAssignedTo = lead.assignedTo._id ? lead.assignedTo._id.toString() : lead.assignedTo.toString();
-        // Check if assignedTo actually changed (if we had access to old Lead state) or just emit if it's not the updater
-        if (newAssignedTo !== req.user._id.toString()) {
-          io.to(`user-${newAssignedTo}`).emit("leadAssigned", {
-            leadId: lead._id,
-            leadName: lead.name,
-            course: lead.course,
-            assignedBy: req.user.fullName,
-            assignedById: req.user._id,
-            assignmentType: "transfer"
-          });
-          console.log(`📡 Emitted leadAssigned (transfer) event to user-${newAssignedTo}`);
-        }
-      }
-    } catch (socketErr) {
-      console.error("Socket emission error (non-blocking):", socketErr);
     }
 
     res.status(200).json({
@@ -1774,28 +1732,6 @@ exports.bulkUpdateLeads = async (req, res) => {
         PerformanceCalculationService.calculateEmployeePerformance(userId, today)
           .catch(err => console.error(`Bulk perf update error for ${userId}:`, err.message));
       });
-    }
-
-    // Emit Socket.IO event for bulk assignment
-    if (sanitizedData.assignedTo && sanitizedData.assignedTo.toString() !== req.user._id.toString()) {
-      try {
-        const io = req.app.get("io");
-        if (io) {
-          const assignedToId = sanitizedData.assignedTo.toString();
-          io.to(`user-${assignedToId}`).emit("leadAssigned", {
-            leadId: "bulk",
-            leadName: `${result.modifiedCount} Leads`,
-            course: "Multiple Courses",
-            assignedBy: req.user.fullName,
-            assignedById: req.user._id,
-            assignmentType: "bulk",
-            count: result.modifiedCount
-          });
-          console.log(`📡 Emitted leadAssigned (bulk transfer) event to user-${assignedToId}`);
-        }
-      } catch (socketErr) {
-        console.error("Socket emission error in bulkUpdate (non-blocking):", socketErr);
-      }
     }
 
     res.status(200).json({

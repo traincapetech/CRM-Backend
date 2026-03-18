@@ -62,9 +62,13 @@ const groupChatSchema = new mongoose.Schema({
       type: Boolean,
       default: false
     }
-  }
-}, {
-  timestamps: true
+  },
+  deletedFor: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }]
+  }, {
+    timestamps: true
 });
 
 // Index for efficient querying
