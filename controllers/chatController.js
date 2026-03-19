@@ -417,24 +417,37 @@ module.exports = {
         return res.status(404).json({ success: false, message: "Message not found" });
       }
 
-      // Find if this emoji already exists in reactions
+      // 1. Remove user from any DIFFERENT emoji reactions they might have already given
+      message.reactions.forEach((r, idx) => {
+        if (r.emoji !== emoji) {
+          const uIdx = r.users.indexOf(userId);
+          if (uIdx !== -1) {
+            r.users.splice(uIdx, 1);
+          }
+        }
+      });
+
+      // 2. Remove any reaction entries that have no users left (from step 1)
+      message.reactions = message.reactions.filter(r => r.users.length > 0);
+
+      // 3. Now handle the requested emoji
       const reactionIndex = message.reactions.findIndex((r) => r.emoji === emoji);
 
       if (reactionIndex === -1) {
-        // Emoji not found, add new reaction with this user
+        // User is adding a NEW reaction (since they were removed from others above)
         message.reactions.push({ emoji, users: [userId] });
       } else {
-        // Emoji found, check if user already reacted
+        // User clicked the SAME emoji, toggle it off
         const userIndex = message.reactions[reactionIndex].users.indexOf(userId);
 
         if (userIndex === -1) {
-          // User hasn't reacted with this emoji, add them
+          // This case should theoretically be handled by the removal loop above, 
+          // but for safety: add them if not present.
           message.reactions[reactionIndex].users.push(userId);
         } else {
-          // User already reacted, remove them (toggle off)
+          // User already reacted with THIS emoji, remove it (pure toggle off)
           message.reactions[reactionIndex].users.splice(userIndex, 1);
 
-          // If no users left for this emoji, remove the emoji entry entirely
           if (message.reactions[reactionIndex].users.length === 0) {
             message.reactions.splice(reactionIndex, 1);
           }

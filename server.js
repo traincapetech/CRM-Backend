@@ -106,6 +106,7 @@ const notificationRoutes = require("./routes/notifications");
 const quarterlyIncentivesRoutes = require("./routes/quarterlyIncentives");
 const holidayRoutes = require("./routes/holidays");
 const holidayController = require("./controllers/holidays");
+const courseRoutes = require("./routes/courses");
 
 const app = express();
 const server = http.createServer(app);
@@ -503,6 +504,7 @@ app.use("/api/notifications", notificationRoutes); // Mount Notification Routes
 app.use("/api/questionnaires", questionnaireRoutes); // Mount Questionnaire Routes
 
 app.use("/api/holidays", holidayRoutes);
+app.use("/api/courses", courseRoutes);
 app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarterly Incentives Routes
 
 // Image Proxy Route to solve CORS issues for ID Card generation
