@@ -143,13 +143,6 @@ exports.createCourse = async (req, res) => {
     });
   } catch (err) {
     console.error('Error creating course:', err);
-    if (err.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Course name already exists',
-      });
-    }
-    
     // Provide specific validation error messages if available
     const message = err.name === 'ValidationError' 
       ? Object.values(err.errors).map(val => val.message).join(', ')
@@ -197,13 +190,6 @@ exports.updateCourse = async (req, res) => {
     });
   } catch (err) {
     console.error('Error updating course:', err);
-    if (err.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Course name already exists',
-      });
-    }
-
     const message = err.name === 'ValidationError' 
       ? Object.values(err.errors).map(val => val.message).join(', ')
       : err.message;
