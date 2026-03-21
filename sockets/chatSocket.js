@@ -57,7 +57,6 @@ module.exports = (io, socket) => {
       // Confirmation to sender
       socket.emit("messageDelivered", {
         _id: message._id,
-        status: "delivered", // At this point it's at least 'sent' to server, we'll call it delivered if socket emission succeeds
         timestamp: message.timestamp,
         tempId: tempId
       });
@@ -96,7 +95,6 @@ module.exports = (io, socket) => {
       // Confirmation to sender
       socket.emit("groupMessageDelivered", {
         _id: message._id,
-        status: "delivered",
         groupId: message.groupId,
         timestamp: message.timestamp,
         tempId: tempId

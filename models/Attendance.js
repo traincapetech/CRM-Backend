@@ -117,8 +117,13 @@ attendanceSchema.methods.calculateTotalHours = async function () {
 
 // Pre-save middleware to calculate hours
 attendanceSchema.pre('save', async function (next) {
-  if (this.checkIn && this.checkOut) {
-    await this.calculateTotalHours();
+  // Only calculate total hours/status if timestamps were modified
+  // AND the status was NOT manually modified.
+  // This allows admins to override the calculated status.
+  if ((this.isModified('checkIn') || this.isModified('checkOut')) && !this.isModified('status')) {
+    if (this.checkIn && this.checkOut) {
+      await this.calculateTotalHours();
+    }
   }
   next();
 });
