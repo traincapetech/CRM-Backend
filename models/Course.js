@@ -35,12 +35,16 @@ courseSchema.pre('save', function(next) {
 
 const Course = mongoose.model('Course', courseSchema);
 
-// Drop the unique index if it exists to allow duplicates as requested
-Course.collection.dropIndex('courseName_1').catch(err => {
-  // Silence error if index doesn't exist
-  if (err.code !== 27) {
-    console.warn('Note: Could not drop courseName index (might not be unique or already dropped):', err.message);
-  }
-});
+// Log and clean up indexes to ensure duplicates are allowed
+Course.collection.getIndexes()
+  .then(indexes => {
+    console.log('Course collection indexes:', indexes);
+    // If courseName_1 exists and is unique, drop it
+    if (indexes.courseName_1) {
+      return Course.collection.dropIndex('courseName_1');
+    }
+  })
+  .then(() => console.log('Unique index handling complete'))
+  .catch(err => console.error('Error during index handling:', err.message));
 
 module.exports = Course;

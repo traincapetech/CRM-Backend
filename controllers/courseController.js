@@ -142,7 +142,8 @@ exports.createCourse = async (req, res) => {
       data: course,
     });
   } catch (err) {
-    console.error('Error creating course:', err);
+    console.error('SERVER-SIDE Error creating course:', err);
+    console.error(err.stack);
     // Provide specific validation error messages if available
     const message = err.name === 'ValidationError' 
       ? Object.values(err.errors).map(val => val.message).join(', ')
