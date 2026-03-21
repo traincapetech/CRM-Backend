@@ -33,18 +33,6 @@ courseSchema.pre('save', function(next) {
   next();
 });
 
-const Course = mongoose.model('Course', courseSchema);
-
-// Log and clean up indexes to ensure duplicates are allowed
-Course.collection.getIndexes()
-  .then(indexes => {
-    console.log('Course collection indexes:', indexes);
-    // If courseName_1 exists and is unique, drop it
-    if (indexes.courseName_1) {
-      return Course.collection.dropIndex('courseName_1');
-    }
-  })
-  .then(() => console.log('Unique index handling complete'))
-  .catch(err => console.error('Error during index handling:', err.message));
+const Course = mongoose.model('CoursePricing', courseSchema, 'course_pricings');
 
 module.exports = Course;
