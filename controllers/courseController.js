@@ -126,6 +126,7 @@ exports.getCourse = async (req, res) => {
 // @access  Private (Admin, Manager)
 exports.createCourse = async (req, res) => {
   try {
+    console.log('Creating course with data:', req.body);
     // Check role
     if (!['Admin', 'Manager'].includes(req.user.role)) {
       return res.status(403).json({
@@ -148,9 +149,16 @@ exports.createCourse = async (req, res) => {
         message: 'Course name already exists',
       });
     }
+    
+    // Provide specific validation error messages if available
+    const message = err.name === 'ValidationError' 
+      ? Object.values(err.errors).map(val => val.message).join(', ')
+      : err.message;
+
     res.status(400).json({
       success: false,
-      message: err.message,
+      message: message || 'Failed to create course',
+      error: err.name
     });
   }
 };
@@ -160,6 +168,7 @@ exports.createCourse = async (req, res) => {
 // @access  Private (Admin, Manager)
 exports.updateCourse = async (req, res) => {
   try {
+    console.log('Updating course with ID:', req.params.id, 'Data:', req.body);
     // Check role
     if (!['Admin', 'Manager'].includes(req.user.role)) {
       return res.status(403).json({
@@ -188,9 +197,21 @@ exports.updateCourse = async (req, res) => {
     });
   } catch (err) {
     console.error('Error updating course:', err);
+    if (err.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Course name already exists',
+      });
+    }
+
+    const message = err.name === 'ValidationError' 
+      ? Object.values(err.errors).map(val => val.message).join(', ')
+      : err.message;
+
     res.status(400).json({
       success: false,
-      message: err.message,
+      message: message || 'Failed to update course',
+      error: err.name
     });
   }
 };
