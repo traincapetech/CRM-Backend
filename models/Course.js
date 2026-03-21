@@ -1,0 +1,42 @@
+const mongoose = require('mongoose');
+
+const courseSchema = new mongoose.Schema({
+  courseName: {
+    type: String,
+    required: [true, 'Course name is required'],
+    trim: true,
+    unique: true
+  },
+  price: {
+    type: Number,
+    required: [true, 'Price is required'],
+    min: [0, 'Price cannot be negative']
+  },
+  examFee: {
+    type: Number,
+    required: [true, 'Exam fee is required'],
+    min: [0, 'Exam fee cannot be negative']
+  },
+  description: {
+    type: String,
+    trim: true
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+// Update the updatedAt field on save
+courseSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
+});
+
+const Course = mongoose.model('Course', courseSchema);
+
+module.exports = Course;

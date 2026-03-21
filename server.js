@@ -106,6 +106,7 @@ const notificationRoutes = require("./routes/notifications");
 const quarterlyIncentivesRoutes = require("./routes/quarterlyIncentives");
 const holidayRoutes = require("./routes/holidays");
 const holidayController = require("./controllers/holidays");
+const courseRoutes = require("./routes/courseRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -504,6 +505,7 @@ app.use("/api/questionnaires", questionnaireRoutes); // Mount Questionnaire Rout
 
 app.use("/api/holidays", holidayRoutes);
 app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarterly Incentives Routes
+app.use("/api/courses", courseRoutes); // Mount Course Pricing Routes
 
 // Basic route for testing
 app.get("/", (req, res) => {
