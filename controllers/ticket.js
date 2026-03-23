@@ -13,17 +13,6 @@ const TicketChat = require("../models/TicketChat");
 
 const fileStorage = require("../services/fileStorageService");
 
-// Helper function to map user roles to department IDs used in tickets
-const getDepartmentFromRole = (role) => {
-  if (!role) return null;
-  const roleLower = role.toLowerCase();
-  if (roleLower.includes("it")) return "IT";
-  if (roleLower.includes("hr")) return "HR";
-  if (roleLower.includes("sales")) return "SALES";
-  if (roleLower.includes("lead")) return "LEAD";
-  return null;
-};
-
 // 1. Create Ticket (Any user)
 exports.createTicket = async (req, res) => {
   try {
@@ -148,7 +137,8 @@ exports.getAllTickets = async (req, res) => {
     // Managers (Manager, IT Manager, HR) see their department's tickets
     else if (["Manager", "IT Manager", "HR"].includes(userRole)) {
       // Get user's department ID from role
-      const userDeptId = getDepartmentFromRole(userRole);
+      const deptController = require("./department");
+      const userDeptId = deptController.getDepartmentFromRole(userRole);
 
       if (userDeptId) {
         // Fix: Manager sees tickets assigned to their dept OR (unassigned AND preferred for their dept)
@@ -716,7 +706,8 @@ exports.getTicketStats = async (req, res) => {
     let filter = {};
     const userRole = req.user.role;
     if (userRole !== "Admin") {
-       const userDeptId = getDepartmentFromRole(userRole);
+       const deptController = require("./department");
+       const userDeptId = deptController.getDepartmentFromRole(userRole);
        if (userDeptId) filter.assignedDept = userDeptId;
     }
 

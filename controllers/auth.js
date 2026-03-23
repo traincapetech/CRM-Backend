@@ -795,6 +795,32 @@ exports.updateProfilePicture = async (req, res) => {
       });
     }
 
+    // Synchronize with associated employee record if it exists
+    const Employee = require("../models/Employee");
+    try {
+      const employee = await Employee.findOne({ userId: req.user.id });
+      if (employee) {
+        console.log("Found associated employee, updating photograph field...");
+        employee.photograph = profilePictureUrl;
+        
+        // Ensure documents object is initialized and contains the photo
+        if (!employee.documents) {
+          employee.documents = {};
+        }
+        // Set both 'photograph' and 'photo' for maximum compatibility with different UI versions
+        employee.documents.photograph = profilePictureUrl;
+        employee.documents.photo = profilePictureUrl;
+        
+        // Mark as modified if it's a mixed type
+        employee.markModified('documents');
+        await employee.save();
+        console.log("Employee profile photo synchronized successfully");
+      }
+    } catch (empError) {
+      console.warn("Failed to synchronize with employee record:", empError.message);
+      // Non-critical, so we don't fail the entire request
+    }
+
     console.log("Profile picture updated successfully for user:", user._id);
     res.status(200).json({
       success: true,

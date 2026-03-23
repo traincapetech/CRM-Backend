@@ -106,7 +106,7 @@ const notificationRoutes = require("./routes/notifications");
 const quarterlyIncentivesRoutes = require("./routes/quarterlyIncentives");
 const holidayRoutes = require("./routes/holidays");
 const holidayController = require("./controllers/holidays");
-const courseRoutes = require("./routes/courseRoutes");
+const courseRoutes = require("./routes/courses");
 
 const app = express();
 const server = http.createServer(app);
@@ -130,7 +130,7 @@ const io = socketIo(server, {
   },
 });
 
-// Make io available to other modules via app.set
+// Make io accessible to routers/controllers
 app.set("io", io);
 
 // Initialize notification service with shared io instance
@@ -452,8 +452,8 @@ if (
   swaggerSetup(app);
 }
 
-// Serve static files from uploads directory
-app.use("/uploads", express.static("uploads"));
+// Serve static files from uploads directory with CORS enabled
+app.use("/uploads", cors(), express.static("uploads"));
 
 // Mount routers
 app.use("/api/auth", authRoutes);
@@ -504,8 +504,81 @@ app.use("/api/notifications", notificationRoutes); // Mount Notification Routes
 app.use("/api/questionnaires", questionnaireRoutes); // Mount Questionnaire Routes
 
 app.use("/api/holidays", holidayRoutes);
+app.use("/api/courses", courseRoutes);
+app.use("/api/public", require("./routes/public"));
 app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarterly Incentives Routes
-app.use("/api/courses", courseRoutes); // Mount Course Pricing Routes
+
+// Image Proxy Route to solve CORS issues for ID Card generation
+app.get("/api/proxy-image", async (req, res) => {
+  let imageUrl = req.query.url;
+  if (!imageUrl) return res.status(400).send("URL is required");
+  
+  // If it's a relative URL, try to point it to the local server
+  if (imageUrl.startsWith("/")) {
+    imageUrl = `http://localhost:${process.env.PORT || 8080}${imageUrl}`;
+  }
+
+  try {
+    const axios = require("axios");
+    // Forward auth cookies for internal requests
+    const headers = {};
+    if (req.headers.cookie) {
+      headers.cookie = req.headers.cookie;
+    }
+    if (req.headers.authorization) {
+      headers.authorization = req.headers.authorization;
+    }
+
+    const response = await axios.get(imageUrl, { 
+      responseType: "arraybuffer",
+      headers: headers
+    });
+    
+    const contentType = response.headers["content-type"];
+    res.set("Content-Type", contentType);
+    res.set("Access-Control-Allow-Origin", "*");
+    res.send(response.data);
+  } catch (error) {
+    console.error("Proxy error:", error.message, "URL:", imageUrl);
+    res.status(500).send("Error fetching image");
+  }
+});
+
+// Image Proxy Route to solve CORS issues for ID Card generation
+app.get("/api/proxy-image", async (req, res) => {
+  let imageUrl = req.query.url;
+  if (!imageUrl) return res.status(400).send("URL is required");
+  
+  // If it's a relative URL, try to point it to the local server
+  if (imageUrl.startsWith("/")) {
+    imageUrl = `http://localhost:${process.env.PORT || 8080}${imageUrl}`;
+  }
+
+  try {
+    const axios = require("axios");
+    // Forward auth cookies for internal requests
+    const headers = {};
+    if (req.headers.cookie) {
+      headers.cookie = req.headers.cookie;
+    }
+    if (req.headers.authorization) {
+      headers.authorization = req.headers.authorization;
+    }
+
+    const response = await axios.get(imageUrl, { 
+      responseType: "arraybuffer",
+      headers: headers
+    });
+    
+    const contentType = response.headers["content-type"];
+    res.set("Content-Type", contentType);
+    res.set("Access-Control-Allow-Origin", "*");
+    res.send(response.data);
+  } catch (error) {
+    console.error("Proxy error:", error.message, "URL:", imageUrl);
+    res.status(500).send("Error fetching image");
+  }
+});
 
 // Basic route for testing
 app.get("/", (req, res) => {

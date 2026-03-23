@@ -114,11 +114,12 @@ class ChatService {
           select: "content senderId",
           populate: { path: "senderId", select: "fullName" }
         })
-        .sort({ timestamp: 1 })
-        // If searching, we might want to return all matches or paginate differently,
-        // but for now keeping pagination
+        .sort({ timestamp: -1 }) // Get newest messages first
         .limit(limit * 1)
         .skip((page - 1) * limit);
+
+      // Reverse to chronological order for the frontend
+      const reversedMessages = messages.reverse();
 
       // Mark messages as read for the recipient (only if looking at recent messages)
       if (!search && page === 1) {
@@ -149,7 +150,7 @@ class ChatService {
         }
       }
 
-      return messages;
+      return reversedMessages;
     } catch (error) {
       throw new Error(`Error getting chat messages: ${error.message}`);
     }
@@ -431,16 +432,18 @@ class ChatService {
           select: "content senderId",
           populate: { path: "senderId", select: "fullName" }
         })
-        .sort({ timestamp: 1 })
+        .sort({ timestamp: -1 }) // Get newest first
         .limit(limit * 1)
         .skip((page - 1) * limit);
 
+      const reversedMessages = messages.reverse();
+      
       // Automatically mark as read if fetching first page
       if (page === 1) {
         await this.markGroupMessagesAsRead(groupId, userId);
       }
 
-      return messages;
+      return reversedMessages;
     } catch (error) {
       throw new Error(`Error getting group messages: ${error.message}`);
     }
