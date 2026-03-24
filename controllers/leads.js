@@ -309,8 +309,9 @@ exports.createLead = async (req, res) => {
       source: req.body.SOURSE,
       sourceLink: req.body["SOURCE LINK"],
       assignedTo: req.body["SALE PERSON"],
-      leadPerson: req.body["LEAD PERSON"],
-      feedback: req.body.FEEDBACK,
+      leadPerson: req.body["LEAD PERSON"] || req.body.leadPerson,
+      feedback: req.body.FEEDBACK || req.body.feedback,
+      remarks: req.body.REMARKS || req.body.remarks,
       createdAt: req.body.DATE ? new Date(req.body.DATE) : Date.now(),
       isRepeatCustomer: false, // Default value, will be updated if needed
       previousCourses: [],
@@ -593,15 +594,21 @@ exports.updateLead = async (req, res) => {
       });
     }
 
-    // For Sales Persons, only allow updating the status field
+    // For Sales Persons, allow updating status, feedback, remarks, and client remarks
     if (req.user.role === "Sales Person") {
-      console.log("Sales Person is updating lead status to:", req.body.status);
+      console.log("Sales Person is updating lead:", req.body);
 
-      // Only update the status and updatedAt fields
       const updateData = {
-        status: req.body.status,
         updatedAt: Date.now(),
       };
+
+      if (req.body.status !== undefined) updateData.status = req.body.status;
+      if (req.body.feedback !== undefined) updateData.feedback = req.body.feedback;
+      if (req.body.FEEDBACK !== undefined) updateData.feedback = req.body.FEEDBACK;
+      if (req.body.remarks !== undefined) updateData.remarks = req.body.remarks;
+      if (req.body.REMARKS !== undefined) updateData.remarks = req.body.REMARKS;
+      if (req.body.client !== undefined) updateData.client = req.body.client;
+      if (req.body["CLIENT REMARK"] !== undefined) updateData.client = req.body["CLIENT REMARK"];
 
       lead = await Lead.findByIdAndUpdate(req.params.id, updateData, {
         new: true,
@@ -636,6 +643,7 @@ exports.updateLead = async (req, res) => {
       "SALE PERSON": "assignedTo",
       "LEAD PERSON": "leadPerson",
       FEEDBACK: "feedback",
+      REMARKS: "remarks",
 
       // Standard Keys (from other UI components)
       name: "name",

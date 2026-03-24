@@ -6,7 +6,7 @@ const Course = require("../models/Course");
 // @access  Private (Admin, Manager, Sales Person)
 exports.getCourses = async (req, res, next) => {
   try {
-    const courses = await Course.find().populate('createdBy updatedBy', 'fullName email');
+    const courses = await Course.find();
 
     res.status(200).json({
       success: true,
@@ -23,8 +23,7 @@ exports.getCourses = async (req, res, next) => {
 // @access  Private (Admin, Manager, Sales Person)
 exports.getCourse = async (req, res, next) => {
   try {
-    const course = await Course.findById(req.params.id)
-      .populate('createdBy updatedBy', 'fullName email');
+    const course = await Course.findById(req.params.id);
 
     if (!course) {
       return next(new ErrorResponse(`Course not found with id of ${req.params.id}`, 404));
@@ -48,7 +47,7 @@ exports.createCourse = async (req, res, next) => {
     req.body.createdBy = req.user._id;
 
     // Check for existing course
-    const existingCourse = await Course.findOne({ name: req.body.name });
+    const existingCourse = await Course.findOne({ courseName: req.body.courseName });
     if (existingCourse) {
        return next(new ErrorResponse("Course with this name already exists", 400));
     }
@@ -60,6 +59,13 @@ exports.createCourse = async (req, res, next) => {
       data: course,
     });
   } catch (error) {
+    console.error("Error in createCourse:", error);
+    try {
+      const fs = require('fs');
+      fs.appendFileSync('error_log.txt', new Date().toISOString() + ': ' + error.stack + '\n\n');
+    } catch (fsError) {
+      console.error("Failed to write to error_log.txt", fsError);
+    }
     next(error);
   }
 };

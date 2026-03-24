@@ -13,6 +13,11 @@ const courseSchema = new mongoose.Schema({
     type: Number,
     min: [0, 'Exam fee cannot be negative']
   },
+  package: {
+    type: Number,
+    default: 0,
+    min: [0, 'Package price cannot be negative']
+  },
   description: {
     type: String,
     trim: true

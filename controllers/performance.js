@@ -583,11 +583,9 @@ const getTeamPerformance = async (req, res) => {
   try {
     const managerId = req.params.managerId;
 
-    // Find all employees reporting to this manager
-    // Note: You'll need to add a "managerId" field to User model
+    // Find all active Sales and Lead persons (global average as per user request)
     const teamMembers = await User.find({
-      // managerId: managerId, // Uncomment when you add this field
-      role: { $in: ["Sales Person", "Lead Person"] }, // Temporary filter
+      role: { $in: ["Sales Person", "Lead Person"] },
       active: true,
     }).select("fullName email role");
 
@@ -609,25 +607,30 @@ const getTeamPerformance = async (req, res) => {
         excellent: 0,
         good: 0,
         average: 0,
-        belowAverage: 0,
+        "below-average": 0,
         poor: 0,
       },
     };
 
-    summaries.forEach((summary) => {
-      teamStats.avgRating += summary.currentRating;
-      teamStats.distribution[summary.ratingTier] += 1;
+    if (summaries.length > 0) {
+      let totalRating = 0;
+      summaries.forEach((summary) => {
+        totalRating += summary.currentRating || 0;
+        if (summary.ratingTier && teamStats.distribution[summary.ratingTier] !== undefined) {
+          teamStats.distribution[summary.ratingTier] += 1;
+        }
 
-      if (summary.currentRating < 50) {
-        teamStats.atRiskCount += 1;
-      }
-    });
+        if ((summary.currentRating || 0) < 50) {
+          teamStats.atRiskCount += 1;
+        }
+      });
 
-    teamStats.avgRating = teamStats.avgRating / summaries.length || 0;
+      teamStats.avgRating = parseFloat((totalRating / summaries.length).toFixed(2));
+    }
 
     // Sort by rating
     const sorted = [...summaries].sort(
-      (a, b) => b.currentRating - a.currentRating,
+      (a, b) => (b.currentRating || 0) - (a.currentRating || 0),
     );
     teamStats.topPerformers = sorted.slice(0, 5);
     teamStats.bottomPerformers = sorted.slice(-5).reverse();
