@@ -30,10 +30,25 @@ const getPermissionsForRoles = async (roleNames) => {
 
 const getUserPermissions = async (user) => {
   const roleNames = getUserRoleNames(user);
-  const permissions = await getPermissionsForRoles(roleNames);
+  const permissionsSet = await getPermissionsForRoles(roleNames);
+
+  // Add default permissions for certain roles
+  roleNames.forEach(role => {
+    // Everyone except Customer should be able to take tests
+    if (role !== 'Customer') {
+      permissionsSet.add('test.take');
+    }
+
+    // Admins, Managers, and IT Managers should be able to evaluate tests
+    if (['Admin', 'Manager', 'Lead Person', 'IT Manager'].includes(role)) {
+      permissionsSet.add('test.evaluate');
+      permissionsSet.add('test.report');
+    }
+  });
+
   return {
     roleNames,
-    permissions: Array.from(permissions)
+    permissions: Array.from(permissionsSet)
   };
 };
 
