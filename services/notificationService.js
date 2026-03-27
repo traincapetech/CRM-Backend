@@ -39,8 +39,11 @@ const createNotification = async ({ recipient, type, ticketId, questionnaireId, 
 
     // Send via socket if io is initialized
     if (io) {
+      // 🔑 Explicitly toString the recipient to ensure room name match
+      const recipientId = recipient.toString();
+      
       // Users should join a room named `user-${userId}` on connection
-      io.to(`user-${recipient}`).emit("new_notification", {
+      io.to(`user-${recipientId}`).emit("new_notification", {
         _id: notification._id,
         type,
         ticketId,
@@ -50,12 +53,9 @@ const createNotification = async ({ recipient, type, ticketId, questionnaireId, 
         createdAt: notification.createdAt,
       });
 
-      
       // Also emit a general update to refresh unread count
-      io.to(`user-${recipient}`).emit("notification_count_update");
+      io.to(`user-${recipientId}`).emit("notification_count_update");
     }
-
-
 
     return notification;
   } catch (error) {
@@ -122,10 +122,14 @@ const broadcastToUser = (userId, event, data = {}) => {
 const notifyAdmins = async ({ type, message, ...data }) => {
   try {
     const User = require("../models/User");
-    const admins = await User.find({ role: "Admin", active: true });
+    // Find all Admins, then filter in code to be safe with field types
+    const allAdmins = await User.find({ role: "Admin" });
+    const admins = allAdmins.filter(a => a.active !== false);
     
-    // Using a simple loop to ensure notifications are created correctly
+    console.log(`🔔 [NOTIFY ADMINS] Found ${admins.length} admins (from ${allAdmins.length} total Admin records)`);
+    
     for (const admin of admins) {
+      console.log(`   👉 Sending to: ${admin.email} (${admin._id})`);
       await createNotification({
         recipient: admin._id,
         type,
@@ -134,7 +138,7 @@ const notifyAdmins = async ({ type, message, ...data }) => {
       });
     }
   } catch (error) {
-    console.error("Error notifying admins:", error);
+    console.error("❌ Error notifying admins:", error);
   }
 };
 

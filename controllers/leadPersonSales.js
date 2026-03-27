@@ -1,4 +1,5 @@
 const LeadPersonSale = require('../models/LeadPersonSale');
+const { notifyAdmins } = require('../services/notificationService');
 
 // @desc    Get all lead person sales
 // @route   GET /api/lead-person-sales
@@ -179,6 +180,14 @@ exports.createLeadPersonSale = async (req, res) => {
     
     console.log('Lead person sale created successfully:', sale._id);
 
+    // Notify admins
+    try {
+      await notifyAdmins({
+        type: 'SALE_CREATED',
+        message: `New Lead Person Sale created by ${req.user.fullName} — Customer: ${sale.customerName || 'N/A'}, Course: ${sale.course || 'N/A'}, Amount: ${sale.amount || sale.totalCost || 'N/A'}`,
+      });
+    } catch (e) { console.error('notify error:', e); }
+
     res.status(201).json({
       success: true,
       data: sale
@@ -232,13 +241,20 @@ exports.updateLeadPersonSale = async (req, res) => {
       runValidators: true
     });
 
+    // Notify admins
+    try {
+      await notifyAdmins({
+        type: 'SALE_UPDATED',
+        message: `Lead Person Sale updated by ${req.user.fullName} — Customer: ${sale.customerName || 'N/A'}, Course: ${sale.course || 'N/A'}`,
+      });
+    } catch (e) { console.error('notify error:', e); }
+
     res.status(200).json({
       success: true,
       data: sale
     });
   } catch (err) {
     console.error(err);
-    
     if (err.name === 'ValidationError') {
       const messages = Object.values(err.errors).map(val => val.message);
       return res.status(400).json({
@@ -246,13 +262,13 @@ exports.updateLeadPersonSale = async (req, res) => {
         message: messages.join(', ')
       });
     }
-    
     res.status(500).json({
       success: false,
       message: 'Server Error'
     });
   }
 };
+
 
 // @desc    Delete lead person sale
 // @route   DELETE /api/lead-person-sales/:id

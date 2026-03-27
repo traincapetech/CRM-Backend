@@ -318,6 +318,13 @@ exports.login = async (req, res) => {
     // Set httpOnly cookie with JWT token
     res.cookie("token", token, cookieOptions);
 
+    // Notify Admins of User Login
+    await notifyAdmins({
+      type: "USER_LOGGED_IN",
+      message: `User Logged In: ${user.fullName} (${user.role}) from ${req.ip || "unknown IP"}`,
+      userId: user._id
+    });
+
     res.status(200).json({
       success: true,
       token, // Still include token in response for backward compatibility during transition

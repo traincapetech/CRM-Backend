@@ -316,6 +316,14 @@ notificationService.init(io);
 io.on("connection", (socket) => {
   console.log("New client connected:", socket.id);
 
+  // 🔑 Critical: Allow clients to join their personal room for targeted notifications
+  socket.on("join-user-room", (userId) => {
+    if (userId) {
+      socket.join(`user-${userId}`);
+      console.log(`✅ User ${userId} joined room: user-${userId} (socket: ${socket.id})`);
+    }
+  });
+
   // Initialize modular handlers
   chatSocketHandler(io, socket);
   ticketSocketHandler(io, socket);
