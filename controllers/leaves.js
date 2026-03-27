@@ -3,6 +3,7 @@ const Leave = require("../models/Leave");
 const Employee = require("../models/Employee");
 const User = require("../models/User");
 const mongoose = require("mongoose");
+const { notifyAdmins } = require("../services/notificationService");
 
 // @desc    Get my leaves
 // @route   GET /api/leaves/my-leaves
@@ -210,6 +211,13 @@ exports.createLeave = async (req, res) => {
     const leave = await Leave.create(leaveData);
     console.log("Leave created:", leave._id);
 
+    // Notify Admins
+    await notifyAdmins({
+      type: "LEAVE_REQUESTED",
+      message: `New Leave Request: ${employee.fullName} (${totalDays} days, ${req.body.leaveType})`,
+      leaveId: leave._id
+    });
+
     // FEED INTEGRATION: Notify HR and Admins
     try {
       // 1. Notify Assigned HR
@@ -376,6 +384,13 @@ exports.approveLeave = async (req, res) => {
     leave.approvedDate = Date.now();
     await leave.save();
 
+    // Notify Admins
+    await notifyAdmins({
+      type: "LEAVE_APPROVED",
+      message: `Leave Approved: ${leave.employeeId?.fullName || 'Employee'} by ${req.user.fullName}`,
+      leaveId: leave._id
+    });
+
     res.json({
       success: true,
       data: leave,
@@ -416,6 +431,13 @@ exports.rejectLeave = async (req, res) => {
     leave.rejectedDate = Date.now();
     leave.rejectionReason = req.body.reason;
     await leave.save();
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "LEAVE_REJECTED",
+      message: `Leave Rejected: ${leave.employeeId?.fullName || 'Employee'} by ${req.user.fullName}. Reason: ${req.body.reason}`,
+      leaveId: leave._id
+    });
 
     res.json({
       success: true,

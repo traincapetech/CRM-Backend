@@ -1,7 +1,7 @@
 const Payroll = require("../models/Payroll");
 const Employee = require("../models/Employee");
 const PayoutAuditLog = require("../models/PayoutAuditLog");
-const notificationService = require("../services/notificationService");
+const { notifyAdmins } = require("../services/notificationService");
 const Attendance = require("../models/Attendance");
 const Expense = require("../models/Expense"); // Added Expense model
 const PDFDocument = require("pdfkit");
@@ -279,6 +279,13 @@ exports.generatePayroll = async (req, res) => {
 
     await payroll.save();
 
+    // Notify Admins
+    await notifyAdmins({
+      type: "PAYROLL_GENERATED",
+      message: `Payroll Generated: ${employee.fullName} for ${payroll.monthName} ${payroll.year} by ${req.user.fullName}`,
+      payrollId: payroll._id
+    });
+
     res.status(201).json({
       success: true,
       data: payroll,
@@ -540,6 +547,13 @@ exports.updatePayroll = async (req, res) => {
     }
 
     await payroll.save();
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "PAYROLL_UPDATED",
+      message: `Payroll Updated: ${payroll.employeeId?.fullName || "Employee"} (${payroll.monthName || "this month"}) by ${req.user.fullName}`,
+      payrollId: payroll._id,
+    });
 
     // Populate employee details for response
     await payroll.populate("employeeId", "fullName email department");
@@ -810,6 +824,13 @@ exports.approvePayroll = async (req, res) => {
     }
 
     await payroll.save();
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "PAYROLL_APPROVED",
+      message: `Payroll Approved: ${payroll.employeeId?.fullName || "Employee"} (${payroll.monthName || "this month"} ${payroll.year || "this year"}) by ${req.user.fullName}. Payout ${payroll.paytmPayoutStatus || "MANUAL"}.`,
+      payrollId: payroll._id,
+    });
 
     res.status(200).json({
       success: true,

@@ -3,6 +3,7 @@ const User = require("../models/User");
 const Lead = require("../models/Lead");
 const Sale = require("../models/Sale");
 const PerformanceSummary = require("../models/PerformanceSummary");
+const { notifyAdmins } = require("../services/notificationService");
 
 // @desc    Get all tasks
 // @route   GET /api/tasks?department=IT
@@ -181,6 +182,13 @@ exports.createTask = async (req, res) => {
       // Don't fail the request if notification tracking fails
     }
 
+    // Notify Admins
+    await notifyAdmins({
+      type: "TASK_CREATED",
+      message: `New Task: "${task.title}" created by ${populatedTask.assignedBy?.fullName || 'Manager'} for ${task.department} department.`,
+      taskId: task._id
+    });
+
     res.status(201).json({
       success: true,
       data: task,
@@ -316,6 +324,15 @@ exports.updateTask = async (req, res) => {
       }
     }
 
+    // Notify Admins about status change
+    if (req.body.status && req.body.status !== previousStatus) {
+      await notifyAdmins({
+        type: "TASK_STATUS_UPDATED",
+        message: `Task "${task.title}" status changed to ${task.status} by ${req.user.fullName}`,
+        taskId: task._id
+      });
+    }
+
     // Send instant notification if task is newly assigned/re-assigned to a user
     if (req.body.assignedTo && req.body.assignedTo.toString() !== previousAssignedTo) {
       try {
@@ -374,6 +391,13 @@ exports.deleteTask = async (req, res) => {
     }
 
     await Task.findByIdAndDelete(req.params.id);
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "TASK_DELETED",
+      message: `Task "${task.title}" was deleted by ${req.user.fullName}`,
+      deletedBy: req.user.id
+    });
 
     res.status(200).json({
       success: true,

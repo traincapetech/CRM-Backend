@@ -6,6 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const fileStorage = require("../services/fileStorageService");
 const { decrypt } = require("../utils/encryption");
+const { notifyAdmins } = require("../services/notificationService");
 
 // Export multer upload middleware
 exports.uploadEmployeeFiles = fileStorage.uploadMiddleware.fields([
@@ -595,6 +596,13 @@ exports.createEmployee = async (req, res) => {
       await employee.save();
     }
 
+    // Notify Admins
+    await notifyAdmins({
+      type: "EMPLOYEE_CREATED",
+      message: `New Employee Profile Created: ${employee.fullName} (${employee.email}) by ${req.user.fullName}`,
+      employeeId: employee._id
+    });
+
     res.status(201).json({
       success: true,
       data: employee,
@@ -733,6 +741,13 @@ exports.updateEmployee = async (req, res) => {
 
     console.log("Employee updated successfully");
 
+    // Notify Admins
+    await notifyAdmins({
+      type: "EMPLOYEE_UPDATED",
+      message: `Employee Profile Updated: ${employee.fullName} by ${req.user.fullName}`,
+      employeeId: employee._id
+    });
+
     res.status(200).json({
       success: true,
       data: employee,
@@ -796,6 +811,13 @@ exports.deleteEmployee = async (req, res) => {
       if (employee[field] && fs.existsSync(employee[field])) {
         fs.unlinkSync(employee[field]);
       }
+    });
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "EMPLOYEE_DELETED",
+      message: `Employee Profile Deleted: ${employee.fullName} by ${req.user.fullName}`,
+      deletedBy: req.user.id
     });
 
     // Delete associated user account

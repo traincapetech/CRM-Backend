@@ -112,9 +112,31 @@ const broadcastToUser = (userId, event, data = {}) => {
   }
 };
 
-
-
-
+/**
+ * Notify all admin users about an event
+ * @param {Object} params
+ * @param {String} params.type - Notification type
+ * @param {String} params.message - Notification message
+ * @param {Object} params.data - Additional data
+ */
+const notifyAdmins = async ({ type, message, ...data }) => {
+  try {
+    const User = require("../models/User");
+    const admins = await User.find({ role: "Admin", active: true });
+    
+    // Using a simple loop to ensure notifications are created correctly
+    for (const admin of admins) {
+      await createNotification({
+        recipient: admin._id,
+        type,
+        message,
+        ...data
+      });
+    }
+  } catch (error) {
+    console.error("Error notifying admins:", error);
+  }
+};
 
 module.exports = {
   init,
@@ -122,4 +144,5 @@ module.exports = {
   broadcastTicketUpdate,
   broadcastToRole,
   broadcastToUser,
+  notifyAdmins,
 };

@@ -11,18 +11,6 @@ const notificationSchema = new Schema(
     },
     type: {
       type: String,
-      enum: [
-        "TICKET_CREATED",
-        "TICKET_ASSIGNED",
-        "STATUS_CHANGED",
-        "NEW_MESSAGE",
-        "SLA_BREACH",
-        "TICKET_REOPENED",
-        "SALARY_PAYOUT",
-        "ACTIVITY",
-      ],
-
-
       required: true,
     },
     ticketId: {

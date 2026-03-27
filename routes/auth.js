@@ -67,7 +67,7 @@ router.route("/verifyOtp").post(verifyOTP);
 router.route("/reset_password").post(resetPassword);
 
 // Logout route (clears httpOnly cookie)
-router.route("/logout").post(logout);
+router.route("/logout").post(protect, logout);
 
 // 2FA routes
 router.route("/2fa/setup").post(protect, setup2FA);

@@ -1,6 +1,7 @@
 const Incentive = require('../models/Incentive');
 const Employee = require('../models/Employee');
 const User = require('../models/User');
+const { notifyAdmins } = require("../services/notificationService");
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -130,6 +131,13 @@ exports.createIncentive = async (req, res) => {
 
     // Create incentive
     const incentive = await Incentive.create(incentiveData);
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "INCENTIVE_CREATED",
+      message: `New Incentive Created: ${employee.fullName} (Rs. ${amount}, ${type}) by ${req.user.fullName}`,
+      incentiveId: incentive._id
+    });
 
     // Populate the created incentive
     const populatedIncentive = await Incentive.findById(incentive._id)
@@ -315,6 +323,13 @@ exports.updateIncentive = async (req, res) => {
 
     await incentive.save();
 
+    // Notify Admins
+    await notifyAdmins({
+      type: "INCENTIVE_UPDATED",
+      message: `Incentive Updated: ${incentive.employeeId?.fullName || "Employee"} by ${req.user.fullName}`,
+      incentiveId: incentive._id,
+    });
+
     const updatedIncentive = await Incentive.findById(incentive._id)
       .populate('employeeId', 'fullName email department')
       .populate('userId', 'fullName email')
@@ -361,6 +376,13 @@ exports.approveIncentive = async (req, res) => {
     incentive.approvedDate = new Date();
 
     await incentive.save();
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "INCENTIVE_APPROVED",
+      message: `Incentive Approved: ${incentive.employeeId?.fullName || "Employee"} by ${req.user.fullName}`,
+      incentiveId: incentive._id,
+    });
 
     const updatedIncentive = await Incentive.findById(incentive._id)
       .populate('employeeId', 'fullName email department')
@@ -411,6 +433,13 @@ exports.rejectIncentive = async (req, res) => {
     incentive.approvedDate = new Date();
 
     await incentive.save();
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "INCENTIVE_REJECTED",
+      message: `Incentive Rejected: ${incentive.employeeId?.fullName || "Employee"} by ${req.user.fullName}. Reason: ${reason}`,
+      incentiveId: incentive._id,
+    });
 
     const updatedIncentive = await Incentive.findById(incentive._id)
       .populate('employeeId', 'fullName email department')

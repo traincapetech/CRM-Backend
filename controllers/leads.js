@@ -466,6 +466,18 @@ exports.createLead = async (req, res) => {
       console.error("Socket emission error (non-blocking):", socketErr);
     }
 
+    // Notify all admins
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `New lead created by ${req.user.fullName} for customer ${lead.name}. Course: ${lead.course}`,
+        data: { leadId: lead._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     res.status(201).json({
       success: true,
       data: lead,
@@ -580,6 +592,8 @@ exports.updateLead = async (req, res) => {
       name: lead.name,
       assignedTo: lead.assignedTo,
     });
+
+    const originalStatus = lead.status;
 
     // Check if user is authorized to update this lead
     if (
@@ -726,6 +740,26 @@ exports.updateLead = async (req, res) => {
             err.message,
           ),
         );
+      }
+
+      // Notify all admins of what exactly has happened
+      try {
+        const notificationService = require("../services/notificationService");
+        let updateMsg = `${req.user.fullName} updated lead for ${lead.name}.`;
+        if (req.body.status && req.body.status !== lead.status) {
+          updateMsg += ` Status changed from ${lead.status} to ${req.body.status}.`;
+        }
+        if (req.body.FEEDBACK || req.body.feedback) {
+          updateMsg += ` Feedback added: ${req.body.FEEDBACK || req.body.feedback}`;
+        }
+
+        await notificationService.notifyAdmins({
+          type: "ACTIVITY",
+          message: updateMsg,
+          data: { leadId: lead._id },
+        });
+      } catch (notifyError) {
+        console.error("Admin notification error (non-blocking):", notifyError);
       }
 
       // Update for lead person

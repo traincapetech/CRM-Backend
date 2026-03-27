@@ -356,6 +356,18 @@ exports.createSale = async (req, res) => {
       console.error("Performance update error (non-blocking):", perfError);
     }
 
+    // Notify all admins
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `New sale created by ${req.user.fullName} for customer ${sale.customerName}. Course: ${sale.course}, Amount: ${sale.totalCost} ${sale.totalCostCurrency}`,
+        data: { saleId: sale._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     res.status(201).json({
       success: true,
       data: sale,
@@ -632,6 +644,26 @@ exports.updateSale = async (req, res) => {
       }
     }
 
+    // Notify all admins of the update
+    try {
+      const notificationService = require("../services/notificationService");
+      let updateInfo = "";
+      if (req.body.status && req.body.status !== originalStatus) {
+        updateInfo = `Status changed from ${originalStatus} to ${req.body.status}. `;
+      }
+      if (req.body.feedback) {
+        updateInfo += `Feedback updated. `;
+      }
+
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `Sale updated by ${req.user.fullName} for customer ${sale.customerName}. ${updateInfo}`,
+        data: { saleId: sale._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     res.status(200).json({
       success: true,
       data: sale,
@@ -713,15 +745,19 @@ exports.getSalesCount = async (req, res) => {
       count = await Sale.countDocuments({
         salesPerson: req.user.id,
         isLeadPersonSale: { $ne: true }, // Exclude lead person sales
+        status: { $ne: "Cancelled" },
       });
     }
     // If user is a lead person, only count sales with them as lead
     else if (req.user.role === "Lead Person") {
-      count = await Sale.countDocuments({ leadPerson: req.user.id });
+      count = await Sale.countDocuments({
+        leadPerson: req.user.id,
+        status: { $ne: "Cancelled" },
+      });
     }
     // Admin and Manager can see all
     else {
-      count = await Sale.countDocuments();
+      count = await Sale.countDocuments({ status: { $ne: "Cancelled" } });
     }
 
     res.status(200).json({

@@ -8,6 +8,7 @@ const { sendEmail } = require("../config/nodemailer");
 const asyncHandler = require("../middleware/async"); // Added for asyncHandler
 const { getUserPermissions } = require("../utils/rbac");
 const uaparser = require("ua-parser-js"); // You might need to install this, or just do basic parsing
+const { notifyAdmins } = require("../services/notificationService");
 
 // Helper to record login history
 const recordLoginHistory = async (
@@ -78,6 +79,14 @@ exports.register = async (req, res) => {
     });
 
     console.log(`User created successfully with ID: ${user._id}`);
+    
+    // Notify Admins
+    await notifyAdmins({
+      type: "USER_REGISTERED",
+      message: `New User Registered: ${user.fullName} (${user.role})`,
+      userId: user._id
+    });
+
     sendTokenResponse(user, 201, res);
   } catch (err) {
     console.error("Registration error details:", {
@@ -271,6 +280,14 @@ exports.login = async (req, res) => {
 
     // Record success
     await recordLoginHistory(req, user._id, "SUCCESS");
+
+    // Notify Admins about login (optional, but requested)
+    await notifyAdmins({
+      type: "USER_LOGIN",
+      message: `${user.fullName} (${user.role}) has logged in.`,
+      userId: user._id,
+      ipAddress: req.ip || req.connection.remoteAddress
+    });
 
     // Create token
     const token = user.getSignedJwtToken();
@@ -480,6 +497,15 @@ exports.logout = async (req, res) => {
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
   });
 
+  // Notify Admins about logout
+  if (req.user) {
+    await notifyAdmins({
+      type: "USER_LOGOUT",
+      message: `${req.user.fullName} (${req.user.role}) has logged out.`,
+      userId: req.user.id
+    });
+  }
+
   res.status(200).json({
     success: true,
     message: "Logged out successfully",
@@ -588,6 +614,15 @@ exports.updateUser = async (req, res) => {
     user = await User.findById(user._id);
 
     console.log(`User updated successfully: ${user._id}`);
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "USER_UPDATED",
+      message: `User Updated: ${user.fullName} (${user.role}) by ${req.user.fullName}`,
+      userId: user._id,
+      updatedBy: req.user.id
+    });
+
     res.status(200).json({
       success: true,
       data: user,
@@ -657,6 +692,14 @@ exports.deleteUser = async (req, res) => {
     console.log(
       `User and associated employee deleted successfully: ${req.params.id}`,
     );
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "USER_DELETED",
+      message: `User Deleted: ID ${req.params.id} (formerly ${user.fullName})`,
+      deletedBy: req.user.id
+    });
+
     res.status(200).json({
       success: true,
       data: {},
@@ -711,6 +754,14 @@ exports.toggleUserActive = async (req, res) => {
       success: true,
       data: user,
       message: `User ${user.active ? "activated" : "deactivated"} successfully`,
+    });
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "USER_STATUS_TOGGLED",
+      message: `User ${user.fullName} has been ${user.active ? "activated" : "deactivated"} by ${req.user.fullName}`,
+      userId: user._id,
+      toggledBy: req.user.id
     });
   } catch (err) {
     console.error(`Error toggling user active status: ${err.message}`);
