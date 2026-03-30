@@ -62,6 +62,10 @@ const KPIDefinitionSchema = new mongoose.Schema(
         required: true,
         // Outstanding performance
       },
+      // New role-specific targets (stored in template)
+      leadDailyTarget: Number,
+      leadMinimumDailyTarget: Number,
+      monthlySalesTarget: Number,
     },
 
     // Weight/importance of this KPI (0-100)

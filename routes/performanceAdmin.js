@@ -91,6 +91,119 @@ router.post(
   },
 );
 
+// @desc    Set custom target for an employee
+// @route   POST /api/performance/admin/set-target
+// @access  Private (Admin, HR)
+router.post(
+  "/admin/set-target",
+  protect,
+  authorize("Admin", "HR"),
+  async (req, res) => {
+    try {
+      const {
+        employeeId,
+        year,
+        month,
+        leadDailyTarget,
+        leadMinimumDailyTarget,
+        monthlySalesTarget,
+      } = req.body;
+
+      if (!employeeId || !year || !month) {
+        return res.status(400).json({
+          success: false,
+          message: "employeeId, year, and month are required",
+        });
+      }
+
+      const periodKey = `${year}-${month.toString().padStart(2, "0")}`;
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 0);
+
+      const target = await require("../models/EmployeeTarget").findOneAndUpdate(
+        { employeeId, "period.periodKey": periodKey },
+        {
+          employeeId,
+          period: {
+            startDate,
+            endDate,
+            periodKey,
+          },
+          leadDailyTarget,
+          leadMinimumDailyTarget,
+          monthlySalesTarget,
+          updatedAt: new Date(),
+        },
+        { upsert: true, new: true },
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "Target set successfully",
+        data: target,
+      });
+    } catch (error) {
+      console.error("Error setting target:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error setting target",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Finalize performance for a month
+// @route   POST /api/performance/admin/finalize-month
+// @access  Private (Admin, HR)
+router.post(
+  "/admin/finalize-month",
+  protect,
+  authorize("Admin", "HR"),
+  async (req, res) => {
+    try {
+      const { year, month } = req.body;
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const User = require("../models/User");
+
+      if (!year || !month) {
+        return res.status(400).json({
+          success: false,
+          message: "year and month are required",
+        });
+      }
+
+      const employees = await User.find({
+        active: true,
+        role: { $in: ["Lead Person", "Sales Person"] },
+      });
+
+      const results = [];
+      for (const emp of employees) {
+        const record = await PerformanceCalculationService.finalizeMonthlyRecord(
+          emp._id,
+          year,
+          month,
+        );
+        results.push({ employeeId: emp._id, fullName: emp.fullName, success: !!record });
+      }
+
+      res.status(200).json({
+        success: true,
+        message: `Monthly finalization complete for ${results.length} employees`,
+        data: results,
+      });
+    } catch (error) {
+      console.error("Error finalizing month:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error finalizing month",
+        error: error.message,
+      });
+    }
+  },
+);
+
 // @desc    Get all employee performance summaries
 // @route   GET /api/performance/admin/all-employees
 // @access  Private (Admin, HR)
@@ -116,6 +229,8 @@ router.get(
           parseInt(year) === currentYear &&
           month &&
           parseInt(month) < currentMonth);
+
+      const KPIService = require("../services/kpiService");
 
       if (!isHistorical) {
         // --- CURRENT MONTH LOGIC (Default) ---
@@ -149,17 +264,45 @@ router.get(
         }
 
         const summaries = await PerformanceSummary.find({})
-          .populate("employeeId", "fullName email role active")
+          .populate({
+            path: "employeeId",
+            match: { active: true },
+            select: "fullName email role active"
+          })
           .sort({ currentRating: -1 });
 
-        const validSummaries = summaries.filter(
-          (s) => s.employeeId && s.employeeId.active !== false,
-        );
+        const activeSummaries = summaries.filter(s => s.employeeId);
+
+        // Enhance with 'live' averages from KPIService as requested
+        const liveNow = new Date();
+        const curMonth = liveNow.getMonth() + 1;
+        const curYear = liveNow.getFullYear();
+
+        const enrichedData = await Promise.all(activeSummaries.map(async (s) => {
+          const empId = s.employeeId._id;
+          
+          // Get the same live averages used in the modal
+          const [l7, l30, l90, rolling] = await Promise.all([
+            KPIService._calculateRollingAverage(empId, 7),
+            KPIService._calculateRollingAverage(empId, 30),
+            KPIService._calculateRollingAverage(empId, 90),
+            PerformanceCalculationService.getRollingAverages(empId)
+          ]);
+
+          const data = s.toObject();
+          data.averages = {
+            last7Days: l7,
+            last30Days: l30,
+            last90Days: l90,
+            thisMonth: rolling.thisMonth || 0
+          };
+          return data;
+        }));
 
         return res.status(200).json({
           success: true,
-          count: validSummaries.length,
-          data: validSummaries,
+          count: enrichedData.length,
+          data: enrichedData,
         });
       }
 
@@ -183,8 +326,6 @@ router.get(
             _id: "$employeeId",
             avgScore: { $avg: "$overallScore" },
             recordsCount: { $sum: 1 },
-            // We can also aggregate averages if they were stored per record, 
-            // but usually we just want the monthly average here.
           },
         },
         {
@@ -192,26 +333,39 @@ router.get(
         },
       ]);
 
-      // Populate user info
+      // Populate user info with strict active filter and live averages
       const results = [];
+      const liveNow = new Date();
+      const curMonth = liveNow.getMonth() + 1;
+      const curYear = liveNow.getFullYear();
+
       for (const item of historicalData) {
-        const user = await User.findById(item._id).select(
+        const user = await User.findOne({ _id: item._id, active: true }).select(
           "fullName email role active",
         );
-        if (user && user.active !== false) {
+        if (user) {
+          const empId = user._id;
+          // Even for historical views, rolling averages should be 'live' as per requirements
+          const [l7, l30, l90, rolling] = await Promise.all([
+            KPIService._calculateRollingAverage(empId, 7),
+            KPIService._calculateRollingAverage(empId, 30),
+            KPIService._calculateRollingAverage(empId, 90),
+            PerformanceCalculationService.getRollingAverages(empId)
+          ]);
+
           results.push({
             employeeId: user,
             currentRating: item.avgScore,
-            ratingTier: PerformanceCalculationService.getRatingTier(
-              item.avgScore,
-            ),
+            ratingTier: PerformanceCalculationService.getRatingTier(item.avgScore),
             stars: PerformanceCalculationService.getStars(item.avgScore),
             isHistorical: true,
             month: targetMonth,
             year: targetYear,
             averages: {
-              // For historical month, we treat the average of that month as the primary stat
-              last30Days: item.avgScore,
+              last7Days: l7,
+              last30Days: l30,
+              last90Days: l90,
+              thisMonth: rolling.thisMonth || 0
             },
           });
         }

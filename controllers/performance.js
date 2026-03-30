@@ -5,6 +5,7 @@ const PerformanceSummary = require("../models/PerformanceSummary");
 const User = require("../models/User");
 const Lead = require("../models/Lead");
 const Sale = require("../models/Sale");
+const PerformanceCalculationService = require("../services/performanceCalculation");
 
 // @desc    Get all KPI templates
 // @route   GET /api/performance/kpis
@@ -111,38 +112,28 @@ const updateKPITemplate = async (req, res) => {
       });
     }
 
-    // Propagate updated thresholds/weight to all existing EmployeeTargets for this KPI
-    const updateFields = {};
-    if (req.body.thresholds) {
-      updateFields["targets.minimum"] = kpi.thresholds.minimum;
-      updateFields["targets.target"] = kpi.thresholds.target;
-      updateFields["targets.excellent"] = kpi.thresholds.excellent;
-    }
+    // Propagate updated thresholds/weight to all active EmployeeTargets for this KPI for the current month
+    const syncCount = await PerformanceCalculationService.syncActiveTargets(kpi._id);
+    console.log(`✅ Synced update to ${syncCount} employee targets.`);
 
-    if (Object.keys(updateFields).length > 0) {
-      await EmployeeTarget.updateMany(
-        { kpiId: kpi._id },
-        { $set: updateFields },
-      );
-    }
-
-    // Recalculate performance for all affected employees
+    // Recalculate performance for all affected employees for today
+    const now = new Date();
+    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    
     const affectedTargets = await EmployeeTarget.find({
       kpiId: kpi._id,
+      "period.periodKey": periodKey
     }).select("employeeId");
+
     const uniqueEmployeeIds = [
       ...new Set(affectedTargets.map((t) => t.employeeId.toString())),
     ];
 
     if (uniqueEmployeeIds.length > 0) {
-      const PerformanceCalculationService = require("../services/performanceCalculation");
-      const today = new Date();
+      console.log(`🔄 Triggering performance recalculation for ${uniqueEmployeeIds.length} employees...`);
       for (const empId of uniqueEmployeeIds) {
         try {
-          await PerformanceCalculationService.calculateEmployeePerformance(
-            empId,
-            today,
-          );
+          await PerformanceCalculationService.calculateEmployeePerformance(empId, now);
         } catch (calcErr) {
           console.error(`Error recalculating for ${empId}:`, calcErr.message);
         }
@@ -275,6 +266,9 @@ const assignKPIToEmployees = async (req, res) => {
           periodKey,
         },
         targets: targetValues,
+        leadDailyTarget: req.body.leadDailyTarget || kpi.thresholds.leadDailyTarget,
+        leadMinimumDailyTarget: req.body.leadMinimumDailyTarget || kpi.thresholds.leadMinimumDailyTarget,
+        monthlySalesTarget: req.body.monthlySalesTarget || kpi.thresholds.monthlySalesTarget,
       };
 
       // Use upsert to avoid duplicates
@@ -346,11 +340,56 @@ const getEmployeePerformance = async (req, res) => {
     if (isHistorical) {
       const targetMonth = parseInt(month);
       const targetYear = parseInt(year);
-      const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
-      const endOfMonth = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
       const periodKey = `${targetYear}-${targetMonth.toString().padStart(2, "0")}`;
 
-      // 1. Aggregate Daily Records for historical summary
+      // 1. Fetch from MonthlyPerformanceRecord (Archived Data)
+      const MonthlyPerformanceRecord = require("../models/MonthlyPerformanceRecord");
+      const archivedRecord = await MonthlyPerformanceRecord.findOne({
+        employeeId,
+        periodKey,
+      });
+
+      if (archivedRecord) {
+        const records = await DailyPerformanceRecord.find({
+          employeeId,
+          date: {
+            $gte: new Date(targetYear, targetMonth - 1, 1),
+            $lte: new Date(targetYear, targetMonth, 0, 23, 59, 59, 999),
+          },
+        }).sort({ date: -1 });
+
+        return res.status(200).json({
+          success: true,
+          data: {
+            summary: archivedRecord,
+            targets: [
+              {
+                kpiName:
+                  archivedRecord.role === "Lead Person"
+                    ? "Leads Generated"
+                    : "Sales Closed",
+                actual:
+                  archivedRecord.role === "Lead Person"
+                    ? archivedRecord.actualLeads
+                    : archivedRecord.actualSales,
+                target:
+                  archivedRecord.role === "Lead Person"
+                    ? archivedRecord.targetLeads
+                    : archivedRecord.targetSales,
+                score: archivedRecord.monthlyScore,
+                status: archivedRecord.ratingTier,
+              },
+            ],
+            recentRecords: records,
+            isHistorical: true,
+          },
+        });
+      }
+
+      // 2. Fallback to aggregation if no archived record exists yet
+      const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
+      const endOfMonth = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
       const records = await DailyPerformanceRecord.find({
         employeeId,
         date: { $gte: startOfMonth, $lte: endOfMonth },
@@ -361,36 +400,37 @@ const getEmployeePerformance = async (req, res) => {
           success: true,
           data: {
             summary: {
-              employeeId: await User.findById(employeeId).select("fullName email role"),
+              employeeId: await User.findById(employeeId).select(
+                "fullName email role",
+              ),
               currentRating: 0,
               ratingTier: "N/A",
               stars: 0,
               isHistorical: true,
               month: targetMonth,
-              year: targetYear
+              year: targetYear,
             },
             targets: [],
-            recentRecords: []
-          }
+            recentRecords: [],
+          },
         });
       }
 
-      const Holiday = require("../models/Holiday");
-      const hols = await Holiday.find({ date: { $gte: startOfMonth, $lte: endOfMonth }, type: "full-day" });
-      const holidayDates = hols.map(h => {
-        const hd = new Date(h.date);
-        return `${hd.getFullYear()}-${(hd.getMonth() + 1).toString().padStart(2, "0")}-${hd.getDate().toString().padStart(2, "0")}`;
-      });
-      
-      const expectedDays = PerformanceCalculationService.getWorkingDays(startOfMonth, endOfMonth, holidayDates);
       const totalScore = records.reduce((sum, r) => sum + r.overallScore, 0);
-      const avgScore = expectedDays > 0 ? parseFloat((totalScore / expectedDays).toFixed(2)) : 0;
-      
-      // Fetch CURRENT summary to get today's rolling averages even if viewing historical
+      const workingDays = await PerformanceCalculationService.getWorkingDaysInMonth(
+        targetYear,
+        targetMonth,
+        "Lead Person",
+      ); // Approximate role
+      const avgScore =
+        workingDays > 0 ? parseFloat((totalScore / workingDays).toFixed(2)) : 0;
+
       const currentStats = await PerformanceSummary.findOne({ employeeId });
 
       const summary = {
-        employeeId: await User.findById(employeeId).select("fullName email role"),
+        employeeId: await User.findById(employeeId).select(
+          "fullName email role",
+        ),
         currentRating: avgScore,
         ratingTier: PerformanceCalculationService.getRatingTier(avgScore),
         stars: PerformanceCalculationService.getStars(avgScore),
@@ -399,34 +439,19 @@ const getEmployeePerformance = async (req, res) => {
         year: targetYear,
         lastCalculated: records[records.length - 1].calculatedAt,
         averages: {
-          ...(currentStats?.averages?.toObject ? currentStats.averages.toObject() : currentStats?.averages || {}),
-          thisMonth: avgScore, // Override thisMonth for historical view
-        }
+          ...(currentStats?.averages?.toObject
+            ? currentStats.averages.toObject()
+            : currentStats?.averages || {}),
+          thisMonth: avgScore,
+        },
       };
-
-      // 2. Fetch targets for that specific period
-      const targets = await EmployeeTarget.find({
-        employeeId,
-        "period.periodKey": periodKey
-      }).populate("kpiId");
-
-      // MERGE ACTUALS: Inject monthly aggregated actuals into targets
-      // For historical, we want the summary of that month, not just the "latest" day.
-      // But DailyPerformanceRecord stores scores per day.
-      // EmployeeTarget might have a "monthly" target record with its own actuals.
-      
-      const enrichedTargets = targets.map((t) => {
-        const tObj = t.toObject();
-        // EmployeeTarget usually stores the monthly calculated actual/score
-        return tObj;
-      });
 
       return res.status(200).json({
         success: true,
         data: {
           summary,
-          targets: enrichedTargets,
-          recentRecords: records.reverse() // Current dashboard expects desc order
+          targets: [],
+          recentRecords: records.reverse(),
         },
       });
     }
@@ -502,30 +527,58 @@ const getEmployeePerformance = async (req, res) => {
     const kpiScoreMap = {};
     if (latestRecord && latestRecord.kpiScores) {
       latestRecord.kpiScores.forEach((score) => {
-        if (score.kpiId) {
-          kpiScoreMap[score.kpiId.toString()] = score;
-        }
+        // Match by ID primarily, fallback to Name
+        const key = score.kpiId ? score.kpiId.toString() : score.kpiName;
+        kpiScoreMap[key] = score;
       });
     }
 
-    const enrichedTargets = targets.map((t) => {
+    const enrichedTargets = await Promise.all(targets.map(async (t) => {
       const tObj = t.toObject();
       const kpiId = t.kpiId._id.toString();
+      const kpiName = t.kpiId.kpiName;
 
-      if (kpiScoreMap[kpiId]) {
-        tObj.actual = kpiScoreMap[kpiId].actual;
-        tObj.score = kpiScoreMap[kpiId].score;
-        tObj.status = kpiScoreMap[kpiId].status; 
-        tObj.pacedTarget = kpiScoreMap[kpiId].target; 
-        tObj.baseTarget = kpiScoreMap[kpiId].baseTarget; 
+      // Try to find daily score by ID first, then by Name
+      const score = kpiScoreMap[kpiId] || kpiScoreMap[kpiName];
+
+      if (score) {
+        if (summary.employeeId.role === "Sales Person") {
+          // For Sales Persons, show collective monthly actuals as per user request
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+          const salesRes = await PerformanceCalculationService.calculateSales(employeeId, startOfMonth, "custom", now);
+          
+          tObj.actual = salesRes.count;
+          tObj.baseTarget = t.monthlySalesTarget || t.targets?.target || 0;
+          tObj.score = tObj.baseTarget > 0 ? (tObj.actual / tObj.baseTarget) * 100 : 0;
+          tObj.status = PerformanceCalculationService.getRatingTier(tObj.score);
+        } else {
+          // For Leads, keep daily view as per user request
+          tObj.actual = score.actual;
+          tObj.score = score.score;
+          tObj.status = score.status;
+          tObj.baseTarget = score.target; // Maps to 'target' in the modal
+        }
       }
+
+      // Ensure target fields are present in the response
+      tObj.leadDailyTarget = t.leadDailyTarget;
+      tObj.leadMinimumDailyTarget = t.leadMinimumDailyTarget;
+      tObj.monthlySalesTarget = t.monthlySalesTarget;
+
       return tObj;
-    });
+    }));
+
+    // Calculate rolling averages on the fly as per user request
+    const averages = await PerformanceCalculationService.getRollingAverages(employeeId);
+
+    // Merge averages into summary for the frontend
+    const summaryWithAverages = summary.toObject ? summary.toObject() : { ...summary };
+    summaryWithAverages.averages = averages;
 
     res.status(200).json({
       success: true,
       data: {
-        summary,
+        summary: summaryWithAverages,
         targets: enrichedTargets,
         recentRecords,
       },

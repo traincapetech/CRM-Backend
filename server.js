@@ -107,6 +107,8 @@ const quarterlyIncentivesRoutes = require("./routes/quarterlyIncentives");
 const holidayRoutes = require("./routes/holidays");
 const holidayController = require("./controllers/holidays");
 const courseRoutes = require("./routes/courses");
+const kpiBreakdownRoutes = require("./routes/kpiBreakdown");
+const verdaEnquiryRoutes = require("./routes/verdaEnquiry");
 
 const app = express();
 const server = http.createServer(app);
@@ -500,6 +502,7 @@ app.use("/api/test-assignments", testAssignmentsRoutes);
 app.use("/api/test-attempts", testAttemptsRoutes);
 app.use("/api/test-reports", testReportsRoutes);
 app.use("/api/biometric", biometricRoutes);
+app.use("/api/performance/kpi-breakdown", kpiBreakdownRoutes);
 app.use("/api/performance", performanceRoutes); // Performance Management ERP
 app.use("/api/expenses", expenseRoutes); // Expense Reimbursement
 app.use("/api/advances", advanceRoutes); // Employee Salary Advances
@@ -515,6 +518,7 @@ app.use("/api/holidays", holidayRoutes);
 app.use("/api/courses", courseRoutes);
 app.use("/api/public", require("./routes/public"));
 app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarterly Incentives Routes
+app.use("/api/verda-enquiries", verdaEnquiryRoutes);
 
 // Image Proxy Route to solve CORS issues for ID Card generation
 app.get("/api/proxy-image", async (req, res) => {
@@ -615,6 +619,7 @@ app.use((err, req, res, next) => {
     process.env.CLIENT_URL,
     process.env.FRONTEND_URL,
     process.env.ALLOWED_ORIGINS,
+    process.env.VERDA_URL,
   ]
     .filter(Boolean)
     .flatMap((value) => value.split(",").map((origin) => origin.trim()))
@@ -624,9 +629,6 @@ app.use((err, req, res, next) => {
     "http://localhost:5173",
     "http://localhost:5174",
     "http://127.0.0.1:5173",
-    "https://traincapecrm.traincapetech.in",
-    "http://traincapecrm.traincapetech.in",
-    "https://crm-backend-o36v.onrender.com",
     ...envAllowedOrigins,
   ];
 

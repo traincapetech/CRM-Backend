@@ -23,6 +23,9 @@ class PerformanceCronJobs {
     // Weekly performance summary - runs every Monday at 9:00 AM
     this.weeklyPerformanceSummary();
 
+    // Monthly target initialization - runs at 12:10 AM on the 1st of every month
+    this.monthlyTargetInitialization();
+
     console.log("✅ All Performance cron jobs scheduled successfully\n");
   }
 
@@ -102,6 +105,36 @@ class PerformanceCronJobs {
 
     console.log(
       "📍 Weekly Performance Summary: Scheduled for 9:00 AM every Monday",
+    );
+  }
+
+  /**
+   * Monthly Target Initialization
+   * Runs at 12:10 AM on the 1st of every month to initialize targets
+   */
+  static monthlyTargetInitialization() {
+    // 10 0 1 * * = 12:10 AM on the 1st of every month
+    cron.schedule("10 0 1 * *", async () => {
+      try {
+        console.log("\n🔄 [CRON] Monthly Target Initialization Started");
+        console.log(`⏰ Time: ${new Date().toLocaleString()}`);
+
+        const now = new Date();
+        const month = now.getMonth() + 1;
+        const year = now.getFullYear();
+
+        const result = await PerformanceCalculationService.initializeMonthlyTargets(month, year);
+
+        console.log(`✅ [CRON] Monthly Target Initialization Complete:`);
+        console.log(`   - Created: ${result.createdCount}`);
+        console.log(`   - Updated: ${result.updatedCount}\n`);
+      } catch (error) {
+        console.error("❌ [CRON] Monthly Target Initialization Failed:", error);
+      }
+    });
+
+    console.log(
+      "📍 Monthly Target Initialization: Scheduled for 12:10 AM on the 1st of every month",
     );
   }
 

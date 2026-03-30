@@ -40,6 +40,11 @@ const EmployeeTargetSchema = new mongoose.Schema(
       excellent: Number,
     },
 
+    // New role-specific targets
+    leadDailyTarget: { type: Number }, // For Lead Person: leads per day
+    leadMinimumDailyTarget: { type: Number }, // For Lead Person: minimum leads per day
+    monthlySalesTarget: { type: Number }, // For Sales Person: target sales count per month
+
     // Actual performance (updated by cron job or manually)
     actual: {
       type: Number,
