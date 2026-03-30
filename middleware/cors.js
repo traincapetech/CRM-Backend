@@ -3,7 +3,7 @@ const cors = require('cors');
 const staticAllowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
-  'http:localhost:3000',
+  'http://localhost:3000',
   'https://traincapecrm.traincapetech.in',
   'http://traincapecrm.traincapetech.in',
   'https://crm-backend-o36v.onrender.com',
