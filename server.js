@@ -124,6 +124,7 @@ const io = socketIo(server, {
   cors: {
     origin: [
       "http://localhost:3000",
+      "https://verdaexports.com",
       "http://localhost:5173",
       "https://traincapecrm.traincapetech.in",
     ],
@@ -631,6 +632,7 @@ app.use((err, req, res, next) => {
     "http://localhost:5174",
     "http://127.0.0.1:5173",
     "http://localhost:3000",
+    "https://verdaexports.com", 
     ...envAllowedOrigins,
   ];
 
