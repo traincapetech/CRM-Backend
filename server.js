@@ -379,6 +379,7 @@ app.use(
         connectSrc: [
           "'self'",
           process.env.CLIENT_URL || "http://localhost:5173",
+          "http://localhost:3000",
         ],
         fontSrc: ["'self'", "https:", "data:"],
       },
@@ -629,6 +630,7 @@ app.use((err, req, res, next) => {
     "http://localhost:5173",
     "http://localhost:5174",
     "http://127.0.0.1:5173",
+    "http://localhost:3000",
     ...envAllowedOrigins,
   ];
 
