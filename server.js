@@ -558,42 +558,6 @@ app.get("/api/proxy-image", async (req, res) => {
   }
 });
 
-// Image Proxy Route to solve CORS issues for ID Card generation
-app.get("/api/proxy-image", async (req, res) => {
-  let imageUrl = req.query.url;
-  if (!imageUrl) return res.status(400).send("URL is required");
-  
-  // If it's a relative URL, try to point it to the local server
-  if (imageUrl.startsWith("/")) {
-    imageUrl = `http://localhost:${process.env.PORT || 8080}${imageUrl}`;
-  }
-
-  try {
-    const axios = require("axios");
-    // Forward auth cookies for internal requests
-    const headers = {};
-    if (req.headers.cookie) {
-      headers.cookie = req.headers.cookie;
-    }
-    if (req.headers.authorization) {
-      headers.authorization = req.headers.authorization;
-    }
-
-    const response = await axios.get(imageUrl, { 
-      responseType: "arraybuffer",
-      headers: headers
-    });
-    
-    const contentType = response.headers["content-type"];
-    res.set("Content-Type", contentType);
-    res.set("Access-Control-Allow-Origin", "*");
-    res.send(response.data);
-  } catch (error) {
-    console.error("Proxy error:", error.message, "URL:", imageUrl);
-    res.status(500).send("Error fetching image");
-  }
-});
-
 // Basic route for testing
 app.get("/", (req, res) => {
   res.json({

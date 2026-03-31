@@ -122,14 +122,9 @@ const broadcastToUser = (userId, event, data = {}) => {
 const notifyAdmins = async ({ type, message, ...data }) => {
   try {
     const User = require("../models/User");
-    // Find all Admins, then filter in code to be safe with field types
-    const allAdmins = await User.find({ role: "Admin" });
-    const admins = allAdmins.filter(a => a.active !== false);
-    
-    console.log(`🔔 [NOTIFY ADMINS] Found ${admins.length} admins (from ${allAdmins.length} total Admin records)`);
+    const admins = await User.find({ role: "Admin", active: { $ne: false } });
     
     for (const admin of admins) {
-      console.log(`   👉 Sending to: ${admin.email} (${admin._id})`);
       await createNotification({
         recipient: admin._id,
         type,
@@ -142,6 +137,38 @@ const notifyAdmins = async ({ type, message, ...data }) => {
   }
 };
 
+/**
+ * Notify users with specific roles about an event
+ * @param {Object} params
+ * @param {Array} params.roles - Array of role names
+ * @param {String} params.type - Notification type
+ * @param {String} params.message - Notification message
+ * @param {Object} params.data - Additional data
+ */
+const notifyRoles = async ({ roles, type, message, ...data }) => {
+  try {
+    const User = require("../models/User");
+    // Find all active users with the specified roles
+    const users = await User.find({ 
+      role: { $in: roles },
+      active: { $ne: false }
+    });
+    
+    console.log(`🔔 [NOTIFY ROLES] Found ${users.length} users with roles: ${roles.join(", ")}`);
+    
+    for (const user of users) {
+      await createNotification({
+        recipient: user._id,
+        type,
+        message,
+        ...data
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error notifying roles:", error);
+  }
+};
+
 module.exports = {
   init,
   createNotification,
@@ -149,4 +176,5 @@ module.exports = {
   broadcastToRole,
   broadcastToUser,
   notifyAdmins,
+  notifyRoles,
 };

@@ -1,4 +1,5 @@
 const VerdaEnquiry = require('../models/VerdaEnquiry');
+const notificationService = require('../services/notificationService');
 
 // @desc    Get all enquiries
 // @route   GET /api/verda-enquiries
@@ -71,7 +72,7 @@ exports.createEnquiry = async (req, res) => {
 
     const enquiry = await VerdaEnquiry.create(enquiryData);
 
-    // Emit Socket.IO event for Real-Time Notification
+    // Emit Socket.IO event for Real-Time Notification (Toast)
     try {
       const io = req.app.get("io");
       if (io) {
@@ -90,8 +91,15 @@ exports.createEnquiry = async (req, res) => {
         });
         console.log("📡 Emitted new_verda_enquiry event with full details");
       }
-    } catch (socketErr) {
-      console.error("Socket emission error (non-blocking):", socketErr);
+
+      // Create Persistent Notifications for specific roles
+      await notificationService.notifyRoles({
+        roles: ["Admin", "Manager", "Sales Person"],
+        type: "Enquiry",
+        message: `New Verda Enquiry from ${enquiry.name} (${enquiry.company || "N/A"})`
+      });
+    } catch (notificationErr) {
+      console.error("Notification error (non-blocking):", notificationErr);
     }
 
     res.status(201).json({

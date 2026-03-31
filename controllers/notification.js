@@ -7,13 +7,18 @@ exports.getNotifications = async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    const notifications = await Notification.find({ recipient: req.user._id })
+    const filter = { recipient: req.user._id };
+    if (req.query.isRead !== undefined) {
+      filter.isRead = req.query.isRead === "true";
+    }
+
+    const notifications = await Notification.find(filter)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .populate("ticketId", "title status");
 
-    const total = await Notification.countDocuments({ recipient: req.user._id });
+    const total = await Notification.countDocuments(filter);
     const unreadCount = await Notification.countDocuments({
       recipient: req.user._id,
       isRead: false,
@@ -55,6 +60,16 @@ exports.markAsRead = async (req, res) => {
       });
     }
 
+    // 🔑 Notify client via socket for real-time sync across tabs
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user-${req.user._id}`).emit("notification_updated", {
+        id: req.params.id,
+        isRead: true,
+      });
+      io.to(`user-${req.user._id}`).emit("notification_count_update");
+    }
+
     return res.status(200).json({
       success: true,
       data: notification,
@@ -75,6 +90,13 @@ exports.markAllRead = async (req, res) => {
       { recipient: req.user._id, isRead: false },
       { isRead: true }
     );
+
+    // 🔑 Notify client via socket for real-time sync across tabs
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user-${req.user._id}`).emit("notification_updated", { allRead: true });
+      io.to(`user-${req.user._id}`).emit("notification_count_update");
+    }
 
     return res.status(200).json({
       success: true,
@@ -102,6 +124,12 @@ exports.deleteNotification = async (req, res) => {
         success: false,
         message: "Notification not found",
       });
+    }
+
+    // 🔑 Notify client via socket for real-time sync across tabs
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user-${req.user._id}`).emit("notification_count_update");
     }
 
     return res.status(200).json({

@@ -1293,27 +1293,7 @@ const generatePDFContent = (doc, payroll) => {
 
   doc.moveDown(3);
 
-  // --- Signature Line / Footer ---
-  const footerY = doc.page.height - 100;
 
-  const signPath =
-    "/Users/a/Desktop/Traincape_CRM-main/client/dist/assets/Parichay_Sign-Z_7nzyfB.png";
-  if (fs.existsSync(signPath)) {
-    doc.image(signPath, MARGIN_RIGHT - 130, footerY - 45, { width: 110 });
-  }
-
-  doc
-    .moveTo(MARGIN_RIGHT - 150, footerY)
-    .lineTo(MARGIN_RIGHT, footerY)
-    .lineWidth(0.5)
-    .strokeColor(SECONDARY_COLOR)
-    .stroke();
-
-  doc.fillColor(SECONDARY_COLOR).font("Helvetica").fontSize(9);
-  doc.text("Authorized Signatory", MARGIN_RIGHT - 150, footerY + 10, {
-    width: 150,
-    align: "center",
-  });
 
   doc.fillColor("#94a3b8").fontSize(8);
   doc.text(

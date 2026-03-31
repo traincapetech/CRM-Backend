@@ -469,11 +469,11 @@ exports.createLead = async (req, res) => {
     // Notify all admins
     try {
       const notificationService = require("../services/notificationService");
-      await notificationService.notifyAdmins({
+        await notificationService.notifyAdmins({
         type: "ACTIVITY",
         message: `New lead created by ${req.user.fullName} for customer ${lead.name}. Course: ${lead.course}`,
         data: { leadId: lead._id }
-      });
+        });
     } catch (notifyError) {
       console.error("Admin notification error (non-blocking):", notifyError);
     }

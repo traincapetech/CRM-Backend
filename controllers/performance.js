@@ -519,7 +519,7 @@ const getEmployeePerformance = async (req, res) => {
       date: { $gte: thirtyDaysAgo },
     })
       .sort({ date: -1 })
-      .limit(30);
+      .limit(35);
 
     // MERGE ACTUALS: Inject today's/latest actuals into static targets
     const latestRecord = recentRecords.length > 0 ? recentRecords[0] : null;
