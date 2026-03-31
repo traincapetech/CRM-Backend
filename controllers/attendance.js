@@ -1,6 +1,7 @@
 const Attendance = require('../models/Attendance');
 const Employee = require('../models/Employee');
 const User = require('../models/User');
+const Holiday = require('../models/Holiday');
 
 // @desc    Check-in employee
 // @route   POST /api/attendance/checkin
@@ -479,10 +480,20 @@ exports.updateAttendance = async (req, res) => {
 // @access  Private
 exports.getMonthlyAttendanceSummary = async (req, res) => {
   try {
-    const { month, year } = req.params;
+    const { month: monthStr, year: yearStr } = req.params;
+    const { employeeId } = req.query;
+    const month = parseInt(monthStr);
+    const year = parseInt(yearStr);
     
-    // Find employee record
-    const employee = await Employee.findOne({ userId: req.user.id });
+    let employee;
+    
+    // Authorization check
+    if (employeeId && ['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+      employee = await Employee.findById(employeeId).populate('role department');
+    } else {
+      employee = await Employee.findOne({ userId: req.user.id }).populate('role department');
+    }
+
     if (!employee) {
       return res.status(404).json({
         success: false,
@@ -490,37 +501,94 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
       });
     }
 
-    // Get date range for the month
+    // Date range for the month
     const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
+    const endDate = new Date(year, month, 0); // Last day of month
+    const daysInMonth = endDate.getDate();
     
-    // Get attendance records for the month
-    const attendance = await Attendance.find({
+    // Fetch all attendance records for the month
+    const attendanceRecords = await Attendance.find({
       employeeId: employee._id,
       date: { $gte: startDate, $lte: endDate }
     }).sort({ date: 1 });
 
-    // Calculate summary
-    const workingDays = endDate.getDate();
-    const presentDays = attendance.filter(a => a.status === 'PRESENT').length;
-    const halfDays = attendance.filter(a => a.status === 'HALF_DAY').length;
-    const lateDays = attendance.filter(a => a.status === 'LATE').length;
-    const absentDays = workingDays - attendance.length;
-    const totalHours = attendance.reduce((sum, a) => sum + (a.totalHours || 0), 0);
-    const overtimeHours = attendance.reduce((sum, a) => sum + (a.overtimeHours || 0), 0);
+    // Fetch holidays for the month
+    const holidays = await Holiday.find({
+      date: { $gte: startDate, $lte: endDate }
+    });
+    const holidayDates = new Set(holidays.map(h => h.date.toISOString().split('T')[0]));
+
+    // Accurate calculation based on each day of the month
+    let presentDays = 0;
+    let absentDays = 0;
+    let halfDays = 0;
+    let totalHours = 0;
+
+    // Helper for local-safe date key to avoid timezone shifts
+    const toLocaleISOString = (date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+
+    // Loop through each day of the month
+    for (let d = 1; d <= daysInMonth; d++) {
+      const currentDay = new Date(year, month - 1, d);
+      const dateKey = toLocaleISOString(currentDay);
+      const dayOfWeek = currentDay.getDay(); // 0 is Sunday, 6 is Saturday
+      
+      const record = attendanceRecords.find(r => 
+        toLocaleISOString(r.date) === dateKey
+      );
+
+      // Rule Analysis:
+      // 1. Is it a holiday?
+      const isHoliday = holidayDates.has(dateKey);
+      
+      // 2. Is it a weekend?
+      let isWeekend = false;
+      if (employee.employmentType === 'INTERN') {
+        isWeekend = (dayOfWeek === 0 || dayOfWeek === 6); // Sun or Sat
+      } else {
+        isWeekend = (dayOfWeek === 0); // Only Sun
+      }
+
+      if (record) {
+        if (record.status === 'HALF_DAY') {
+          halfDays++;
+        } else if (['PRESENT', 'LATE', 'EARLY_LEAVE'].includes(record.status)) {
+          presentDays++;
+        } else if (record.status === 'ABSENT') {
+          // Explicit absence on a working day that is not a holiday
+          if (!isWeekend && !isHoliday) {
+            absentDays++;
+          }
+        }
+        totalHours += (record.totalHours || 0);
+      } else {
+        // No record exists. 
+        // We only count as absence if it's NOT a weekend and NOT a holiday
+        if (!isWeekend && !isHoliday) {
+          // Check if it's in the past (to avoid counting future days as absent)
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (currentDay < today) {
+            absentDays++;
+          }
+        }
+      }
+    }
 
     const summary = {
-      month: parseInt(month),
-      year: parseInt(year),
-      workingDays,
+      month,
+      year,
+      totalDays: daysInMonth, // Total days in the month (basis for display)
       presentDays,
-      halfDays,
-      lateDays,
       absentDays,
+      halfDays,
       totalHours: Math.round(totalHours * 100) / 100,
-      overtimeHours: Math.round(overtimeHours * 100) / 100,
-      attendancePercentage: Math.round((presentDays / workingDays) * 100 * 100) / 100,
-      dailyAttendance: attendance
+      attendancePercentage: Math.round(((presentDays + (halfDays * 0.5)) / daysInMonth) * 100 * 100) / 100
     };
 
     res.status(200).json({
@@ -534,4 +602,5 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
       message: 'Server error'
     });
   }
-}; 
+};
+ 

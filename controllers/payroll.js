@@ -7,53 +7,103 @@ const Expense = require("../models/Expense"); // Added Expense model
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const path = require("path");
+const Holiday = require("../models/Holiday"); // Added Holiday model
 
 // Helper function to calculate attendance stats from stored records for a month
 const calculateAttendanceForMonth = async (employeeId, month, year) => {
   try {
-    // Calculate date range for the month
-    const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
-    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)); // Last day of month
+    const employee = await Employee.findById(employeeId);
+    if (!employee) throw new Error("Employee not found");
 
-    // Fetch all attendance records for this employee in this month
+    // Date range for the month
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0); // Last day of month
+    const daysInMonth = endDate.getDate();
+    
+    // Fetch all attendance records for the month
     const attendanceRecords = await Attendance.find({
-      employeeId,
-      date: {
-        $gte: startDate,
-        $lte: endDate,
-      },
+      employeeId: employee._id,
+      date: { $gte: startDate, $lte: endDate }
     }).sort({ date: 1 });
 
-    // Calculate stats
+    // Fetch holidays for the month
+    const holidays = await Holiday.find({
+      date: { $gte: startDate, $lte: endDate }
+    });
+    const holidayDates = new Set(holidays.map(h => h.date.toISOString().split('T')[0]));
+
+    // Accurate calculation based on each day of the month
     let presentDays = 0;
     let absentDays = 0;
     let halfDays = 0;
     let overtimeHours = 0;
-    const workingDays = endDate.getDate(); // Total days in month
 
-    attendanceRecords.forEach((record) => {
-      if (record.status === "PRESENT") {
-        presentDays++;
-        if (record.overtimeHours) {
-          overtimeHours += record.overtimeHours;
-        }
-      } else if (record.status === "HALF_DAY") {
-        halfDays++;
-      } else if (record.status === "ABSENT") {
-        absentDays++;
+    // Helper for local-safe date key to avoid timezone shifts
+    const toLocaleISOString = (date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+
+    // Loop through each day of the month
+    for (let d = 1; d <= daysInMonth; d++) {
+      const currentDay = new Date(year, month - 1, d);
+      const dateKey = toLocaleISOString(currentDay);
+      const dayOfWeek = currentDay.getDay(); // 0 is Sunday, 6 is Saturday
+      
+      const record = attendanceRecords.find(r => 
+        toLocaleISOString(r.date) === dateKey
+      );
+
+      // Rule Analysis:
+      // 1. Is it a holiday?
+      const isHoliday = holidayDates.has(dateKey);
+      
+      // 2. Is it a weekend?
+      let isWeekend = false;
+      if (employee.employmentType === 'INTERN') {
+        isWeekend = (dayOfWeek === 0 || dayOfWeek === 6); // Sun or Sat
+      } else {
+        isWeekend = (dayOfWeek === 0); // Only Sun
       }
-    });
 
-    // Calculate absent days (working days - present - half days)
-    const totalAttended = presentDays + halfDays;
-    absentDays = Math.max(0, workingDays - totalAttended);
+      if (record) {
+        if (record.status === 'HALF_DAY') {
+          halfDays++;
+        } else if (['PRESENT', 'LATE', 'EARLY_LEAVE'].includes(record.status)) {
+          presentDays++;
+          if (record.overtimeHours) {
+            overtimeHours += record.overtimeHours;
+          }
+        } else if (record.status === 'ABSENT') {
+          if (!isWeekend && !isHoliday) {
+            absentDays++;
+          }
+        }
+      } else {
+        // No record exists. 
+        if (!isWeekend && !isHoliday) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (currentDay < today) {
+            absentDays++;
+          }
+        }
+      }
+    }
+
+    // The user wants to save:
+    // Present Days = 30 - (Absent + 0.5 * Half)
+    // Total Working Days = 30
+    const calculatedPresentDays = 30 - (absentDays || 0) - (0.5 * (halfDays || 0));
 
     return {
-      presentDays,
+      presentDays: Math.max(0, calculatedPresentDays),
       absentDays,
       halfDays,
-      overtimeHours: Math.round(overtimeHours * 100) / 100, // Round to 2 decimals
-      workingDays,
+      workingDays: 30, // Force to 30
+      overtimeHours: Math.round(overtimeHours * 100) / 100,
       totalRecords: attendanceRecords.length,
     };
   } catch (error) {
@@ -63,7 +113,7 @@ const calculateAttendanceForMonth = async (employeeId, month, year) => {
       absentDays: 0,
       halfDays: 0,
       overtimeHours: 0,
-      workingDays: 30, // Default
+      workingDays: 30,
       totalRecords: 0,
     };
   }
