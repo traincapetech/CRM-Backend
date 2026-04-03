@@ -529,7 +529,10 @@ app.get("/api/proxy-image", async (req, res) => {
   
   // If it's a relative URL, try to point it to the local server
   if (imageUrl.startsWith("/")) {
-    imageUrl = `http://localhost:${process.env.PORT || 8080}${imageUrl}`;
+    const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+    const host = req.get("host");
+    imageUrl = `${protocol}://${host}${imageUrl}`;
+    console.log(`[Proxy] Resolved relative URL to: ${imageUrl}`);
   }
 
   try {
