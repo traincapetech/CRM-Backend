@@ -205,13 +205,21 @@ const notifyAllActiveUsers = async ({ type, message, ...data }) => {
 const sendCallAlert = (recipients, callData) => {
   if (io && recipients && Array.isArray(recipients)) {
     recipients.forEach(userId => {
+      if (!userId) return;
       const room = `user-${userId.toString()}`;
-      console.log(`📞 [CALL ALERT] Sending to ${room}`);
+      
+      // 🕵️ Debugging: Count how many people are in the room
+      const roomObj = io.sockets.adapter.rooms.get(room);
+      const onlineCount = roomObj ? roomObj.size : 0;
+      console.log(`📞 [CALL ALERT] Sending to ${room} (S-instances: ${onlineCount})`);
+
       io.to(room).emit("incoming_call", {
         ...callData,
         timestamp: new Date(),
       });
     });
+  } else {
+    console.warn("⚠️ sendCallAlert: io not initialized or recipients list invalid", !!io, !!recipients);
   }
 };
 

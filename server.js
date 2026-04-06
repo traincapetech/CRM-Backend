@@ -323,8 +323,9 @@ io.on("connection", (socket) => {
   // 🔑 Critical: Allow clients to join their personal room for targeted notifications
   socket.on("join-user-room", (userId) => {
     if (userId) {
-      socket.join(`user-${userId}`);
-      console.log(`✅ User ${userId} joined room: user-${userId} (socket: ${socket.id})`);
+      const room = `user-${userId.toString()}`;
+      socket.join(room);
+      console.log(`✅ User joined room: ${room} (socket: ${socket.id})`);
     }
   });
 
