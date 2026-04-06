@@ -43,12 +43,26 @@ exports.createMeeting = async (req, res) => {
 
     // Case 1: Targeted Meeting (specific participants)
     if (invitedParticipants.length > 0) {
+      // 1. Send High-Intensity Socket Alert
       notificationService.sendCallAlert(invitedParticipants, {
         roomId: meeting.roomId,
         title: meeting.title,
         creatorId: req.user.id,
         creatorName: creator?.fullName || "Admin",
       });
+
+      // 2. Also create a formal notification for their history
+      for (const pId of invitedParticipants) {
+        try {
+          await notificationService.createNotification({
+            recipient: pId,
+            type: "TEAM_HUDDLE",
+            message: `🎥 High-Priority Huddle: "${meeting.title}" from ${creator?.fullName || "Admin"}. Come join us.`,
+          });
+        } catch (notifErr) {
+          console.error("❌ Notification creation failed for participant:", pId, notifErr);
+        }
+      }
     }
     // Case 2: General Internal Meeting (Notification for everyone)
     else if (meetingType === "internal") {
