@@ -47,6 +47,10 @@ const LeadSchema = new mongoose.Schema({
     type: String,
     trim: true,
   },
+  designation: {
+    type: String,
+    trim: true,
+  },
   client: {
     type: String,
     trim: true,

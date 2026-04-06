@@ -120,25 +120,16 @@ app.set("trust proxy", 1);
 // Make app available to other modules
 module.exports.app = app;
 
-// Socket.IO setup with CORS and consolidated path
+// Socket.IO setup with CORS
 const io = socketIo(server, {
-  path: "/api/socket.io", // 🚀 Move socket to /api path for better proxy compatibility
   cors: {
-    origin: (origin, callback) => {
-      // Use the same logic as the main CORS middleware
-      const staticAllowed = [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "https://verdaexports.com",
-        "https://traincapecrm.traincapetech.in",
-        "http://traincapecrm.traincapetech.in"
-      ];
-      if (!origin || staticAllowed.includes(origin) || /^https?:\/\/([a-z0-9-]+\.)?traincapetech\.in$/i.test(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
+    origin: [
+      "http://localhost:3000",
+      "https://verdaexports.com",
+      "http://localhost:5173",
+      "https://traincapecrm.traincapetech.in",
+      "http://traincapecrm.traincapetech.in"
+    ],
     methods: ["GET", "POST"],
     credentials: true,
   },
