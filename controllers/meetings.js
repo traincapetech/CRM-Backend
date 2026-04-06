@@ -181,3 +181,34 @@ exports.endMeeting = async (req, res) => {
     });
   }
 };
+// @desc    Get meetings for current logged in user (internal huddles)
+// @route   GET /api/meetings/my-huddles
+// @access  Private
+exports.getMyMeetings = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Find internal meetings where user is either the creator OR invited
+    const meetings = await Meeting.find({
+      meetingType: "internal",
+      $or: [
+        { invitedParticipants: userId },
+        { createdBy: userId }
+      ]
+    })
+    .populate("createdBy", "fullName")
+    .sort("-createdAt");
+
+    res.status(200).json({
+      success: true,
+      count: meetings.length,
+      data: meetings,
+    });
+  } catch (error) {
+    console.error("Error fetching my huddles:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
