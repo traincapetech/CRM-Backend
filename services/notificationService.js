@@ -169,6 +169,52 @@ const notifyRoles = async ({ roles, type, message, ...data }) => {
   }
 };
 
+/**
+ * Notify all active users about an event (e.g., a team huddle)
+ * @param {Object} params
+ * @param {String} params.type - Notification type
+ * @param {String} params.message - Notification message
+ * @param {Object} params.data - Additional data
+ */
+const notifyAllActiveUsers = async ({ type, message, ...data }) => {
+  try {
+    const User = require("../models/User");
+    const users = await User.find({ active: { $ne: false } });
+    
+    console.log(`🔔 [NOTIFY ALL] Broadcasting to ${users.length} active users`);
+    
+    for (const user of users) {
+      await createNotification({
+        recipient: user._id,
+        type,
+        message,
+        ...data
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error notifying all users:", error);
+  }
+};
+
+/**
+ * Send a real-time call alert to specific users
+ * @param {Object} params
+ * @param {Array} params.recipients - Array of user IDs
+ * @param {Object} params.callData - Meeting data (roomId, title, creatorId, creatorName)
+ */
+const sendCallAlert = (recipients, callData) => {
+  if (io && recipients && Array.isArray(recipients)) {
+    recipients.forEach(userId => {
+      const room = `user-${userId.toString()}`;
+      console.log(`📞 [CALL ALERT] Sending to ${room}`);
+      io.to(room).emit("incoming_call", {
+        ...callData,
+        timestamp: new Date(),
+      });
+    });
+  }
+};
+
 module.exports = {
   init,
   createNotification,
@@ -177,4 +223,6 @@ module.exports = {
   broadcastToUser,
   notifyAdmins,
   notifyRoles,
+  notifyAllActiveUsers,
+  sendCallAlert,
 };
