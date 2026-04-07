@@ -5,12 +5,19 @@ const payrollSchema = new mongoose.Schema(
     employeeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Employee",
-      required: true,
+      required: false,
     },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
+    },
+    isCustomPayee: {
+      type: Boolean,
+      default: false,
+    },
+    customPayeeName: {
+      type: String,
     },
     month: {
       type: Number,

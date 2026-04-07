@@ -132,22 +132,33 @@ exports.generatePayroll = async (req, res) => {
       });
     }
 
-    const { employeeId, month, year } = req.body;
+    const { employeeId, month, year, isCustomPayee, customPayeeName } = req.body;
 
     // Validate input
-    if (!employeeId || !month || !year) {
+    if ((!employeeId && !isCustomPayee) || !month || !year) {
       return res.status(400).json({
         success: false,
-        message: "Employee ID, month, and year are required",
+        message: "Employee ID (or Custom Payee), month, and year are required",
+      });
+    }
+
+    if (isCustomPayee && !customPayeeName) {
+      return res.status(400).json({
+        success: false,
+        message: "Custom Payee Name is required",
       });
     }
 
     // Check if payroll already exists
-    const existingPayroll = await Payroll.findOne({
-      employeeId,
-      month,
-      year,
-    });
+    let existingQuery = { month, year };
+    if (isCustomPayee) {
+      existingQuery.isCustomPayee = true;
+      existingQuery.customPayeeName = customPayeeName;
+    } else {
+      existingQuery.employeeId = employeeId;
+    }
+
+    const existingPayroll = await Payroll.findOne(existingQuery);
 
     if (existingPayroll) {
       return res.status(400).json({
@@ -156,133 +167,125 @@ exports.generatePayroll = async (req, res) => {
       });
     }
 
-    // Get employee details and ensure we have their userId
-    const employee = await Employee.findById(employeeId).populate("userId");
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: "Employee not found",
-      });
-    }
-
-    if (!employee.userId) {
-      return res.status(400).json({
-        success: false,
-        message: "Employee record does not have an associated user account",
-      });
-    }
-
-    // Calculate attendance stats from stored attendance records if requested
+    let employee = null;
     let attendanceStats = null;
-    if (req.body.calculateFromAttendance !== false) {
-      attendanceStats = await calculateAttendanceForMonth(
-        employeeId,
-        month,
-        year,
+    let approvedExpenses = [];
+    let advanceUpdates = [];
+    let totalAdvanceDeduction = 0;
+    let totalReimbursements = 0;
+
+    if (!isCustomPayee) {
+      // Get employee details and ensure we have their userId
+      employee = await Employee.findById(employeeId).populate("userId");
+      if (!employee) {
+        return res.status(404).json({
+          success: false,
+          message: "Employee not found",
+        });
+      }
+
+      if (!employee.userId) {
+        return res.status(400).json({
+          success: false,
+          message: "Employee record does not have an associated user account",
+        });
+      }
+
+      // Calculate attendance stats from stored attendance records if requested
+      if (req.body.calculateFromAttendance !== false) {
+        attendanceStats = await calculateAttendanceForMonth(
+          employeeId,
+          month,
+          year,
+        );
+        console.log("📊 Attendance stats calculated:", attendanceStats);
+      }
+
+      // Calculate Expenses
+      // Fetch all APPROVED and UNPAID expenses for this employee up to the end of the payroll month
+      const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+
+      approvedExpenses = await Expense.find({
+        employeeId: employee._id,
+        status: "APPROVED",
+        payrollId: null,
+        date: { $lte: endDate },
+      });
+
+      totalReimbursements = approvedExpenses.reduce(
+        (sum, exp) => sum + exp.amount,
+        0,
       );
-      console.log("📊 Attendance stats calculated:", attendanceStats);
+
+      // ===== SALARY ADVANCE DEDUCTION INTEGRATION =====
+      const EmployeeAdvance = require("../models/EmployeeAdvance");
+      const activeAdvances = await EmployeeAdvance.find({
+        employeeId: employee._id,
+        status: "active",
+        remainingAmount: { $gt: 0 },
+      });
+
+      if (activeAdvances.length > 0) {
+        for (const advance of activeAdvances) {
+          let deductionForThisAdvance = 0;
+
+          if (advance.deductionType === "full") {
+            deductionForThisAdvance = advance.remainingAmount;
+          } else {
+            // partial - deduct the monthly amount, capped at remaining
+            deductionForThisAdvance = Math.min(
+              advance.deductionAmountPerMonth || 0,
+              advance.remainingAmount,
+            );
+          }
+
+          if (deductionForThisAdvance > 0) {
+            totalAdvanceDeduction += deductionForThisAdvance;
+            advanceUpdates.push({
+              advance,
+              deductionAmount: deductionForThisAdvance,
+            });
+          }
+        }
+      }
+      // ===== END SALARY ADVANCE DEDUCTION INTEGRATION =====
     }
 
-    // Create payroll record with both employeeId and userId
+    // Create payroll record
     const payrollData = {
       ...req.body,
-      employeeId: employee._id,
-      userId: employee.userId._id, // Make sure to set the userId from the employee record
-      // Auto-fill from attendance if available
-      ...(attendanceStats && {
-        presentDays: attendanceStats.presentDays,
-        absentDays: attendanceStats.absentDays,
-        halfDays: attendanceStats.halfDays,
-        overtimeHours: attendanceStats.overtimeHours,
-        daysPresent:
-          attendanceStats.presentDays + attendanceStats.halfDays * 0.5,
-        workingDays: attendanceStats.workingDays,
-      }),
     };
 
-    // Calculate Expenses
-    // Fetch all APPROVED and UNPAID expenses for this employee up to the end of the payroll month
-    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-
-    const approvedExpenses = await Expense.find({
-      employeeId: employee._id,
-      status: "APPROVED",
-      payrollId: null,
-      date: { $lte: endDate },
-    });
-
-    const totalReimbursements = approvedExpenses.reduce(
-      (sum, exp) => sum + exp.amount,
-      0,
-    );
-
-    if (totalReimbursements > 0) {
-      payrollData.reimbursements = totalReimbursements;
-      console.log(
-        `💰 Found ${approvedExpenses.length} approved expenses totaling Rs. ${totalReimbursements}`,
-      );
-    }
-
-    // ===== SALARY ADVANCE DEDUCTION INTEGRATION =====
-    const EmployeeAdvance = require("../models/EmployeeAdvance");
-    const activeAdvances = await EmployeeAdvance.find({
-      employeeId: employee._id,
-      status: "active",
-      remainingAmount: { $gt: 0 },
-    });
-
-    let totalAdvanceDeduction = 0;
-    const advanceUpdates = []; // Store updates to apply after payroll creation
-
-    if (activeAdvances.length > 0) {
-      for (const advance of activeAdvances) {
-        let deductionForThisAdvance = 0;
-
-        if (advance.deductionType === "full") {
-          deductionForThisAdvance = advance.remainingAmount;
-        } else {
-          // partial - deduct the monthly amount, capped at remaining
-          deductionForThisAdvance = Math.min(
-            advance.deductionAmountPerMonth || 0,
-            advance.remainingAmount,
-          );
-        }
-
-        if (deductionForThisAdvance > 0) {
-          totalAdvanceDeduction += deductionForThisAdvance;
-          advanceUpdates.push({
-            advance,
-            deductionAmount: deductionForThisAdvance,
-          });
-        }
+    if (isCustomPayee) {
+      payrollData.isCustomPayee = true;
+      payrollData.customPayeeName = customPayeeName;
+      delete payrollData.employeeId;
+      delete payrollData.userId;
+    } else {
+      payrollData.employeeId = employee._id;
+      payrollData.userId = employee.userId._id; // Make sure to set the userId from the employee record
+      
+      if (attendanceStats) {
+        payrollData.presentDays = attendanceStats.presentDays;
+        payrollData.absentDays = attendanceStats.absentDays;
+        payrollData.halfDays = attendanceStats.halfDays;
+        payrollData.overtimeHours = attendanceStats.overtimeHours;
+        payrollData.daysPresent = attendanceStats.presentDays + attendanceStats.halfDays * 0.5;
+        payrollData.workingDays = attendanceStats.workingDays;
       }
 
+      if (totalReimbursements > 0) {
+        payrollData.reimbursements = totalReimbursements;
+      }
       if (totalAdvanceDeduction > 0) {
         payrollData.advanceDeduction = totalAdvanceDeduction;
-        console.log(
-          `🏦 Advance deductions: Rs. ${totalAdvanceDeduction} from ${advanceUpdates.length} active advance(s)`,
-        );
-
-        // Warn if deduction exceeds 50% of gross salary
-        const estimatedGross =
-          payrollData.calculatedSalary || payrollData.baseSalary || 0;
-        if (
-          estimatedGross > 0 &&
-          totalAdvanceDeduction > estimatedGross * 0.5
-        ) {
-          console.warn(
-            `⚠️ WARNING: Advance deduction (Rs. ${totalAdvanceDeduction}) exceeds 50% of estimated salary (Rs. ${estimatedGross})`,
-          );
-        }
       }
     }
-    // ===== END SALARY ADVANCE DEDUCTION INTEGRATION =====
 
-    // Auto-calculate salary if baseSalary and daysPresent are available
-    if (payrollData.baseSalary && payrollData.daysPresent) {
-      payrollData.calculatedSalary =
-        (payrollData.baseSalary / payrollData.workingDays) *
-        payrollData.daysPresent;
+    // Auto-calculate salary if baseSalary and daysPresent are available and NO calculatedSalary is manually provided
+    if (payrollData.baseSalary && payrollData.daysPresent && !payrollData.calculatedSalary) {
+      const working = payrollData.workingDays || 30; // default to 30 to prevent division by 0
+      payrollData.calculatedSalary = (payrollData.baseSalary / working) * payrollData.daysPresent;
     }
 
     const payroll = await Payroll.create(payrollData);
@@ -332,7 +335,7 @@ exports.generatePayroll = async (req, res) => {
     // Notify Admins
     await notifyAdmins({
       type: "PAYROLL_GENERATED",
-      message: `Payroll Generated: ${employee.fullName} for ${payroll.monthName} ${payroll.year} by ${req.user.fullName}`,
+      message: `Payroll Generated: ${isCustomPayee ? customPayeeName : employee.fullName} for ${payroll.monthName} ${payroll.year} by ${req.user.fullName}`,
       payrollId: payroll._id
     });
 
@@ -565,14 +568,15 @@ exports.updatePayroll = async (req, res) => {
       }
     });
 
-    // Auto-calculate salary if base salary or days present are updated
+    // Auto-calculate salary if base salary or days present are updated and calculatedSalary is NOT provided manually
     if (
-      req.body.baseSalary !== undefined ||
-      req.body.daysPresent !== undefined
+      (req.body.baseSalary !== undefined || req.body.daysPresent !== undefined) &&
+      req.body.calculatedSalary === undefined
     ) {
       const baseSalary = req.body.baseSalary || payroll.baseSalary;
       const daysPresent = req.body.daysPresent || payroll.daysPresent;
-      payroll.calculatedSalary = (baseSalary / 30) * daysPresent;
+      const working = req.body.workingDays || payroll.workingDays || 30;
+      payroll.calculatedSalary = (baseSalary / working) * daysPresent;
     }
 
     // Auto-calculate absent days if working days or present days are updated
@@ -601,7 +605,7 @@ exports.updatePayroll = async (req, res) => {
     // Notify Admins
     await notifyAdmins({
       type: "PAYROLL_UPDATED",
-      message: `Payroll Updated: ${payroll.employeeId?.fullName || "Employee"} (${payroll.monthName || "this month"}) by ${req.user.fullName}`,
+      message: `Payroll Updated: ${payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee")} (${payroll.monthName || "this month"}) by ${req.user.fullName}`,
       payrollId: payroll._id,
     });
 
@@ -643,15 +647,16 @@ exports.generateSalarySlip = async (req, res) => {
     const isAdmin = ["Admin", "HR", "Manager"].includes(req.user.role);
 
     // Check if user is the employee (either through userId or employeeId)
-    const isEmployee =
-      req.user.id === payroll.userId.toString() ||
-      req.user.id === payroll.employeeId?.userId?.toString();
+    const isEmployee = payroll.isCustomPayee 
+      ? false 
+      : (req.user.id === payroll.userId?.toString() ||
+         req.user.id === payroll.employeeId?.userId?.toString());
 
     console.log("Generate salary slip authorization check:", {
       userId: req.user.id,
       userRole: req.user.role,
-      payrollUserId: payroll.userId?.toString(),
-      payrollEmployeeUserId: payroll.employeeId?.userId?.toString(),
+      payrollUserId: payroll.userId?.toString() || null,
+      payrollEmployeeUserId: payroll.employeeId?.userId?.toString() || null,
       isAdmin,
       isEmployee,
     });
@@ -666,11 +671,11 @@ exports.generateSalarySlip = async (req, res) => {
     // Create PDF and pipe directly to response
     const doc = new PDFDocument({ margin: 30 });
 
-    // Set response headers
     res.setHeader("Content-Type", "application/pdf");
+    const employeeName = payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "employee");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="salary-slip-${payroll.employeeId.fullName}-${payroll.month}-${payroll.year}.pdf"`,
+      `attachment; filename="salary-slip-${employeeName}-${payroll.month}-${payroll.year}.pdf"`,
     );
 
     // Pipe the PDF directly to the response
@@ -714,15 +719,16 @@ exports.downloadSalarySlip = async (req, res) => {
     const isAdmin = ["Admin", "HR", "Manager"].includes(req.user.role);
 
     // Check if user is the employee (either through userId or employeeId)
-    const isEmployee =
-      req.user.id === payroll.userId.toString() ||
-      req.user.id === payroll.employeeId?.userId?.toString();
+    const isEmployee = payroll.isCustomPayee 
+      ? false 
+      : (req.user.id === payroll.userId?.toString() ||
+         req.user.id === payroll.employeeId?.userId?.toString());
 
     console.log("Download authorization check:", {
       userId: req.user.id,
       userRole: req.user.role,
-      payrollUserId: payroll.userId?.toString(),
-      payrollEmployeeUserId: payroll.employeeId?.userId?.toString(),
+      payrollUserId: payroll.userId?.toString() || null,
+      payrollEmployeeUserId: payroll.employeeId?.userId?.toString() || null,
       isAdmin,
       isEmployee,
     });
@@ -739,9 +745,10 @@ exports.downloadSalarySlip = async (req, res) => {
 
     // Set response headers
     res.setHeader("Content-Type", "application/pdf");
+    const employeeName = payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "employee");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="salary-slip-${payroll.employeeId.fullName}-${payroll.month}-${payroll.year}.pdf"`,
+      `attachment; filename="salary-slip-${employeeName}-${payroll.month}-${payroll.year}.pdf"`,
     );
 
     // Pipe the PDF directly to the response
@@ -878,7 +885,7 @@ exports.approvePayroll = async (req, res) => {
     // Notify Admins
     await notifyAdmins({
       type: "PAYROLL_APPROVED",
-      message: `Payroll Approved: ${payroll.employeeId?.fullName || "Employee"} (${payroll.monthName || "this month"} ${payroll.year || "this year"}) by ${req.user.fullName}. Payout ${payroll.paytmPayoutStatus || "MANUAL"}.`,
+      message: `Payroll Approved: ${payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee")} (${payroll.monthName || "this month"} ${payroll.year || "this year"}) by ${req.user.fullName}. Payout ${payroll.paytmPayoutStatus || "MANUAL"}.`,
       payrollId: payroll._id,
     });
 
@@ -1132,7 +1139,7 @@ const generatePDFContent = (doc, payroll) => {
   doc
     .font("Helvetica-Bold")
     .fillColor("#0f172a")
-    .text(payroll.employeeId.fullName, col1ValueX, currentY);
+    .text(payroll.isCustomPayee ? payroll.customPayeeName : payroll.employeeId.fullName, col1ValueX, currentY);
   currentY += 18;
 
   doc
@@ -1143,7 +1150,7 @@ const generatePDFContent = (doc, payroll) => {
     .font("Helvetica-Bold")
     .fillColor("#0f172a")
     .text(
-      payroll.employeeId._id.toString().substring(0, 10).toUpperCase(),
+      payroll.isCustomPayee ? "N/A" : payroll.employeeId._id.toString().substring(0, 10).toUpperCase(),
       col1ValueX,
       currentY,
     );
@@ -1156,7 +1163,7 @@ const generatePDFContent = (doc, payroll) => {
   doc
     .font("Helvetica-Bold")
     .fillColor("#0f172a")
-    .text(payroll.employeeId.department?.name || "N/A", col1ValueX, currentY);
+    .text(payroll.isCustomPayee ? "Custom" : (payroll.employeeId.department?.name || "N/A"), col1ValueX, currentY);
 
   // Right Column
   const col2X = MARGIN_LEFT + CONTENT_WIDTH / 2 + 15;
@@ -1579,12 +1586,12 @@ exports.exportPayrollReport = async (req, res) => {
       });
       xPos += colWidths[0];
 
-      doc.text(payroll.employeeId?.fullName || "N/A", xPos, rowY, {
+      doc.text(payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "N/A"), xPos, rowY, {
         width: colWidths[1] - 5,
       });
       xPos += colWidths[1];
 
-      doc.text(payroll.employeeId?.department?.name || "N/A", xPos, rowY, {
+      doc.text(payroll.isCustomPayee ? "Custom" : (payroll.employeeId?.department?.name || "N/A"), xPos, rowY, {
         width: colWidths[2] - 5,
       });
       xPos += colWidths[2];
