@@ -557,6 +557,7 @@ exports.updatePayroll = async (req, res) => {
       "loan",
       "advanceDeduction",
       "other",
+      "reimbursements",
       // Status and notes
       "notes",
       "status",
