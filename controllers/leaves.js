@@ -2,8 +2,84 @@ const FeedService = require("../services/feedService");
 const Leave = require("../models/Leave");
 const Employee = require("../models/Employee");
 const User = require("../models/User");
+const Attendance = require("../models/Attendance");
+const Holiday = require("../models/Holiday");
 const mongoose = require("mongoose");
 const { notifyAdmins } = require("../services/notificationService");
+
+/**
+ * Helper to sync approved leave dates into attendance records
+ */
+const syncLeaveToAttendance = async (leave, approvingUserId) => {
+  try {
+    const { employeeId, startDate, endDate, leaveType, isHalfDay } = leave;
+    
+    // Get full employee record to check employmentType for weekend logic
+    const employee = await Employee.findById(employeeId);
+    if (!employee) return;
+
+    // Fetch holidays that might overlap with this leave
+    const holidays = await Holiday.find({
+      date: { $gte: startDate, $lte: endDate }
+    });
+    const holidayDates = new Set(holidays.map(h => h.date.toDateString()));
+
+    // Iterate through every date in the leave period
+    let currentDate = new Date(startDate);
+    currentDate.setHours(0, 0, 0, 0); // Normalize to local midnight
+    
+    const end = new Date(endDate);
+    end.setHours(0, 0, 0, 0);
+
+    while (currentDate <= end) {
+      const dayOfWeek = currentDate.getDay(); // 0 is Sunday, 6 is Saturday
+      
+      // Determine if it's a weekend for this specific employee
+      let isWeekend = false;
+      if (employee.employmentType === 'INTERN') {
+        isWeekend = (dayOfWeek === 0 || dayOfWeek === 6); // Sun or Sat
+      } else {
+        isWeekend = (dayOfWeek === 0); // Only Sun
+      }
+
+      // Skip sync only if it's a weekend or a holiday
+      if (!isWeekend && !holidayDates.has(currentDate.toDateString())) {
+        // Prepare UTC Normalized date for Attendance record (following attendance controller pattern)
+        const attendanceDate = new Date(Date.UTC(
+          currentDate.getFullYear(),
+          currentDate.getMonth(),
+          currentDate.getDate(),
+          0, 0, 0, 0
+        ));
+
+        // Note: attendanceSchema.index({ employeeId: 1, date: 1 }, { unique: true });
+        // Use findOneAndUpdate with upsert to avoid duplicate key errors
+        await Attendance.findOneAndUpdate(
+          { employeeId, date: attendanceDate },
+          {
+            $setOnInsert: {
+              userId: employee.userId || null,
+              isAdminCreated: true,
+              source: 'MANUAL',
+            },
+            $set: {
+              status: isHalfDay ? 'HALF_DAY' : 'ON_LEAVE',
+              notes: `Approved ${leaveType.toUpperCase()} Leave${isHalfDay ? ' (Half Day)' : ''}`,
+              approvedBy: approvingUserId
+            }
+          },
+          { upsert: true, new: true }
+        );
+      }
+      
+      // Move to next day
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+  } catch (error) {
+    console.error("Sync Leave to Attendance failed:", error);
+    // Don't throw - we don't want to fail the leave approval if sync fails
+  }
+};
 
 // @desc    Get my leaves
 // @route   GET /api/leaves/my-leaves
@@ -117,7 +193,26 @@ exports.getLeaveBalance = async (req, res) => {
 // @access  Private/Admin
 exports.getLeaves = async (req, res) => {
   try {
-    const leaves = await Leave.find()
+    const { month, year, status } = req.query;
+    let query = {};
+
+    if (status) {
+      query.status = status;
+    }
+
+    if (month && year) {
+      // Find leaves that overlap with the given month
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 0); // Last day of month
+      
+      query.$or = [
+        { startDate: { $gte: startDate, $lte: endDate } },
+        { endDate: { $gte: startDate, $lte: endDate } },
+        { startDate: { $lte: startDate }, endDate: { $gte: endDate } }
+      ];
+    }
+
+    const leaves = await Leave.find(query)
       .populate("employeeId", "fullName email department")
       .sort({ createdAt: -1 });
 
@@ -383,6 +478,9 @@ exports.approveLeave = async (req, res) => {
     leave.approvedBy = req.user.id;
     leave.approvedDate = Date.now();
     await leave.save();
+
+    // Trigger Attendance Sync
+    await syncLeaveToAttendance(leave, req.user.id);
 
     // Notify Admins
     await notifyAdmins({

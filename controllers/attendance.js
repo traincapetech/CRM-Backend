@@ -603,4 +603,107 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
     });
   }
 };
+
+// @desc    Bulk mark attendance (Admin/HR only)
+// @route   POST /api/attendance/bulk
+// @access  Private (Admin/HR/Manager)
+exports.bulkMarkAttendance = async (req, res) => {
+  try {
+    // Check authorization
+    if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to bulk mark attendance'
+      });
+    }
+
+    const { employeeIds, date, status, notes } = req.body;
+
+    // Validate required fields
+    if (!employeeIds || !Array.isArray(employeeIds) || employeeIds.length === 0 || !date || !status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee IDs (array), date, and status are required'
+      });
+    }
+
+    // Parse the input date
+    const inputDate = new Date(date);
+    
+    // Ensure we're working with UTC midnight to avoid timezone issues
+    // Use the input date's year, month, and day for UTC midnight
+    const startOfDay = new Date(Date.UTC(
+      inputDate.getFullYear(),
+      inputDate.getMonth(),
+      inputDate.getDate(),
+      0, 0, 0, 0
+    ));
+
+    const results = [];
+    const errors = [];
+
+    // Process each employee
+    for (const employeeId of employeeIds) {
+      try {
+        const endOfDay = new Date(startOfDay);
+        endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
+
+        let attendance = await Attendance.findOne({
+          employeeId,
+          date: {
+            $gte: startOfDay,
+            $lt: endOfDay
+          }
+        });
+
+        if (attendance) {
+          // Update existing
+          attendance.status = status;
+          if (notes !== undefined) attendance.notes = notes;
+          attendance.approvedBy = req.user.id;
+          attendance.source = 'MANUAL';
+          await attendance.save();
+          results.push(attendance);
+        } else {
+          // Create new
+          const employee = await Employee.findById(employeeId);
+          if (!employee) {
+            errors.push({ employeeId, message: 'Employee not found' });
+            continue;
+          }
+
+          attendance = await Attendance.create({
+            employeeId,
+            userId: employee.userId || null,
+            date: startOfDay,
+            status,
+            notes: notes || '',
+            approvedBy: req.user.id,
+            isAdminCreated: true,
+            source: 'MANUAL'
+          });
+          results.push(attendance);
+        }
+      } catch (err) {
+        console.error(`Error processing bulk attendance for employee ${employeeId}:`, err);
+        errors.push({ employeeId, message: err.message });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully processed ${results.length} attendance records`,
+      data: results,
+      totalProcessed: results.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    console.error('Bulk attendance error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during bulk attendance update',
+      error: error.message
+    });
+  }
+};
  

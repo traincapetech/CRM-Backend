@@ -7,7 +7,8 @@ const {
   getAllAttendance,
   updateAttendance,
   getMonthlyAttendanceSummary,
-  createAttendance
+  createAttendance,
+  bulkMarkAttendance
 } = require('../controllers/attendance');
 
 const router = express.Router();
@@ -26,6 +27,7 @@ router.get('/summary/:month/:year', getMonthlyAttendanceSummary);
 // Admin/HR/Manager routes
 router.get('/all', getAllAttendance);
 router.post('/', createAttendance);
+router.post('/bulk', bulkMarkAttendance);
 router.put('/:id', updateAttendance);
 
-module.exports = router; 
+module.exports = router;
