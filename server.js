@@ -110,6 +110,7 @@ const courseRoutes = require("./routes/courses");
 const kpiBreakdownRoutes = require("./routes/kpiBreakdown");
 const verdaEnquiryRoutes = require("./routes/verdaEnquiry");
 const meetingRoutes = require("./routes/meetings");
+const officeNetworkRoutes = require("./routes/officeNetwork");
 
 const app = express();
 const server = http.createServer(app);
@@ -526,6 +527,7 @@ app.use("/api/public", require("./routes/public"));
 app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarterly Incentives Routes
 app.use("/api/verda-enquiries", verdaEnquiryRoutes);
 app.use("/api/meetings", meetingRoutes);
+app.use("/api/office-networks", officeNetworkRoutes);
 
 // Image Proxy Route to solve CORS issues for ID Card generation
 app.get("/api/proxy-image", async (req, res) => {

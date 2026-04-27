@@ -1,7 +1,16 @@
+const OfficeNetwork = require("../models/OfficeNetwork");
+
 /**
- * Production-Grade IP Filter Middleware
+ * IP Filter Middleware with Dynamic DB-managed Whitelist and Caching
  */
 
+let cachedNetworks = [];
+let lastCacheUpdate = 0;
+const CACHE_TTL = 60 * 1000; // 60 seconds
+
+/**
+ * Normalizes IP addresses, specifically handling IPv6-mapped IPv4 addresses.
+ */
 const normalizeIP = (ip) => {
   if (!ip) return "";
   if (ip.startsWith("::ffff:")) return ip.split(":").pop();
@@ -9,83 +18,138 @@ const normalizeIP = (ip) => {
   return ip;
 };
 
+/**
+ * Converts an IPv4 address string to a 32-bit unsigned integer.
+ */
 const ipToNumber = (ip) => {
   const octets = ip.split(".");
   if (octets.length !== 4) return 0;
-  return (octets.reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0);
+  return (
+    octets.reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0
+  );
 };
 
+/**
+ * Checks if a given IP address matches a specific network or range.
+ */
 const isIPInRange = (ip, network) => {
   const normalizedIP = normalizeIP(ip);
   const normalizedNetwork = network.trim();
 
+  // Loopback support
   const loopbacks = ["127.0.0.1", "::1", "localhost"];
   if (loopbacks.includes(normalizedNetwork)) {
-    return loopbacks.includes(normalizedIP) || normalizedIP === "127.0.0.1";
+    return loopbacks.includes(normalizedIP);
   }
 
-  if (!normalizedNetwork.includes("/")) return normalizedIP === normalizedNetwork;
+  if (!normalizedNetwork.includes("/")) {
+    return normalizedIP === normalizedNetwork;
+  }
 
   const [rangeIP, prefixLength] = normalizedNetwork.split("/");
   const prefix = parseInt(prefixLength, 10);
-  
-  if (!normalizedIP.includes(".") || !rangeIP.includes(".")) return normalizedIP === rangeIP;
+
+  if (!normalizedIP.includes(".") || !rangeIP.includes(".")) {
+    return normalizedIP === rangeIP;
+  }
 
   const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
-  return (ipToNumber(normalizedIP) & mask) === (ipToNumber(rangeIP) & mask);
+  const networkNum = ipToNumber(rangeIP);
+  const ipNum = ipToNumber(normalizedIP);
+
+  return (ipNum & mask) === (networkNum & mask);
 };
 
-const getAllowedNetworks = () => {
-  const ranges = process.env.ALLOWED_IP_RANGES ? process.env.ALLOWED_IP_RANGES.split(",") : [];
-  const publics = process.env.ALLOWED_PUBLIC_IPS ? process.env.ALLOWED_PUBLIC_IPS.split(",") : [];
-  const all = ["127.0.0.1", "::1", "localhost", ...ranges, ...publics].map(i => i.trim()).filter(Boolean);
-  return all;
-};
-
-// Startup Diagnostic & Validation
-const isEnabled = process.env.ENABLE_IP_FILTER === "true";
-if (isEnabled) {
-  const networks = getAllowedNetworks();
-  console.log("--------------------------------------------------");
-  console.log("🛡️  IP Filter: ENABLED");
-  
-  if (networks.length <= 3) { // Only localhost/loopback
-    console.warn("⚠️  WARNING: IP Filter is enabled but no external networks are configured in ALLOWED_IP_RANGES or ALLOWED_PUBLIC_IPS.");
+/**
+ * Refreshes the in-memory cache of active office networks from DB.
+ */
+const refreshCache = async () => {
+  try {
+    const activeNetworks = await OfficeNetwork.find({ status: true });
+    cachedNetworks = activeNetworks;
+    lastCacheUpdate = Date.now();
+    
+    if (process.env.DEBUG_IP === "true") {
+      console.log(`📡 IP Filter: Cache refreshed. ${cachedNetworks.length} offices loaded.`);
+    }
+  } catch (error) {
+    console.error("❌ IP Filter Cache Refresh Error:", error);
   }
-  
-  console.log(`📡 Whitelisted Networks: ${networks.join(", ")}`);
-  console.log("--------------------------------------------------");
-}
+};
 
-const ipFilter = (req, res, next) => {
+/**
+ * Seeding logic: Migration from .env to DB
+ */
+const seedFromEnv = async () => {
+  try {
+    const count = await OfficeNetwork.countDocuments();
+    if (count === 0) {
+      const User = require("../models/User");
+      const admin = await User.findOne({ role: "Admin" });
+      
+      if (admin && (process.env.ALLOWED_IP_RANGES || process.env.ALLOWED_PUBLIC_IPS)) {
+        await OfficeNetwork.create({
+          officeName: "Delhi Office (Migrated)",
+          privateRanges: process.env.ALLOWED_IP_RANGES ? process.env.ALLOWED_IP_RANGES.split(",").map(i => i.trim()) : [],
+          publicIPs: process.env.ALLOWED_PUBLIC_IPS ? process.env.ALLOWED_PUBLIC_IPS.split(",").map(i => i.trim()) : [],
+          status: true,
+          createdBy: admin._id,
+        });
+        console.log("✅ IP Filter: Migrated .env values to DB (Delhi Office).");
+        await refreshCache();
+      }
+    }
+  } catch (error) {
+    console.error("❌ IP Filter Seeding Error:", error);
+  }
+};
+
+// Initial cache load
+refreshCache().then(() => seedFromEnv());
+
+const ipFilter = async (req, res, next) => {
   if (process.env.ENABLE_IP_FILTER !== "true") return next();
 
-  // 1. Production Healthcheck & Logs Bypass
-  // /api/logs is bypassed so frontend can report errors even when blocked
-  const healthPaths = ["/health", "/api/health", "/api/public/health", "/api/logs"];
-  if (healthPaths.some(hp => req.path === hp || req.originalUrl === hp)) {
+  // Bypasses
+  const bypassPaths = ["/health", "/api/health", "/api/public/health", "/api/logs"];
+  if (bypassPaths.some(hp => req.path === hp || req.originalUrl === hp)) {
     return next();
   }
-
-  // 2. Webhook Bypass (Keep existing biometric logic)
   if (req.originalUrl.includes("/api/biometric/webhook") || req.path.includes("/api/biometric/webhook")) {
     return next();
   }
 
+  // Refresh cache if expired
+  if (Date.now() - lastCacheUpdate > CACHE_TTL) {
+    await refreshCache();
+  }
+
   const clientIP = normalizeIP(req.ip);
-  const allowedNetworks = getAllowedNetworks();
-  const isAllowed = allowedNetworks.some((network) => isIPInRange(clientIP, network));
   const logCtx = `| Path: ${req.originalUrl || req.path} | Method: ${req.method}`;
 
-  if (isAllowed) {
-    // 3. Reduce Log Spam: Only log allowed requests in Dev or if DEBUG_IP is true
-    if (process.env.NODE_ENV === "development" || process.env.DEBUG_IP === "true") {
-      console.log(`✅ Allowed IP: ${clientIP} ${logCtx}`);
+  // Check against cached networks
+  let allowedOffice = null;
+  for (const office of cachedNetworks) {
+    const combined = [...(office.privateRanges || []), ...(office.publicIPs || [])];
+    const isMatched = combined.some(range => isIPInRange(clientIP, range));
+    if (isMatched) {
+      allowedOffice = office.officeName;
+      break;
+    }
+  }
+
+  // Fallback for loopback if not explicitly in DB
+  if (!allowedOffice && ["127.0.0.1", "::1", "localhost"].includes(clientIP)) {
+    allowedOffice = "Localhost";
+  }
+
+  if (allowedOffice) {
+    if (process.env.DEBUG_IP === "true" || process.env.NODE_ENV === "development") {
+      console.log(`✅ Allowed IP: ${clientIP} | Office: ${allowedOffice} ${logCtx}`);
     }
     return next();
   }
 
-  // Always log blocked requests
   console.error(`🚫 Blocked IP: ${clientIP} ${logCtx}`);
   
   return res.status(403).json({
@@ -96,4 +160,4 @@ const ipFilter = (req, res, next) => {
 };
 
 module.exports = ipFilter;
-module.exports.helpers = { normalizeIP, isIPInRange };
+module.exports.refreshCache = refreshCache;
