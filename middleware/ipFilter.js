@@ -60,8 +60,9 @@ if (isEnabled) {
 const ipFilter = (req, res, next) => {
   if (process.env.ENABLE_IP_FILTER !== "true") return next();
 
-  // 1. Production Healthcheck Bypass
-  const healthPaths = ["/health", "/api/health", "/api/public/health"];
+  // 1. Production Healthcheck & Logs Bypass
+  // /api/logs is bypassed so frontend can report errors even when blocked
+  const healthPaths = ["/health", "/api/health", "/api/public/health", "/api/logs"];
   if (healthPaths.some(hp => req.path === hp || req.originalUrl === hp)) {
     return next();
   }
