@@ -1,4 +1,18 @@
 const Notification = require("../models/Notification");
+const webpush = require("web-push");
+const NotificationSubscription = require("../models/NotificationSubscription");
+
+// Configure web-push with VAPID keys
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || "mailto:crm@traincapetech.in",
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+  console.log("✅ Web Push configured with VAPID keys");
+} else {
+  console.warn("⚠️ Web Push not configured: Missing VAPID keys in .env");
+}
 
 let io;
 
@@ -56,6 +70,13 @@ const createNotification = async ({ recipient, type, ticketId, questionnaireId, 
       // Also emit a general update to refresh unread count
       io.to(`user-${recipientId}`).emit("notification_count_update");
     }
+
+    // 🌐 Send Web Push notification
+    await sendWebPush(recipient, {
+      title: type.replace("_", " ").toUpperCase(),
+      body: message,
+      data: { url: ticketId ? `/tickets?id=${ticketId}` : "/notifications" }
+    });
 
     return notification;
   } catch (error) {
@@ -223,6 +244,45 @@ const sendCallAlert = (recipients, callData) => {
   }
 };
 
+/**
+ * Send Web Push notification to all of a user's subscriptions
+ * @param {String} userId 
+ * @param {Object} payload - { title, body, icon, data }
+ */
+const sendWebPush = async (userId, payload) => {
+  try {
+    const subscriptions = await NotificationSubscription.find({ user: userId });
+    
+    if (!subscriptions.length) return;
+
+    const pushPayload = JSON.stringify({
+      title: payload.title || "New Notification",
+      body: payload.body || "You have a new message",
+      icon: payload.icon || "/TT.png", // Ensure this exists in public folder
+      badge: "/badge.png",
+      data: payload.data || {},
+    });
+
+    const sendPromises = subscriptions.map(async (sub) => {
+      try {
+        await webpush.sendNotification(sub.subscription, pushPayload);
+      } catch (error) {
+        // If subscription is expired or invalid, remove it
+        if (error.statusCode === 404 || error.statusCode === 410) {
+          console.log(`🗑️ Removing expired push subscription for user ${userId}`);
+          await NotificationSubscription.findByIdAndDelete(sub._id);
+        } else {
+          console.error("❌ Error sending push notification:", error);
+        }
+      }
+    });
+
+    await Promise.all(sendPromises);
+  } catch (error) {
+    console.error("❌ Error in sendWebPush:", error);
+  }
+};
+
 module.exports = {
   init,
   createNotification,
@@ -233,4 +293,5 @@ module.exports = {
   notifyRoles,
   notifyAllActiveUsers,
   sendCallAlert,
+  sendWebPush,
 };

@@ -1,4 +1,5 @@
 const Notification = require("../models/Notification");
+const NotificationSubscription = require("../models/NotificationSubscription");
 
 // 1. Get all notifications for a user (paginated)
 exports.getNotifications = async (req, res) => {
@@ -138,6 +139,44 @@ exports.deleteNotification = async (req, res) => {
     });
   } catch (error) {
     console.error("Error deleting notification:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// 5. Subscribe to Web Push
+exports.subscribe = async (req, res) => {
+  try {
+    const { subscription, deviceType } = req.body;
+
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid subscription object",
+      });
+    }
+
+    const NotificationSubscription = require("../models/NotificationSubscription");
+
+    // Upsert subscription
+    await NotificationSubscription.findOneAndUpdate(
+      { "subscription.endpoint": subscription.endpoint },
+      {
+        user: req.user._id,
+        subscription,
+        deviceType: deviceType || "browser",
+      },
+      { upsert: true, new: true }
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Successfully subscribed to push notifications",
+    });
+  } catch (error) {
+    console.error("Error subscribing to push notifications:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
