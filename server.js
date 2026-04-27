@@ -114,8 +114,11 @@ const meetingRoutes = require("./routes/meetings");
 const app = express();
 const server = http.createServer(app);
 
-// Trust proxy headers (Render/NGINX) for correct client IP in rate limiting
-app.set("trust proxy", 1);
+// Trust proxy headers (Render/NGINX/Cloudflare)
+const trustProxy = process.env.TRUST_PROXY === "true" 
+  ? true 
+  : Number(process.env.TRUST_PROXY || 1);
+app.set("trust proxy", trustProxy);
 
 // Make app available to other modules
 module.exports.app = app;
@@ -454,9 +457,7 @@ app.use("/api/auth/verify-email", authLimiter);
 app.use("/api/auth/verify-2fa", authLimiter);
 app.use("/api/auth/enable-2fa", authLimiter);
 
-// IP Filter - Restrict access to office network only
-// Enable via ENABLE_IP_FILTER=true and configure ALLOWED_IP_RANGES in .env
-app.use(ipFilter);
+// IP Filter already applied above
 
 // API Documentation (Swagger) - Only in development or if enabled
 if (

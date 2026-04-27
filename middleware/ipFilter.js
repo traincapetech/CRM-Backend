@@ -1,179 +1,98 @@
 /**
- * IP Filter Middleware
- *
- * Restricts access to the CRM based on IP addresses or IP ranges.
- * Supports:
- * - Single IP addresses
- * - IP ranges (CIDR notation, e.g., 192.168.1.0/24)
- * - Multiple networks
- * - Development mode bypass
- * - Proxy/load balancer IP detection
+ * Production-Grade IP Filter Middleware
  */
 
-// Convert IP to number for range checking
+const normalizeIP = (ip) => {
+  if (!ip) return "";
+  if (ip.startsWith("::ffff:")) return ip.split(":").pop();
+  if (ip === "::1") return "127.0.0.1";
+  return ip;
+};
+
 const ipToNumber = (ip) => {
-  return (
-    ip
-      .split(".")
-      .reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0
-  );
+  const octets = ip.split(".");
+  if (octets.length !== 4) return 0;
+  return (octets.reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0);
 };
 
-// Check if IP is in CIDR range
-const isIPInRange = (ip, cidr) => {
-  if (!cidr.includes("/")) {
-    // Single IP address
-    return ip === cidr;
+const isIPInRange = (ip, network) => {
+  const normalizedIP = normalizeIP(ip);
+  const normalizedNetwork = network.trim();
+
+  const loopbacks = ["127.0.0.1", "::1", "localhost"];
+  if (loopbacks.includes(normalizedNetwork)) {
+    return loopbacks.includes(normalizedIP) || normalizedIP === "127.0.0.1";
   }
 
-  const [network, prefixLength] = cidr.split("/");
+  if (!normalizedNetwork.includes("/")) return normalizedIP === normalizedNetwork;
+
+  const [rangeIP, prefixLength] = normalizedNetwork.split("/");
   const prefix = parseInt(prefixLength, 10);
-  const mask = ~(2 ** (32 - prefix) - 1);
-  const networkNum = ipToNumber(network);
-  const ipNum = ipToNumber(ip);
+  
+  if (!normalizedIP.includes(".") || !rangeIP.includes(".")) return normalizedIP === rangeIP;
 
-  return (ipNum & mask) === (networkNum & mask);
+  const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
+  return (ipToNumber(normalizedIP) & mask) === (ipToNumber(rangeIP) & mask);
 };
 
-// Get real client IP (handles proxies, load balancers, etc.)
-const getClientIP = (req) => {
-  // Check various headers for the real IP
-  const forwarded = req.headers["x-forwarded-for"];
-  const realIP = req.headers["x-real-ip"];
-  const cfConnectingIP = req.headers["cf-connecting-ip"]; // Cloudflare
-
-  // X-Forwarded-For can contain multiple IPs (client, proxy1, proxy2)
-  // The first one is usually the original client IP
-  if (forwarded) {
-    const ips = forwarded.split(",").map((ip) => ip.trim());
-    return ips[0];
-  }
-
-  if (realIP) {
-    return realIP;
-  }
-
-  if (cfConnectingIP) {
-    return cfConnectingIP;
-  }
-
-  // Fallback to socket address
-  return req.socket.remoteAddress || req.connection.remoteAddress || req.ip;
-};
-
-// Get allowed IPs/ranges from environment or use defaults
 const getAllowedNetworks = () => {
-  const networks = [];
-
-  // Check environment variable for office network ranges (private IPs)
-  if (process.env.ALLOWED_IP_RANGES) {
-    networks.push(
-      ...process.env.ALLOWED_IP_RANGES.split(",").map((ip) => ip.trim()),
-    );
-  }
-
-  // Check environment variable for public IPs (for cloud deployments)
-  // This allows specific public IPs that your office uses when accessing internet
-  if (process.env.ALLOWED_PUBLIC_IPS) {
-    networks.push(
-      ...process.env.ALLOWED_PUBLIC_IPS.split(",").map((ip) => ip.trim()),
-    );
-  }
-
-  return networks;
+  const ranges = process.env.ALLOWED_IP_RANGES ? process.env.ALLOWED_IP_RANGES.split(",") : [];
+  const publics = process.env.ALLOWED_PUBLIC_IPS ? process.env.ALLOWED_PUBLIC_IPS.split(",") : [];
+  const all = ["127.0.0.1", "::1", "localhost", ...ranges, ...publics].map(i => i.trim()).filter(Boolean);
+  return all;
 };
 
-// Check if IP filtering is enabled
-const isIPFilterEnabled = () => {
-  return (
-    process.env.ENABLE_IP_FILTER === "true" ||
-    process.env.ENABLE_IP_FILTER === "1"
-  );
-};
+// Startup Diagnostic & Validation
+const isEnabled = process.env.ENABLE_IP_FILTER === "true";
+if (isEnabled) {
+  const networks = getAllowedNetworks();
+  console.log("--------------------------------------------------");
+  console.log("🛡️  IP Filter: ENABLED");
+  
+  if (networks.length <= 3) { // Only localhost/loopback
+    console.warn("⚠️  WARNING: IP Filter is enabled but no external networks are configured in ALLOWED_IP_RANGES or ALLOWED_PUBLIC_IPS.");
+  }
+  
+  console.log(`📡 Whitelisted Networks: ${networks.join(", ")}`);
+  console.log("--------------------------------------------------");
+}
 
-// IP Filter Middleware
 const ipFilter = (req, res, next) => {
-  // Skip IP filtering in development mode unless explicitly enabled
-  if (
-    process.env.NODE_ENV === "development" &&
-    process.env.ENABLE_IP_FILTER !== "true"
-  ) {
+  if (process.env.ENABLE_IP_FILTER !== "true") return next();
+
+  // 1. Production Healthcheck Bypass
+  const healthPaths = ["/health", "/api/health", "/api/public/health"];
+  if (healthPaths.some(hp => req.path === hp || req.originalUrl === hp)) {
     return next();
   }
 
-  // Check if IP filtering is enabled
-  if (!isIPFilterEnabled()) {
+  // 2. Webhook Bypass (Keep existing biometric logic)
+  if (req.originalUrl.includes("/api/biometric/webhook") || req.path.includes("/api/biometric/webhook")) {
     return next();
   }
 
-  // Skip IP filtering for biometric webhook (needs to be public for vendor)
-  if (
-    req.originalUrl.includes("/api/biometric/webhook") ||
-    req.path.includes("/api/biometric/webhook")
-  ) {
-    console.log("✅ IP Filter: Skipping check for biometric webhook");
-    return next();
-  }
-
-  // Get allowed networks
+  const clientIP = normalizeIP(req.ip);
   const allowedNetworks = getAllowedNetworks();
-
-  // If no networks configured, allow all (safety fallback)
-  if (allowedNetworks.length === 0) {
-    console.warn(
-      "⚠️  IP Filter enabled but no allowed networks configured. Allowing all requests.",
-    );
-    return next();
-  }
-
-  // Get client IP
-  const clientIP = getClientIP(req);
-
-  // Allow localhost/127.0.0.1 in development
-  if (
-    process.env.NODE_ENV === "development" &&
-    (clientIP === "127.0.0.1" || clientIP === "::1" || clientIP === "localhost")
-  ) {
-    return next();
-  }
-
-  // Check if IP matches any allowed network
-  const isAllowed = allowedNetworks.some((network) => {
-    try {
-      // For single IP addresses (no / in it), do exact match
-      if (!network.includes("/")) {
-        return clientIP === network;
-      }
-      // For CIDR ranges, use the range check
-      return isIPInRange(clientIP, network);
-    } catch (error) {
-      console.error(`Error checking IP range ${network}:`, error);
-      return false;
-    }
-  });
+  const isAllowed = allowedNetworks.some((network) => isIPInRange(clientIP, network));
+  const logCtx = `| Path: ${req.originalUrl || req.path} | Method: ${req.method}`;
 
   if (isAllowed) {
-    console.log(`✅ Allowed access from IP: ${clientIP}`);
+    // 3. Reduce Log Spam: Only log allowed requests in Dev or if DEBUG_IP is true
+    if (process.env.NODE_ENV === "development" || process.env.DEBUG_IP === "true") {
+      console.log(`✅ Allowed IP: ${clientIP} ${logCtx}`);
+    }
     return next();
   }
 
-  // Log blocked attempt with more details
-  const privateRanges = process.env.ALLOWED_IP_RANGES || "None";
-  const publicIPs = process.env.ALLOWED_PUBLIC_IPS || "None";
-  console.warn(`🚫 Blocked access attempt from IP: ${clientIP}`);
-  console.warn(`Allowed private networks: ${privateRanges}`);
-  console.warn(`Allowed public IPs: ${publicIPs}`);
-  console.warn(`All allowed networks/IPs: ${allowedNetworks.join(", ")}`);
-
-  // Return 403 Forbidden
+  // Always log blocked requests
+  console.error(`🚫 Blocked IP: ${clientIP} ${logCtx}`);
+  
   return res.status(403).json({
     success: false,
-    message:
-      "Access denied. This application is only accessible from the office network.",
     error: "IP_NOT_ALLOWED",
-    clientIP: clientIP,
-    hint: "Please connect to the office WiFi network to access this application.",
+    message: "Access denied. Office network only."
   });
 };
 
 module.exports = ipFilter;
+module.exports.helpers = { normalizeIP, isIPInRange };
