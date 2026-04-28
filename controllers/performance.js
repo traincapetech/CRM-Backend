@@ -705,39 +705,107 @@ const getTeamPerformance = async (req, res) => {
   }
 };
 
-// @desc    Trigger manual performance calculation for today
-// @route   POST /api/performance/employee/:id/calculate
-// @access  Private
-const calculateEmployeePerformanceToday = async (req, res) => {
+// @desc    Get all employees assigned to a specific KPI (grouped by employee)
+// @route   GET /api/performance/kpis/:id/assignments
+// @access  Private (Admin, HR, Manager)
+const getKPIAssignments = async (req, res) => {
   try {
-    const employeeId = req.params.id;
-    const PerformanceCalculationService = require("../services/performanceCalculation");
+    const kpiId = req.params.id;
 
-    // Calculate for today
-    const today = new Date();
-    const result =
-      await PerformanceCalculationService.calculateEmployeePerformance(
-        employeeId,
-        today,
-      );
+    // Find all targets for this KPI and use lean() for faster, cleaner object handling
+    const rawAssignments = await EmployeeTarget.find({ kpiId })
+      .populate("employeeId", "fullName email role active")
+      .sort({ "period.startDate": -1 })
+      .lean();
 
-    if (!result) {
-      return res.status(404).json({
-        success: false,
-        message: "Calculation failed or no KPIs found for employee",
-      });
-    }
+    // Group by employee to avoid duplicates in management view
+    const groupedMap = new Map();
+    
+    rawAssignments.forEach(item => {
+      // If populate failed or user was deleted, employeeId might be null or just a string ID
+      const employee = item.employeeId;
+      if (!employee || typeof employee === "string") return; 
+      
+      const userId = employee._id.toString();
+      if (!groupedMap.has(userId)) {
+        groupedMap.set(userId, {
+          employee: employee,
+          latestPeriod: item.period?.periodKey,
+          totalAssignments: 0,
+          assignmentIds: [],
+          allPeriods: []
+        });
+      }
+      
+      const group = groupedMap.get(userId);
+      group.totalAssignments += 1;
+      group.assignmentIds.push(item._id);
+      group.allPeriods.push(item.period?.periodKey);
+    });
+
+    const data = Array.from(groupedMap.values());
 
     res.status(200).json({
       success: true,
-      message: "Performance calculated successfully",
-      data: result,
+      count: data.length,
+      data: data,
     });
   } catch (error) {
-    console.error("Error calculating performance:", error);
+    console.error("Error fetching KPI assignments:", error);
     res.status(500).json({
       success: false,
-      message: "Error calculating performance",
+      message: "Error fetching KPI assignments",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Remove a KPI assignment from an employee
+// @route   DELETE /api/performance/kpis/:kpiId/assignments/:targetId
+// @access  Private (Admin, HR)
+const unassignKPIFromEmployee = async (req, res) => {
+  try {
+    const { kpiId, targetId } = req.params;
+    const { employeeId: bodyEmployeeId, deleteAll } = req.query; // Optional query params for bulk removal
+
+    if (deleteAll === "true" && bodyEmployeeId) {
+      // Remove all assignments for this employee from this KPI
+      await EmployeeTarget.deleteMany({ kpiId, employeeId: bodyEmployeeId });
+      
+      // Trigger recalculation
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+      await PerformanceCalculationService.calculateEmployeePerformance(bodyEmployeeId, new Date());
+
+      return res.status(200).json({
+        success: true,
+        message: "All assignments removed for employee",
+      });
+    }
+
+    const target = await EmployeeTarget.findOne({ _id: targetId, kpiId });
+    if (!target) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found",
+      });
+    }
+
+    const employeeId = target.employeeId;
+    await EmployeeTarget.findByIdAndDelete(targetId);
+
+    // Trigger recalculation
+    const PerformanceCalculationService = require("../services/performanceCalculation");
+    await PerformanceCalculationService.calculateEmployeePerformance(employeeId, new Date());
+
+    res.status(200).json({
+      success: true,
+      message: "KPI assignment removed and performance updated",
+    });
+  } catch (error) {
+    console.error("Error removing KPI assignment:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error removing KPI assignment",
       error: error.message,
     });
   }
@@ -753,5 +821,6 @@ module.exports = {
   getEmployeePerformance,
   getEmployeeDailyPerformance,
   getTeamPerformance,
-  calculateEmployeePerformanceToday,
+  getKPIAssignments,
+  unassignKPIFromEmployee,
 };

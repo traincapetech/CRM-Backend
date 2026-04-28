@@ -193,10 +193,10 @@ class KPIService {
     const isCurrentMonth = (now.getMonth() + 1 === month && now.getFullYear() === year);
     const calculationEnd = isCurrentMonth ? now : endOfMonth;
 
-    const targetDoc = await PerformanceCalculationService.getTargetForPeriod(employeeId, year, month);
+    const targets = await PerformanceCalculationService.getTargetsForPeriod(employeeId, year, month);
     const results = [];
 
-    if (!targetDoc) {
+    if (!targets || targets.length === 0) {
       if (isCurrentMonth) return [];
 
       // Fallback for past months: aggregate from DailyPerformanceRecord
@@ -211,8 +211,7 @@ class KPIService {
       let totalTarget = 0;
       let totalScore = 0;
       let kpiName = role === "Sales Person" ? "Monthly Sales Count" : "Leads Generated (Month)";
-      let score = 0;
-
+      
       dailyRecords.forEach(r => {
         const kpi = r.kpiScores.find(s => 
           role === "Sales Person" ? s.kpiName.match(/Sales/i) : s.kpiName.match(/Leads/i)
@@ -225,11 +224,9 @@ class KPIService {
         }
       });
 
-      if (role === "Sales Person") {
-        score = PerformanceCalculationService.calculateScore(totalActual, totalTarget);
-      } else {
-        score = totalScore / dailyRecords.length;
-      }
+      const score = role === "Sales Person" 
+        ? PerformanceCalculationService.calculateScore(totalActual, totalTarget)
+        : totalScore / dailyRecords.length;
 
       results.push({
         kpiId: { kpiName },
@@ -244,99 +241,124 @@ class KPIService {
       return results;
     }
 
-    if (role === "Sales Person") {
-      const salesTarget = targetDoc.monthlySalesTarget || targetDoc.targets?.target || 0;
-      const salesResult = await PerformanceCalculationService.calculateSalesInRange(employeeId, startOfMonth, calculationEnd);
-      
-      let score = 0;
-      let expectedTillToday = 0;
-
-      if (isCurrentMonth) {
-        // Current Month: (Actual / Expected Till Today) * 100
-        const totalWorkingDays = await PerformanceCalculationService.getWorkingDaysInMonth(year, month, "Sales Person");
-        const dailyExpected = totalWorkingDays > 0 ? salesTarget / totalWorkingDays : 0;
+    // Process each target assigned to the employee
+    for (const targetDoc of targets) {
+      if (role === "Sales Person") {
+        const salesTarget = targetDoc.monthlySalesTarget || targetDoc.targets?.target || 0;
+        const salesResult = await PerformanceCalculationService.calculateSalesInRange(employeeId, startOfMonth, calculationEnd);
         
-        const holidays = await PerformanceCalculationService.fetchHolidays(startOfMonth, calculationEnd);
-        const workingDaysPassed = PerformanceCalculationService.getWorkingDays(
-          startOfMonth,
-          calculationEnd,
-          holidays.fullDays,
-          holidays.halfDays,
-          "Sales Person"
-        );
-        expectedTillToday = dailyExpected * workingDaysPassed;
-        score = PerformanceCalculationService.calculateScore(salesResult.count, expectedTillToday);
-      } else {
-        // Past Month: (Actual / Monthly Target) * 100
-        score = PerformanceCalculationService.calculateScore(salesResult.count, salesTarget);
-      }
+        let score = 0;
+        let expectedTillToday = 0;
 
-      results.push({
-        kpiId: { kpiName: "Monthly Sales Count" },
-        kpiName: "Monthly Sales Count",
-        actual: salesResult.count,
-        target: salesTarget,
-        baseTarget: salesTarget,
-        expectedTarget: isCurrentMonth ? expectedTillToday : undefined,
-        score: PerformanceCalculationService.calculateScore(salesResult.count, salesTarget),
-        status: PerformanceCalculationService.getRatingTier(PerformanceCalculationService.calculateScore(salesResult.count, salesTarget))
-      });
-    } else if (role === "Lead Person") {
-      const dailyTarget = targetDoc.leadDailyTarget || targetDoc.targets?.target || 0;
-      
-      if (isCurrentMonth) {
-        // For Leads in CURRENT month, show Latest Daily data as per user request
-        const latestRecord = await DailyPerformanceRecord.findOne({
-          employeeId,
-          date: { $lte: calculationEnd }
-        }).sort({ date: -1 });
-
-        if (latestRecord && latestRecord.kpiScores && latestRecord.kpiScores.length > 0) {
-          const leadScore = latestRecord.kpiScores.find(s => s.kpiName.match(/Leads/i)) || latestRecord.kpiScores[0];
-          results.push({
-            kpiId: { kpiName: "Daily Leads Generated" },
-            actual: leadScore.actual,
-            baseTarget: leadScore.target,
-            score: leadScore.score,
-            status: leadScore.status
-          });
+        if (isCurrentMonth) {
+          // Current Month: Pacing calculation (Actual / Expected Till Today)
+          const totalWorkingDays = await PerformanceCalculationService.getWorkingDaysInMonth(year, month, "Sales Person");
+          const dailyExpected = totalWorkingDays > 0 ? salesTarget / totalWorkingDays : 0;
+          
+          const holidays = await PerformanceCalculationService.fetchHolidays(startOfMonth, calculationEnd);
+          const workingDaysPassed = PerformanceCalculationService.getWorkingDays(
+            startOfMonth, 
+            calculationEnd, 
+            holidays.fullDays, 
+            holidays.halfDays, 
+            "Sales Person"
+          );
+          expectedTillToday = dailyExpected * workingDaysPassed;
+          score = PerformanceCalculationService.calculateScore(salesResult.count, expectedTillToday);
         } else {
-          results.push({
-            kpiId: { kpiName: "Daily Leads Generated" },
-            actual: 0,
-            baseTarget: dailyTarget,
-            score: 0,
-            status: "failing"
-          });
+          // Past Month: (Actual / Monthly Target)
+          score = PerformanceCalculationService.calculateScore(salesResult.count, salesTarget);
         }
-      } else {
-        // For Leads in PAST months, show Monthly average/total
-        const dailyRecords = await DailyPerformanceRecord.find({
-          employeeId,
-          date: { $gte: startOfMonth, $lte: calculationEnd }
-        });
-
-        const totalScore = dailyRecords.reduce((sum, r) => sum + r.overallScore, 0);
-        const expectedWorkingDays = await PerformanceCalculationService.getWorkingDays(
-          startOfMonth, 
-          calculationEnd, 
-          (await PerformanceCalculationService.fetchHolidays(startOfMonth, calculationEnd)).fullDays,
-          (await PerformanceCalculationService.fetchHolidays(startOfMonth, calculationEnd)).halfDays,
-          "Lead Person"
-        );
-
-        const avgScore = expectedWorkingDays > 0 ? totalScore / expectedWorkingDays : 0;
-        const totalLeads = await PerformanceCalculationService.calculateLeads(employeeId, startOfMonth, "custom", calculationEnd);
 
         results.push({
-          kpiId: { kpiName: "Leads Generated (Month)" },
-          kpiName: "Leads Generated (Month)",
-          actual: totalLeads,
-          target: dailyTarget * expectedWorkingDays,
-          baseTarget: dailyTarget * expectedWorkingDays,
-          score: avgScore,
-          status: PerformanceCalculationService.getRatingTier(avgScore)
+          kpiId: targetDoc.kpiId,
+          kpiName: targetDoc.kpiId?.kpiName || "Sales Target",
+          actual: salesResult.count,
+          target: isCurrentMonth ? expectedTillToday : salesTarget,
+          baseTarget: salesTarget,
+          score: score,
+          status: PerformanceCalculationService.getRatingTier(score)
         });
+      } else if (role === "Lead Person") {
+        const dailyTarget = targetDoc.leadDailyTarget || targetDoc.targets?.target || 0;
+        
+        if (isCurrentMonth) {
+          // For Leads in CURRENT month, show Latest Daily data
+          const latestRecord = await DailyPerformanceRecord.findOne({
+            employeeId,
+            date: { $lte: calculationEnd }
+          }).sort({ date: -1 });
+
+          if (latestRecord && latestRecord.kpiScores) {
+            const kpiIdStr = targetDoc.kpiId?._id?.toString() || targetDoc.kpiId?.toString();
+            const kpiScore = latestRecord.kpiScores.find(s => 
+              (s.kpiId && s.kpiId.toString() === kpiIdStr) || 
+              (s.kpiName === targetDoc.kpiId?.kpiName)
+            );
+
+            if (kpiScore) {
+              results.push({
+                kpiId: targetDoc.kpiId,
+                kpiName: targetDoc.kpiId?.kpiName || "Lead Generation",
+                actual: kpiScore.actual,
+                target: kpiScore.target,
+                baseTarget: dailyTarget,
+                score: kpiScore.score,
+                status: kpiScore.status
+              });
+            } else {
+              results.push({
+                kpiId: targetDoc.kpiId,
+                kpiName: targetDoc.kpiId?.kpiName || "Lead Generation",
+                actual: 0,
+                target: dailyTarget,
+                baseTarget: dailyTarget,
+                score: 0,
+                status: "failing"
+              });
+            }
+          } else {
+            results.push({
+              kpiId: targetDoc.kpiId,
+              kpiName: targetDoc.kpiId?.kpiName || "Lead Generation",
+              actual: 0,
+              target: dailyTarget,
+              baseTarget: dailyTarget,
+              score: 0,
+              status: "failing"
+            });
+          }
+        } else {
+          // For Leads in PAST months, show Monthly average
+          const dailyRecords = await DailyPerformanceRecord.find({
+            employeeId,
+            date: { $gte: startOfMonth, $lte: endOfMonth }
+          });
+
+          const kpiIdStr = targetDoc.kpiId?._id?.toString() || targetDoc.kpiId?.toString();
+          const relevantScores = dailyRecords.flatMap(r => 
+            r.kpiScores.filter(s => 
+              (s.kpiId && s.kpiId.toString() === kpiIdStr) || 
+              (s.kpiName === targetDoc.kpiId?.kpiName)
+            )
+          );
+
+          const totalScore = relevantScores.reduce((sum, s) => sum + s.score, 0);
+          const totalActual = relevantScores.reduce((sum, s) => sum + s.actual, 0);
+          
+          const expectedWorkingDays = await PerformanceCalculationService.getWorkingDaysInMonth(year, month, "Lead Person");
+          const avgScore = expectedWorkingDays > 0 ? totalScore / expectedWorkingDays : 0;
+
+          results.push({
+            kpiId: targetDoc.kpiId,
+            kpiName: targetDoc.kpiId?.kpiName || "Lead Generation (Month)",
+            actual: totalActual,
+            target: dailyTarget * expectedWorkingDays,
+            baseTarget: dailyTarget,
+            score: avgScore,
+            status: PerformanceCalculationService.getRatingTier(avgScore)
+          });
+        }
       }
     }
 

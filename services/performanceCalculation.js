@@ -274,14 +274,14 @@ class PerformanceCalculationService {
   }
 
   /**
-   * Fetch EmployeeTarget for a specific month
+   * Fetch all active EmployeeTargets for a specific month
    */
-  static async getTargetForPeriod(employeeId, year, month) {
+  static async getTargetsForPeriod(employeeId, year, month) {
     const periodKey = `${year}-${month.toString().padStart(2, "0")}`;
-    return await EmployeeTarget.findOne({
+    return await EmployeeTarget.find({
       employeeId,
       "period.periodKey": periodKey,
-    });
+    }).populate("kpiId");
   }
 
   /**
@@ -421,37 +421,68 @@ class PerformanceCalculationService {
       });
       if (attendanceRecord && attendanceRecord.status === "ABSENT") return;
 
-      // Get target for the month
-      const target = await this.getTargetForPeriod(
+      // Get ALL targets for the month
+      const targets = await this.getTargetsForPeriod(
         employeeId,
         date.getFullYear(),
         date.getMonth() + 1,
       );
 
-      let performanceResult;
-      if (employee.role === "Lead Person") {
-        performanceResult = await this.calculateLeadPersonPerformance(
-          employee,
-          target,
-          date,
+      if (!targets || targets.length === 0) {
+        console.log(`No KPI assignments found for ${employee.fullName} for this period. Resetting summary.`);
+        // Reset performance summary if no KPIs are assigned to avoid stale data impacting averages
+        await PerformanceSummary.findOneAndUpdate(
+          { employeeId },
+          { 
+            currentRating: 0,
+            ratingTier: "poor",
+            lastCalculated: new Date(),
+            history: [] 
+          },
+          { upsert: false }
         );
-      } else if (employee.role === "Sales Person") {
-        performanceResult = await this.calculateSalesPersonPerformance(
-          employee,
-          target,
-          date,
-        );
-      } else {
-        // Fallback for other roles or legacy logic if needed
-        console.log(`Skipping performance for role: ${employee.role}`);
         return;
       }
 
-      const { kpiScores, overallScore } = performanceResult;
+      const allKpiScores = [];
+      let totalWeightedScore = 0;
+      let totalWeight = 0;
+
+      for (const target of targets) {
+        let performanceResult;
+        if (employee.role === "Lead Person") {
+          performanceResult = await this.calculateLeadPersonPerformance(
+            employee,
+            target,
+            date,
+          );
+        } else if (employee.role === "Sales Person") {
+          performanceResult = await this.calculateSalesPersonPerformance(
+            employee,
+            target,
+            date,
+          );
+        } else {
+          continue;
+        }
+
+        if (performanceResult && performanceResult.kpiScores) {
+          const weight = target.kpiId?.weight || 100;
+          const kpiScore = performanceResult.overallScore;
+
+          allKpiScores.push(...performanceResult.kpiScores);
+          totalWeightedScore += kpiScore * weight;
+          totalWeight += weight;
+        }
+      }
+
+      if (allKpiScores.length === 0) return;
+
+      const overallScore = totalWeight > 0 ? totalWeightedScore / totalWeight : 0;
       const rating = this.getRatingTier(overallScore);
       const stars = this.getStars(overallScore);
 
-      // Save/Update Daily record (Using $set to ensure entire array is replaced, not appended)
+      // Save/Update Daily record
       await DailyPerformanceRecord.findOneAndUpdate(
         { employeeId, dateKey },
         {
@@ -459,7 +490,7 @@ class PerformanceCalculationService {
             employeeId,
             date,
             dateKey,
-            kpiScores,
+            kpiScores: allKpiScores,
             overallScore,
             rating,
             stars,
@@ -471,7 +502,7 @@ class PerformanceCalculationService {
       );
 
       console.log(
-        `✅ Calculated daily performance for ${employee.fullName}: ${overallScore.toFixed(1)}%`,
+        `✅ Calculated multi-KPI performance for ${employee.fullName}: ${overallScore.toFixed(1)}% (${allKpiScores.length} KPIs)`,
       );
 
       // Update summary (rolling stats)
@@ -537,7 +568,8 @@ class PerformanceCalculationService {
       ]);
 
       const fetchAggregatePerformance = async (startDate, endDate, expectedDays) => {
-        const target = await this.getTargetForPeriod(employeeId, endDate.getFullYear(), endDate.getMonth() + 1);
+        const targets = await this.getTargetsForPeriod(employeeId, endDate.getFullYear(), endDate.getMonth() + 1);
+        const target = targets.length > 0 ? targets[0] : null; // Fallback to first target for aggregate stats
         let dailyTarget = 0;
 
         if (employee.role === "Sales Person") {
@@ -567,7 +599,8 @@ class PerformanceCalculationService {
 
         if (employee.role === "Sales Person") {
           const sales = await this.calculateSales(employeeId, startOfMonth, "custom", endOfPeriod);
-          const target = await this.getTargetForPeriod(employeeId, y, m);
+          const targets = await this.getTargetsForPeriod(employeeId, y, m);
+          const target = targets.length > 0 ? targets[0] : null;
           const monthlyTarget = target?.monthlySalesTarget || target?.targets?.target || 0;
           
           const totalWorkingDays = await this.getWorkingDaysInMonth(y, m, "Sales Person");

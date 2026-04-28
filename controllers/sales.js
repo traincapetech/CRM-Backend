@@ -295,11 +295,7 @@ exports.createSale = async (req, res) => {
       delete req.body.leadPerson;
     }
 
-    // Handle reference sales for Sales Person role
-    if (req.user.role === "Sales Person" && req.body.isReference) {
-      // For reference sales, set leadPerson to null to show "Reference"
-      req.body.leadPerson = null;
-    }
+    // Removed: Overwriting leadPerson for reference sales prevented them from appearing on lead person's sheet
 
     // Create sale
     const sale = await Sale.create(req.body);

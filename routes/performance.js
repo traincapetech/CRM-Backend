@@ -13,6 +13,8 @@ const {
   getEmployeeDailyPerformance,
   getTeamPerformance,
   calculateEmployeePerformanceToday,
+  getKPIAssignments,
+  unassignKPIFromEmployee,
 } = require("../controllers/performance");
 
 // KPI Template Management
@@ -35,14 +37,20 @@ router
   .route("/kpis/:id/assign")
   .post(protect, authorize("Admin", "HR", "Manager"), assignKPIToEmployees);
 
+router
+  .route("/kpis/:id/assignments")
+  .get(protect, authorize("Admin", "HR", "Manager"), getKPIAssignments);
+
+router
+  .route("/kpis/:kpiId/assignments/:targetId")
+  .delete(protect, authorize("Admin", "HR"), unassignKPIFromEmployee);
+
 // Employee Performance
 router.route("/employee/:id").get(protect, getEmployeePerformance);
 
-router.route("/employee/:id/daily").get(protect, getEmployeeDailyPerformance);
-
 router
-  .route("/employee/:id/calculate")
-  .post(protect, calculateEmployeePerformanceToday);
+  .route("/employee/:id/daily")
+  .get(protect, getEmployeeDailyPerformance);
 
 // Team Performance
 router
