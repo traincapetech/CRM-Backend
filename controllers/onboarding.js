@@ -574,20 +574,31 @@ exports.saveDraft = async (req, res) => {
       gender, currentAddress, permanentAddress, dob, emergencyContact,
       qualification, experience, skills,
       panNumber, aadharNumber, bankName, bankAccountNumber, ifscCode, accountHolderName,
-      lastDraftStep,
+      lastDraftStep, collegeName, internshipStartDate, internshipEndDate,
     } = req.body;
 
     // Update allowed candidate fields
+    const parseJSON = (val) => {
+      if (typeof val !== 'string') return val;
+      try { return JSON.parse(val); } catch { return val; }
+    };
+
     if (gender !== undefined) invite.gender = gender;
     if (permanentAddress !== undefined) invite.permanentAddress = permanentAddress;
-    if (emergencyContact !== undefined) invite.emergencyContact = emergencyContact;
+    if (emergencyContact !== undefined) invite.emergencyContact = parseJSON(emergencyContact);
     if (qualification !== undefined) invite.qualification = qualification;
     if (experience !== undefined) invite.experience = experience;
-    if (skills !== undefined) invite.skills = Array.isArray(skills) ? skills : skills.split(",").map(s => s.trim());
+    if (skills !== undefined) {
+      const parsedSkills = parseJSON(skills);
+      invite.skills = Array.isArray(parsedSkills) ? parsedSkills : parsedSkills.split(",").map(s => s.trim());
+    }
     if (bankName !== undefined) invite.bankName = bankName;
     if (ifscCode !== undefined) invite.ifscCode = ifscCode;
     if (accountHolderName !== undefined) invite.accountHolderName = accountHolderName;
     if (lastDraftStep !== undefined) invite.lastDraftStep = lastDraftStep;
+    if (collegeName !== undefined) invite.collegeName = collegeName;
+    if (internshipStartDate) invite.internshipStartDate = internshipStartDate;
+    if (internshipEndDate) invite.internshipEndDate = internshipEndDate;
 
     // PII fields (will be encrypted by pre('save'))
     if (dob) { invite.dob = dob; invite.markModified("dob"); }
@@ -632,11 +643,24 @@ exports.submitForm = async (req, res) => {
 
     // Save draft fields first
     const draftFields = [
-      "gender","permanentAddress","emergencyContact","qualification",
+      "gender","permanentAddress","qualification",
       "experience","skills","bankName","ifscCode","accountHolderName",
+      "collegeName", "internshipStartDate", "internshipEndDate"
     ];
+
+    const parseJSON = (val) => {
+      if (typeof val !== 'string') return val;
+      try { return JSON.parse(val); } catch { return val; }
+    };
+
     draftFields.forEach(f => {
-      if (req.body[f] !== undefined) invite[f] = req.body[f];
+      if (req.body[f] !== undefined) {
+        if (f === "emergencyContact" || f === "skills") {
+          invite[f] = parseJSON(req.body[f]);
+        } else {
+          invite[f] = req.body[f];
+        }
+      }
     });
 
     // PII
