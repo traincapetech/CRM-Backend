@@ -12,6 +12,7 @@ router.get("/managers", protect, authorize(...hrRoles), ctrl.getManagersByDept);
 router.get("/queue/:id", protect, authorize(...hrRoles), ctrl.getCandidateDetail);
 router.put("/:id/status", protect, authorize(...hrRoles), ctrl.updateStatus);
 router.post("/:id/resend-link", protect, authorize(...hrRoles), ctrl.resendLink);
+router.delete("/:id", protect, authorize("Admin", "HR"), ctrl.deleteInvite);
 router.delete("/:id/revoke", protect, authorize("Admin", "HR"), ctrl.revokeToken);
 router.post(
   "/:id/finalize",

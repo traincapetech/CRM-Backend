@@ -115,6 +115,12 @@ const ipFilter = async (req, res, next) => {
   if (bypassPaths.some(hp => req.path === hp || req.originalUrl === hp)) {
     return next();
   }
+  
+  // Public Onboarding Portal Bypass
+  if (req.originalUrl.includes("/api/onboarding/portal") || req.path.includes("/api/onboarding/portal")) {
+    return next();
+  }
+
   if (req.originalUrl.includes("/api/biometric/webhook") || req.path.includes("/api/biometric/webhook")) {
     return next();
   }

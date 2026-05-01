@@ -94,6 +94,7 @@ exports.createInvite = async (req, res) => {
 
     // Send invite email
     const portalUrl = getPortalUrl(token);
+    console.log("🚀 GENERATED PORTAL URL:", portalUrl);
     try {
       await sendOnboardingInviteEmail({
         candidateName: fullName,
@@ -683,6 +684,32 @@ exports.submitForm = async (req, res) => {
     res.json({ success: true, message: "Form submitted successfully! HR will review and contact you soon." });
   } catch (error) {
     console.error("submitForm error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Delete candidate invite permanently
+// @route   DELETE /api/onboarding/:id
+// @access  Private (Admin, HR)
+exports.deleteInvite = async (req, res) => {
+  try {
+    const invite = await CandidateInvite.findById(req.params.id);
+    if (!invite) {
+      return res.status(404).json({ success: false, message: "Invite not found" });
+    }
+
+    // Only allow deletion if not already joined
+    if (invite.onboardingStatus === "JOINED") {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Cannot delete a candidate who has already joined." 
+      });
+    }
+
+    await invite.deleteOne();
+
+    res.json({ success: true, message: "Candidate invite deleted successfully" });
+  } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
