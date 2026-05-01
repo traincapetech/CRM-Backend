@@ -176,37 +176,52 @@ class JourneyService {
   }
 
   /**
-   * Helper to find the correct User ID for a role
+   * Helper to find the correct User ID for a role string from a template step.
+   * Resolves role strings like 'HR', 'IT_ADMIN', 'ADMIN', 'MANAGER', 'SELF'
+   * to actual User document IDs.
    */
   async _resolveAssignee(role, employee) {
-    if (role === "SELF") return employee.userId;
+    // The employee themselves (for self-completion steps like policy ack)
+    if (role === "SELF") return employee.userId || null;
 
-    if (role === "MANAGER") {
-      // Assuming we have manager logic, fallback to HR/Admin if not
-      // For MVP, we don't have direct manager link in Employee schema yet?
-      // Let's use HR ID as a proxy or find an Admin
-      if (employee.hrId) return employee.hrId;
-    }
-
+    // Use the HR person linked to this employee, else any HR user, else Admin
     if (role === "HR") {
       if (employee.hrId) return employee.hrId;
-      // Fallback to any HR
-      const hr = await User.findOne({ role: "HR" });
-      return hr ? hr._id : null;
+      const hr = await User.findOne({ role: "HR", active: true });
+      if (hr) return hr._id;
+      // Fallback to Admin if no HR exists
+      const admin = await User.findOne({ role: "Admin", active: true });
+      return admin?._id || null;
     }
 
+    // Reporting manager — fall back to Admin
+    if (role === "MANAGER") {
+      if (employee.hrId) return employee.hrId; // In this system hrId often acts as manager reference
+      const manager = await User.findOne({ role: "Manager", active: true });
+      if (manager) return manager._id;
+      const admin = await User.findOne({ role: "Admin", active: true });
+      return admin?._id || null;
+    }
+
+    // IT staff — prefer IT Manager, else IT Staff, else Admin
     if (role === "IT_ADMIN") {
-      // Find IT Manager
-      // Since we don't have separate role for IT Manager in AccessRoles yet effectively,
-      // we look for 'Manager' in 'IT' department maybe?
-      // For MVP, send to Admin
-      const admin = await User.findOne({ role: "Admin" });
-      return admin._id;
+      const itManager = await User.findOne({ role: "IT Manager", active: true });
+      if (itManager) return itManager._id;
+      const itStaff = await User.findOne({ role: "IT Staff", active: true });
+      if (itStaff) return itStaff._id;
+      const admin = await User.findOne({ role: "Admin", active: true });
+      return admin?._id || null;
     }
 
-    // Default fallback
-    const admin = await User.findOne({ role: "Admin" });
-    return admin ? admin._id : null;
+    // Admin department tasks (ID card, access badge)
+    if (role === "ADMIN") {
+      const admin = await User.findOne({ role: "Admin", active: true });
+      return admin?._id || null;
+    }
+
+    // Default fallback to any active Admin
+    const admin = await User.findOne({ role: "Admin", active: true });
+    return admin?._id || null;
   }
 }
 

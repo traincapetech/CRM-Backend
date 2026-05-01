@@ -55,6 +55,14 @@ try {
   console.warn("⚠️ Performance cron jobs not initialized:", error.message);
 }
 
+// Initialize Onboarding Cron Jobs
+const OnboardingCronJobs = require("./services/onboardingCronJobs");
+try {
+  OnboardingCronJobs.startAll();
+} catch (error) {
+  console.warn("⚠️ Onboarding cron jobs not initialized:", error.message);
+}
+
 // Use the IP filter middleware
 // app.use(ipFilter);
 
@@ -111,6 +119,7 @@ const kpiBreakdownRoutes = require("./routes/kpiBreakdown");
 const verdaEnquiryRoutes = require("./routes/verdaEnquiry");
 const meetingRoutes = require("./routes/meetings");
 const officeNetworkRoutes = require("./routes/officeNetwork");
+const onboardingRoutes = require("./routes/onboarding");
 
 const app = express();
 const server = http.createServer(app);
@@ -528,6 +537,7 @@ app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarte
 app.use("/api/verda-enquiries", verdaEnquiryRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/office-networks", officeNetworkRoutes);
+app.use("/api/onboarding", onboardingRoutes);
 
 // Image Proxy Route to solve CORS issues for ID Card generation
 app.get("/api/proxy-image", async (req, res) => {

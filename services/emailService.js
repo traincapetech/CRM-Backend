@@ -1,3 +1,4 @@
+const { sendEmail } = require("../config/nodemailer");
 const nodemailer = require("nodemailer");
 
 // Email provider configurations
@@ -510,6 +511,256 @@ const sendSalaryPayoutEmail = async (employee, payroll) => {
   }
 };
 
+// Send Welcome Email with Login Credentials
+const sendWelcomeEmail = async (user, password, personalEmail) => {
+  try {
+    const recipientEmail = personalEmail || user.email;
+    console.log(`DEBUG: Preparing welcome email for ${user.fullName} to be sent to ${recipientEmail}`);
+    
+    if (!recipientEmail) {
+      console.log("❌ Recipient email not available for Welcome email");
+      return { success: false, message: "Recipient email not available" };
+    }
+
+    const emailHtml = `
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <h1 style="color: #2563eb; margin: 0; font-size: 28px;">Welcome to Traincape!</h1>
+          <p style="color: #64748b; font-size: 16px; margin-top: 10px;">We're excited to have you on board.</p>
+        </div>
+        
+        <p style="font-size: 16px; color: #1e293b;">Dear <strong>${user.fullName}</strong>,</p>
+        
+        <p style="font-size: 16px; color: #475569; line-height: 1.6;">Your employee account has been successfully created. Please use your **Official Company Email** to log in to the Traincape CRM.</p>
+        
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 25px; margin: 30px 0; border-radius: 8px;">
+          <h3 style="margin-top: 0; color: #1e293b; font-size: 18px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">Login Credentials</h3>
+          <table style="width: 100%; margin-top: 15px;">
+            <tr>
+              <td style="padding: 8px 0; color: #64748b; width: 35%;"><strong>Official Email:</strong></td>
+              <td style="padding: 8px 0; color: #1e293b; font-family: monospace; font-size: 16px;">${user.email}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #64748b;"><strong>Password:</strong></td>
+              <td style="padding: 8px 0; color: #1e293b; font-family: monospace; font-size: 16px;">${password}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #64748b;"><strong>Portal URL:</strong></td>
+              <td style="padding: 8px 0;"><a href="https://traincapecrm.traincapetech.in/" style="color: #2563eb; text-decoration: none; font-weight: 500;">crm.traincapetech.in</a></td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="text-align: center; margin: 35px 0;">
+          <a href="https://traincapecrm.traincapetech.in/login" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; display: inline-block; transition: background-color 0.3s;">Log In to Your Account</a>
+        </div>
+        
+        <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0;">
+          <p style="margin: 0; color: #92400e; font-size: 14px;"><strong>Security Tip:</strong> Use your official company email for all CRM activities. Please change your password after your first login.</p>
+        </div>
+
+        <p style="font-size: 14px; color: #64748b; line-height: 1.5;">If you have any trouble logging in, please contact the IT support team or your manager.</p>
+        
+        <hr style="margin: 30px 0; border: none; border-top: 1px solid #e2e8f0;">
+        
+        <div style="text-align: center;">
+          <p style="font-size: 12px; color: #94a3b8; margin: 0;">
+            This is an automated message from Traincape Technology Pvt Ltd.<br>
+            Please do not reply to this email.
+          </p>
+        </div>
+      </div>
+    `;
+
+    const subject = `Welcome to the Team! Your Official Account is Ready`;
+    const result = await sendEmail(recipientEmail, subject, "", emailHtml);
+    console.log(`✅ Welcome email send result for ${recipientEmail}:`, result);
+
+    return { success: result };
+  } catch (error) {
+    console.error("❌ Error sending welcome email:", error);
+    return { success: false, error: error.message };
+  }
+};
+
+// ── Onboarding: Invite email ───────────────────────────────────────────────
+const sendOnboardingInviteEmail = async ({
+  candidateName, candidateEmail, portalUrl, expiryHours = 72,
+  joiningDate, invitedByName, isResend = false,
+}) => {
+  try {
+    const dateStr = joiningDate ? new Date(joiningDate).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "To be confirmed";
+    const subject = isResend
+      ? `Action Required: Complete Your Joining Process (New Link)`
+      : `Complete Your Joining Process — Traincape Technology`;
+
+    const html = `
+      <div style="font-family:'Segoe UI',sans-serif;max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
+        <div style="background:linear-gradient(135deg,#1e40af,#7c3aed);padding:40px 32px;text-align:center">
+          <h1 style="color:#fff;margin:0;font-size:26px;font-weight:700">Welcome to Traincape Technology!</h1>
+          <p style="color:rgba(255,255,255,0.85);margin:8px 0 0;font-size:15px">Your joining process is ready to begin</p>
+        </div>
+        <div style="padding:32px">
+          <p style="font-size:16px;color:#1e293b">Dear <strong>${candidateName}</strong>,</p>
+          <p style="color:#475569;line-height:1.7">Congratulations! You've been selected to join <strong>Traincape Technology Pvt Ltd</strong>. Please complete your onboarding by filling out the secure form below.</p>
+          <div style="background:#f8fafc;border-radius:8px;padding:20px;margin:24px 0;border-left:4px solid #1e40af">
+            <p style="margin:0 0 6px;color:#64748b;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Expected Joining Date</p>
+            <p style="margin:0;color:#1e293b;font-size:18px;font-weight:700">${dateStr}</p>
+          </div>
+          <div style="text-align:center;margin:32px 0">
+            <a href="${portalUrl}" style="background:linear-gradient(135deg,#1e40af,#7c3aed);color:#fff;padding:16px 36px;text-decoration:none;border-radius:8px;font-weight:600;font-size:16px;display:inline-block">
+              Complete My Onboarding →
+            </a>
+          </div>
+          <div style="background:#fef3c7;border-radius:8px;padding:16px;border:1px solid #fcd34d">
+            <p style="margin:0;color:#92400e;font-size:13px">⏰ <strong>This link expires in ${expiryHours} hours.</strong> Please complete as soon as possible. If expired, contact HR for a new link.</p>
+          </div>
+          <p style="color:#64748b;font-size:13px;margin-top:24px">This invite was sent by <strong>${invitedByName}</strong> from Traincape HR team.</p>
+        </div>
+        <div style="background:#f8fafc;padding:20px;text-align:center;border-top:1px solid #e2e8f0">
+          <p style="margin:0;color:#94a3b8;font-size:12px">Traincape Technology Pvt Ltd | hr@traincapetech.in</p>
+        </div>
+      </div>`;
+
+    await sendEmail(candidateEmail, subject, "", html);
+    return { success: true };
+  } catch (error) {
+    console.error("sendOnboardingInviteEmail error:", error.message);
+    return { success: false, error: error.message };
+  }
+};
+
+// ── Onboarding: Approval/Confirmation email ───────────────────────────────
+const sendOnboardingApprovalEmail = async ({
+  candidateName, candidateEmail, joiningDate, joiningTime, branchLocation,
+}) => {
+  try {
+    const dateStr = joiningDate ? new Date(joiningDate).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "As discussed";
+    const subject = `Congratulations! Your Joining at Traincape Has Been Confirmed`;
+    const html = `
+      <div style="font-family:'Segoe UI',sans-serif;max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
+        <div style="background:linear-gradient(135deg,#059669,#0d9488);padding:40px 32px;text-align:center">
+          <div style="font-size:48px">🎉</div>
+          <h1 style="color:#fff;margin:8px 0 0;font-size:24px">Joining Confirmed!</h1>
+        </div>
+        <div style="padding:32px">
+          <p style="font-size:16px;color:#1e293b">Dear <strong>${candidateName}</strong>,</p>
+          <p style="color:#475569;line-height:1.7">We're thrilled to confirm your joining at <strong>Traincape Technology Pvt Ltd</strong>. Your documents have been reviewed and approved.</p>
+          <div style="background:#f0fdf4;border-radius:8px;padding:20px;margin:24px 0;border:1px solid #86efac">
+            <table style="width:100%">
+              <tr><td style="color:#64748b;font-size:14px;padding:6px 0"><strong>Date:</strong></td><td style="color:#1e293b;font-size:14px">${dateStr}</td></tr>
+              <tr><td style="color:#64748b;font-size:14px;padding:6px 0"><strong>Time:</strong></td><td style="color:#1e293b;font-size:14px">${joiningTime || "As communicated"}</td></tr>
+              <tr><td style="color:#64748b;font-size:14px;padding:6px 0"><strong>Location:</strong></td><td style="color:#1e293b;font-size:14px">${branchLocation || "As communicated"}</td></tr>
+            </table>
+          </div>
+          <p style="color:#64748b;font-size:14px">You will receive your login credentials and offer letter on your joining day. Please keep your original documents ready.</p>
+        </div>
+        <div style="background:#f8fafc;padding:20px;text-align:center;border-top:1px solid #e2e8f0">
+          <p style="margin:0;color:#94a3b8;font-size:12px">Traincape Technology Pvt Ltd | hr@traincapetech.in</p>
+        </div>
+      </div>`;
+    await sendEmail(candidateEmail, subject, "", html);
+    return { success: true };
+  } catch (error) {
+    console.error("sendOnboardingApprovalEmail error:", error.message);
+    return { success: false, error: error.message };
+  }
+};
+
+// ── Onboarding: Day-before reminder ──────────────────────────────────────
+const sendJoiningReminderEmail = async ({
+  candidateName, candidateEmail, joiningDate, joiningTime, branchLocation,
+  reportingManagerName, reportingManagerEmail,
+}) => {
+  try {
+    const subject = `Reminder: Your Joining at Traincape is Tomorrow!`;
+    const html = `
+      <div style="font-family:'Segoe UI',sans-serif;max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
+        <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:40px 32px;text-align:center">
+          <div style="font-size:48px">⏰</div>
+          <h1 style="color:#fff;margin:8px 0 0;font-size:22px">Your joining is tomorrow!</h1>
+        </div>
+        <div style="padding:32px">
+          <p style="font-size:16px;color:#1e293b">Dear <strong>${candidateName}</strong>,</p>
+          <p style="color:#475569">This is a friendly reminder that you are joining Traincape Technology tomorrow.</p>
+          <div style="background:#fffbeb;border-radius:8px;padding:20px;margin:20px 0;border:1px solid #fcd34d">
+            <h3 style="margin:0 0 12px;color:#92400e">📋 Day 1 Details</h3>
+            <table style="width:100%">
+              <tr><td style="color:#78350f;font-size:14px;padding:5px 0"><strong>Date:</strong></td><td style="color:#1c1917;font-size:14px">${new Date(joiningDate).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</td></tr>
+              <tr><td style="color:#78350f;font-size:14px;padding:5px 0"><strong>Reporting Time:</strong></td><td style="color:#1c1917;font-size:14px">${joiningTime || "9:00 AM"}</td></tr>
+              <tr><td style="color:#78350f;font-size:14px;padding:5px 0"><strong>Location:</strong></td><td style="color:#1c1917;font-size:14px">${branchLocation || "Office"}</td></tr>
+              <tr><td style="color:#78350f;font-size:14px;padding:5px 0"><strong>Reporting To:</strong></td><td style="color:#1c1917;font-size:14px">${reportingManagerName || "HR Team"}</td></tr>
+            </table>
+          </div>
+          <div style="background:#eff6ff;border-radius:8px;padding:16px;border:1px solid #bfdbfe">
+            <p style="margin:0 0 8px;font-weight:600;color:#1e40af">📂 Documents to Carry (Originals)</p>
+            <ul style="margin:0;padding-left:20px;color:#1e3a8a;font-size:14px">
+              <li>Aadhaar Card</li><li>PAN Card</li><li>Educational Certificates</li>
+              <li>Experience Letters (if any)</li><li>2 Passport Photos</li><li>Bank Account Details</li>
+            </ul>
+          </div>
+          ${reportingManagerEmail ? `<p style="color:#64748b;font-size:13px;margin-top:16px">📧 Contact: <a href="mailto:${reportingManagerEmail}">${reportingManagerEmail}</a></p>` : ""}
+        </div>
+        <div style="background:#f8fafc;padding:20px;text-align:center;border-top:1px solid #e2e8f0">
+          <p style="margin:0;color:#94a3b8;font-size:12px">Traincape Technology Pvt Ltd | hr@traincapetech.in</p>
+        </div>
+      </div>`;
+    await sendEmail(candidateEmail, subject, "", html);
+    return { success: true };
+  } catch (error) {
+    console.error("sendJoiningReminderEmail error:", error.message);
+    return { success: false, error: error.message };
+  }
+};
+
+// ── Onboarding: Joining day welcome (credentials) ─────────────────────────
+const sendJoiningDayWelcomeEmail = async ({ user, employee, password, reportingManagerId }) => {
+  try {
+    let managerName = "Your Manager";
+    if (reportingManagerId) {
+      const User = require("../models/User");
+      const mgr = await User.findById(reportingManagerId).select("fullName");
+      if (mgr) managerName = mgr.fullName;
+    }
+    const crmUrl = process.env.CLIENT_URL || "https://traincapecrm.traincapetech.in";
+    const subject = `Welcome to Traincape Technology — Your Account is Ready!`;
+    const html = `
+      <div style="font-family:'Segoe UI',sans-serif;max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
+        <div style="background:linear-gradient(135deg,#1e40af,#7c3aed);padding:40px 32px;text-align:center">
+          <div style="font-size:48px">🚀</div>
+          <h1 style="color:#fff;margin:8px 0 0;font-size:24px">Welcome to the Team!</h1>
+        </div>
+        <div style="padding:32px">
+          <p style="font-size:16px;color:#1e293b">Dear <strong>${user.fullName}</strong>,</p>
+          <p style="color:#475569;line-height:1.7">Welcome aboard! Your official account is ready. Below are your login credentials:</p>
+          <div style="background:#f8fafc;border-radius:8px;padding:20px;margin:20px 0;border:1px solid #e2e8f0">
+            <h3 style="margin:0 0 12px;color:#1e293b">🔐 Login Credentials</h3>
+            <table style="width:100%">
+              <tr><td style="color:#64748b;padding:6px 0;font-size:14px"><strong>Email:</strong></td><td style="color:#1e293b;font-family:monospace">${user.email}</td></tr>
+              <tr><td style="color:#64748b;padding:6px 0;font-size:14px"><strong>Password:</strong></td><td style="color:#1e293b;font-family:monospace;font-weight:700">${password}</td></tr>
+              <tr><td style="color:#64748b;padding:6px 0;font-size:14px"><strong>Portal:</strong></td><td><a href="${crmUrl}" style="color:#1e40af">${crmUrl}</a></td></tr>
+              <tr><td style="color:#64748b;padding:6px 0;font-size:14px"><strong>Reporting To:</strong></td><td style="color:#1e293b">${managerName}</td></tr>
+            </table>
+          </div>
+          <div style="text-align:center;margin:24px 0">
+            <a href="${crmUrl}/login" style="background:linear-gradient(135deg,#1e40af,#7c3aed);color:#fff;padding:14px 32px;text-decoration:none;border-radius:8px;font-weight:600;display:inline-block">Log In to CRM →</a>
+          </div>
+          <div style="background:#fef3c7;border-radius:8px;padding:14px;border:1px solid #fcd34d">
+            <p style="margin:0;color:#92400e;font-size:13px">🔒 Please change your password after first login. Keep credentials confidential.</p>
+          </div>
+        </div>
+        <div style="background:#f8fafc;padding:20px;text-align:center;border-top:1px solid #e2e8f0">
+          <p style="margin:0;color:#94a3b8;font-size:12px">Traincape Technology Pvt Ltd | hr@traincapetech.in</p>
+        </div>
+      </div>`;
+    await sendEmail(user.email, subject, "", html);
+    return { success: true };
+  } catch (error) {
+    console.error("sendJoiningDayWelcomeEmail error:", error.message);
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   sendPaymentConfirmationEmail,
   sendServiceDeliveryEmail,
@@ -518,4 +769,9 @@ module.exports = {
   sendTicketAssignedEmail,
   sendTicketStatusUpdateEmail,
   sendSalaryPayoutEmail,
+  sendWelcomeEmail,
+  sendOnboardingInviteEmail,
+  sendOnboardingApprovalEmail,
+  sendJoiningReminderEmail,
+  sendJoiningDayWelcomeEmail,
 };

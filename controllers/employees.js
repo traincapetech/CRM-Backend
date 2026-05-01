@@ -7,6 +7,7 @@ const path = require("path");
 const fileStorage = require("../services/fileStorageService");
 const { decrypt } = require("../utils/encryption");
 const { notifyAdmins } = require("../services/notificationService");
+const { sendWelcomeEmail } = require("../services/emailService");
 
 // Export multer upload middleware
 exports.uploadEmployeeFiles = fileStorage.uploadMiddleware.fields([
@@ -577,15 +578,22 @@ exports.createEmployee = async (req, res) => {
     // Create employee
     const employee = await Employee.create(employeeData);
 
-    // Create user account if username and password provided (admin function only)
+    // Create user account if official email and password provided (admin function only)
+    console.log("DEBUG: Checking if user account should be created:", {
+      hasUsername: !!req.body.username,
+      hasPassword: !!req.body.password,
+      userRole: req.user.role,
+      isAuthorized: ["HR", "Admin", "Manager"].includes(req.user.role)
+    });
+
     if (
-      req.body.username &&
+      req.body.username && // This field will hold the Official Email
       req.body.password &&
       ["HR", "Admin", "Manager"].includes(req.user.role)
     ) {
       const userData = {
         fullName: employeeData.fullName,
-        email: employeeData.email,
+        email: req.body.username.toLowerCase().trim(), // Official Email for login
         password: req.body.password,
         role: "Employee",
         employeeId: employee._id,
@@ -593,7 +601,16 @@ exports.createEmployee = async (req, res) => {
 
       const user = await User.create(userData);
       employee.userId = user._id;
+      // We also save the official email in the employee record for reference if needed
+      employee.officialEmail = req.body.username.toLowerCase().trim();
       await employee.save();
+
+      // Trigger Welcome Email with credentials sent to PERSONAL EMAIL
+      try {
+        await sendWelcomeEmail(user, req.body.password, employeeData.email);
+      } catch (emailError) {
+        console.error("Welcome email failed to send:", emailError);
+      }
     }
 
     // Notify Admins
@@ -602,6 +619,16 @@ exports.createEmployee = async (req, res) => {
       message: `New Employee Profile Created: ${employee.fullName} (${employee.email}) by ${req.user.fullName}`,
       employeeId: employee._id
     });
+
+    // 🚀 Auto-trigger Onboarding Journey (fire-and-forget — never blocks response)
+    try {
+      const JourneyService = require("../services/journeyService");
+      JourneyService.startJourney("Employee Onboarding", employee._id, req.user.id)
+        .then(() => console.log(`✅ Onboarding journey started for ${employee.fullName}`))
+        .catch((err) => console.error(`⚠️ Onboarding journey failed for ${employee.fullName}:`, err.message));
+    } catch (journeyErr) {
+      console.error("⚠️ Could not load JourneyService:", journeyErr.message);
+    }
 
     res.status(201).json({
       success: true,

@@ -122,7 +122,7 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const mailOptions = {
-        from: `"${process.env.FROM_NAME || 'Traincape CRM'}" <${process.env.FROM_EMAIL || process.env.EMAIL_USER}>`,
+        from: `"${process.env.FROM_NAME || 'Traincape CRM'}" <${process.env.EMAIL_USER}>`,
         to,
         subject,
         text,

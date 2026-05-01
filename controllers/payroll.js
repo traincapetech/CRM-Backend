@@ -1473,12 +1473,8 @@ exports.exportPayrollReport = async (req, res) => {
     doc.moveDown();
 
     // Summary Statistics
-    const totalGross = payrolls.reduce(
-      (sum, p) => sum + (p.grossSalary || 0),
-      0,
-    );
-    const totalDeductions = payrolls.reduce(
-      (sum, p) => sum + (p.totalDeductions || 0),
+    const totalBaseSalary = payrolls.reduce(
+      (sum, p) => sum + (p.baseSalary || 0),
       0,
     );
     const totalNet = payrolls.reduce((sum, p) => sum + (p.netSalary || 0), 0);
@@ -1497,17 +1493,12 @@ exports.exportPayrollReport = async (req, res) => {
     );
     doc.moveDown(0.5);
     doc.text(
-      `Total Gross Salary: ₹${totalGross.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
+      `Total Base Salary: ₹${totalBaseSalary.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
       30,
     );
     doc.text(
-      `Total Deductions: ₹${totalDeductions.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
-      300,
-      doc.y - 13,
-    );
-    doc.text(
       `Total Net Salary: ₹${totalNet.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
-      550,
+      300,
       doc.y - 13,
     );
     doc.moveDown();
@@ -1523,17 +1514,17 @@ exports.exportPayrollReport = async (req, res) => {
 
     // Table Header
     const tableTop = doc.y;
-    const colWidths = [25, 140, 100, 70, 55, 75, 75, 75, 70];
+    const colWidths = [130, 70, 80, 50, 80, 80, 70, 80, 90];
     const headers = [
-      "#",
       "Employee Name",
-      "Department",
-      "Days",
       "Status",
-      "Gross (₹)",
-      "Deductions (₹)",
-      "Net (₹)",
-      "Bonuses (₹)",
+      "Base (₹)",
+      "Days",
+      "Earned (₹)",
+      "Bonuses",
+      "Reimb.",
+      "Deductions",
+      "Net Salary (₹)",
     ];
 
     doc.fontSize(9).font("Helvetica-Bold");
@@ -1541,7 +1532,7 @@ exports.exportPayrollReport = async (req, res) => {
     headers.forEach((header, i) => {
       doc.text(header, xPos, tableTop, {
         width: colWidths[i],
-        align: i === 0 ? "center" : "left",
+        align: i === 0 ? "left" : (i === 1 ? "left" : "right"),
       });
       xPos += colWidths[i];
     });
@@ -1566,11 +1557,24 @@ exports.exportPayrollReport = async (req, res) => {
         rowY = 50;
       }
 
+      const earnedSalary = payroll.calculatedSalary || ((payroll.baseSalary || 0) / (payroll.workingDays || 30)) * (payroll.daysPresent || 0);
+
       const bonuses =
         (payroll.performanceBonus || 0) +
         (payroll.projectBonus || 0) +
         (payroll.attendanceBonus || 0) +
         (payroll.festivalBonus || 0);
+
+      const deductions =
+        (payroll.pf || 0) +
+        (payroll.esi || 0) +
+        (payroll.tax || 0) +
+        (payroll.loan || 0) +
+        (payroll.other || 0);
+        
+      const reimbursements = payroll.reimbursements || 0;
+      const baseSalary = payroll.baseSalary || 0;
+      const netSalary = payroll.netSalary || 0;
 
       const statusColors = {
         DRAFT: "#666666",
@@ -1580,59 +1584,68 @@ exports.exportPayrollReport = async (req, res) => {
       };
 
       xPos = 30;
+      
+      // Employee
       doc.fillColor("#333333");
-      doc.text((index + 1).toString(), xPos, rowY, {
-        width: colWidths[0],
-        align: "center",
+      doc.text(payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "N/A"), xPos, rowY, {
+        width: colWidths[0] - 5,
+        align: "left"
       });
       xPos += colWidths[0];
 
-      doc.text(payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "N/A"), xPos, rowY, {
-        width: colWidths[1] - 5,
-      });
+      // Status
+      doc.fillColor(statusColors[payroll.status] || "#666666");
+      doc.text(payroll.status || "DRAFT", xPos, rowY, { width: colWidths[1], align: "left" });
       xPos += colWidths[1];
 
-      doc.text(payroll.isCustomPayee ? "Custom" : (payroll.employeeId?.department?.name || "N/A"), xPos, rowY, {
-        width: colWidths[2] - 5,
+      // Base Salary
+      doc.fillColor("#333333");
+      doc.text(baseSalary.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[2], align: "right"
       });
       xPos += colWidths[2];
 
+      // Days
       doc.text(
         `${payroll.daysPresent || 0}/${payroll.workingDays || 30}`,
         xPos,
         rowY,
-        { width: colWidths[3] },
+        { width: colWidths[3], align: "right" },
       );
       xPos += colWidths[3];
 
-      doc.fillColor(statusColors[payroll.status] || "#666666");
-      doc.text(payroll.status || "DRAFT", xPos, rowY, { width: colWidths[4] });
+      // Earned Salary
+      doc.fillColor("#333333");
+      doc.text(earnedSalary.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), xPos, rowY, {
+        width: colWidths[4], align: "right"
+      });
       xPos += colWidths[4];
 
-      doc.fillColor("#333333");
-      doc.text((payroll.grossSalary || 0).toLocaleString("en-IN"), xPos, rowY, {
-        width: colWidths[5],
+      // Bonuses
+      doc.text("+" + bonuses.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[5], align: "right"
       });
       xPos += colWidths[5];
-
-      doc.text(
-        (payroll.totalDeductions || 0).toLocaleString("en-IN"),
-        xPos,
-        rowY,
-        { width: colWidths[6] },
-      );
+      
+      // Reimb.
+      doc.fillColor("#3b82f6");
+      doc.text(reimbursements.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[6], align: "right"
+      });
       xPos += colWidths[6];
 
-      doc.font("Helvetica-Bold");
-      doc.text((payroll.netSalary || 0).toLocaleString("en-IN"), xPos, rowY, {
-        width: colWidths[7],
-      });
+      // Deductions
+      doc.fillColor("#ef4444");
+      doc.text("-" + deductions.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[7], align: "right" });
       xPos += colWidths[7];
 
-      doc.font("Helvetica");
-      doc.text(bonuses.toLocaleString("en-IN"), xPos, rowY, {
-        width: colWidths[8],
+      // Net Salary
+      doc.fillColor("#333333");
+      doc.font("Helvetica-Bold");
+      doc.text(netSalary.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[8], align: "right"
       });
+      doc.font("Helvetica");
 
       rowY += 15;
 

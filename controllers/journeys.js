@@ -2,30 +2,51 @@ const JourneyService = require("../services/journeyService");
 const JourneyInstance = require("../models/JourneyInstance");
 const JourneyTemplate = require("../models/JourneyTemplate");
 
-// @desc    Get all journeys for a user (or all if admin)
+// @desc    Get all journeys for a user (or all if admin/HR)
 // @route   GET /api/journeys
 exports.getJourneys = async (req, res) => {
   try {
+    const { category } = req.query;
     let query = {};
 
-    // If not admin, only show own journeys or journeys where user is an assignee of a step
-    if (req.user.role !== "Admin" && req.user.role !== "HR") {
-      // Complex query: either they are the subject (employee) OR they have an active task
-      // For MVP, let's just show journeys where they are the subject
-      // To do this right, we'd need to look up their Employee ID first
-      // skipping complexity for now, just filtering by assigned steps is easier if we index it
-      // Let's keep it simple: Admins see all, others see mostly nothing for now until we build the UI
+    // 1. Visibility Logic
+    if (!["Admin", "HR", "Manager"].includes(req.user.role)) {
+      // For regular employees, find their Employee record first
+      const Employee = require("../models/Employee");
+      const employee = await Employee.findOne({ userId: req.user.id });
+      
+      if (employee) {
+        // Show journeys where they are the subject OR journeys where they are assigned to a step
+        query = {
+          $or: [
+            { employeeId: employee._id },
+            { "steps.assignedToUser": req.user.id }
+          ]
+        };
+      } else {
+        // If no employee record, only show journeys where they are an assignee
+        query = { "steps.assignedToUser": req.user.id };
+      }
     }
 
-    const journeys = await JourneyInstance.find(query)
+    // 2. Fetch with population
+    let journeys = await JourneyInstance.find(query)
       .populate("employeeId", "fullName email")
-      .populate("templateId", "name")
+      .populate("templateId")
       .sort("-createdAt");
 
-    res
-      .status(200)
-      .json({ success: true, count: journeys.length, data: journeys });
+    // 3. Category Filter (Manual filtering since category is on template)
+    if (category) {
+      journeys = journeys.filter(j => j.templateId?.category === category);
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      count: journeys.length, 
+      data: journeys 
+    });
   } catch (error) {
+    console.error("Error in getJourneys:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 };

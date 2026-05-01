@@ -15,6 +15,11 @@ const employeeSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    officialEmail: {
+      type: String,
+      lowercase: true,
+      trim: true,
+    },
     // PII Fields - encrypted at rest
     phoneNumber: {
       type: String,

@@ -59,7 +59,7 @@ exports.register = async (req, res) => {
     }
 
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
 
     if (existingUser) {
       console.log(`User with email ${email} already exists`);
@@ -73,7 +73,7 @@ exports.register = async (req, res) => {
     // Create user
     const user = await User.create({
       fullName,
-      email,
+      email: email.toLowerCase(),
       password,
       role: role || "Sales Person", // Default role if not specified
     });
@@ -125,33 +125,20 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    const identifier = email ? email.toLowerCase().trim() : "";
 
-    // Normalize email to lowercase for case-insensitive search
-    const normalizedEmail = email ? email.toLowerCase().trim() : "";
+    console.log("Login attempt for identifier:", identifier);
 
-    console.log("Login attempt for:", normalizedEmail);
-    console.log("Original email provided:", email);
-
-    // Validate email & password
-    if (!normalizedEmail || !password) {
+    // Validate identifier & password
+    if (!identifier || !password) {
       return res.status(400).json({
         success: false,
         message: "Please provide email and password",
       });
     }
 
-    // Check for user and explicitly select password field (case-insensitive)
-    // Try exact match first, then lowercase match
-    let user = await User.findOne({ email: normalizedEmail }).select(
-      "+password -__v",
-    );
-
-    // If not found, try case-insensitive search
-    if (!user) {
-      user = await User.findOne({
-        email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") },
-      }).select("+password -__v");
-    }
+    // Check for user by email
+    let user = await User.findOne({ email: { $regex: new RegExp(`^${identifier}$`, 'i') } }).select("+password -__v");
 
     if (!user) {
       // Record failed attempt if user not found (optional, but good for security)
