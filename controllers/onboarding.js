@@ -20,7 +20,10 @@ exports.uploadCandidateDocs = fileStorage.uploadMiddleware.fields([
   { name: "photograph", maxCount: 1 },
   { name: "panCard", maxCount: 1 },
   { name: "aadharCard", maxCount: 1 },
-  { name: "educationalDocs", maxCount: 3 },
+  { name: "tenthMarksheet", maxCount: 1 },
+  { name: "twelfthMarksheet", maxCount: 1 },
+  { name: "graduationDegree", maxCount: 1 },
+  { name: "mastersDegree", maxCount: 1 },
   { name: "experienceLetter", maxCount: 1 },
   { name: "signature", maxCount: 1 },
 ]);
@@ -58,6 +61,8 @@ exports.createInvite = async (req, res) => {
       joiningTime,
       branchLocation,
       notes,
+      internshipStartDate,
+      internshipEndDate
     } = req.body;
 
     // Check if invite already exists for this email
@@ -85,6 +90,8 @@ exports.createInvite = async (req, res) => {
       joiningTime,
       branchLocation,
       notes,
+      internshipStartDate,
+      internshipEndDate,
       invitedBy: req.user.id,
       onboardingToken: token,
       tokenExpiry,
@@ -381,94 +388,122 @@ exports.finalizeOnboarding = async (req, res) => {
     const pii = invite.getDecryptedPII();
 
     // 2. Create User account (password hashed by pre('save'))
-    const newUser = await User.create({
-      fullName: invite.fullName,
-      email: officialEmail.toLowerCase(),
-      password: temporaryPassword,
-      role: userRole || "Employee",
-    });
-
-    // 3. Create Employee record (PII encrypted by pre('save'))
-    const employeeData = {
-      fullName: invite.fullName,
-      email: officialEmail.toLowerCase(),
-      officialEmail: officialEmail.toLowerCase(),
-      phoneNumber: invite.phoneNumber,
-      department: invite.department._id || invite.department,
-      role: invite.role._id || invite.role,
-      employmentType: invite.employmentType,
-      salary: confirmedSalary || invite.proposedSalary,
-      joiningDate: invite.joiningDate,
-      skills: invite.skills || [],
-      status: "ACTIVE",
-      userId: newUser._id,
-      hrId: req.user.id,
-    };
-
-    // PII fields (will be re-encrypted by pre('save'))
-    if (pii.dob) employeeData.dateOfBirth = pii.dob;
-    if (pii.currentAddress) employeeData.currentAddress = pii.currentAddress;
-    if (invite.permanentAddress) employeeData.permanentAddress = invite.permanentAddress;
-    if (pii.aadharNumber) employeeData.aadharCard = pii.aadharNumber;
-    if (pii.panNumber) employeeData.panCard = pii.panNumber;
-    if (pii.bankAccountNumber) employeeData.bankAccountNumber = pii.bankAccountNumber;
-    if (invite.ifscCode) employeeData.ifscCode = invite.ifscCode;
-    if (invite.accountHolderName) employeeData.accountHolderName = invite.accountHolderName;
-
-    // Copy documents from invite
-    if (invite.documents) {
-      const { resume, photograph, panCard, aadharCard, signature } = invite.documents;
-      if (resume) employeeData.resume = resume;
-      if (photograph) employeeData.photograph = photograph;
-      if (panCard) employeeData.panCard = panCard; // Overrides the aadharCard text field name collision — the document object
-      if (aadharCard) employeeData.aadharCard = aadharCard;
-      if (signature) employeeData.signature = signature;
-    }
-
-    const newEmployee = await Employee.create(employeeData);
-
-    // 4. Link User → Employee
-    newUser.employeeId = newEmployee._id;
-    await newUser.save();
-
-    // 5. Update invite
-    invite.onboardingStatus = "JOINED";
-    invite.employeeId = newEmployee._id;
-    invite.officialEmail = officialEmail;
-    invite.username = username || officialEmail;
-    invite.reportingManagerId = reportingManagerId;
-    invite.confirmedSalary = confirmedSalary;
-    invite.probationPeriod = probationPeriod;
-    invite.workMode = workMode;
-    invite.joinedAt = new Date();
-    // clear sensitive token
-    invite.onboardingToken = null;
-    await invite.save();
-
-    // 6. Send joining-day welcome email
+    let newUser;
     try {
-      await sendJoiningDayWelcomeEmail({
-        user: newUser,
-        employee: newEmployee,
+      newUser = await User.create({
+        fullName: invite.fullName,
+        email: officialEmail.toLowerCase(),
         password: temporaryPassword,
-        reportingManagerId,
+        role: userRole || "Employee",
       });
-    } catch (e) {
-      console.error("Welcome email failed:", e.message);
+    } catch (err) {
+      if (err.code === 11000) {
+        return res.status(400).json({ success: false, message: "User account with this email already exists" });
+      }
+      throw err;
     }
 
-    // 7. Trigger journey
     try {
-      await JourneyService.startJourney("Employee Onboarding", newEmployee._id, req.user.id);
-    } catch (e) {
-      console.warn("Journey trigger failed (non-critical):", e.message);
-    }
+      // 3. Create Employee record (PII encrypted by pre('save'))
+      const employeeData = {
+        fullName: invite.fullName,
+        email: officialEmail.toLowerCase(),
+        officialEmail: officialEmail.toLowerCase(),
+        phoneNumber: invite.phoneNumber,
+        department: invite.department._id || invite.department,
+        role: invite.role._id || invite.role,
+        employmentType: invite.employmentType,
+        salary: confirmedSalary || invite.proposedSalary,
+        joiningDate: invite.joiningDate,
+        skills: invite.skills || [],
+        status: "ACTIVE",
+        userId: newUser._id,
+        hrId: req.user.id,
+      };
 
-    // 8. Notify admins
-    await notifyAdmins({
-      type: "EMPLOYEE_JOINED",
-      message: `${invite.fullName} has officially joined as Employee. Account created by ${req.user.fullName}`,
-    });
+      // ... (PII fields and documents code stays the same)
+      if (pii.dob) employeeData.dateOfBirth = pii.dob;
+      if (pii.currentAddress) employeeData.currentAddress = pii.currentAddress;
+      if (invite.permanentAddress) employeeData.permanentAddress = invite.permanentAddress;
+      if (pii.aadharNumber) employeeData.aadharCard = pii.aadharNumber;
+      if (pii.panNumber) employeeData.panCard = pii.panNumber;
+      if (pii.bankAccountNumber) employeeData.bankAccountNumber = pii.bankAccountNumber;
+      if (invite.ifscCode) employeeData.ifscCode = invite.ifscCode;
+      if (invite.accountHolderName) employeeData.accountHolderName = invite.accountHolderName;
+
+      employeeData.documents = employeeData.documents || {};
+      if (invite.documents) {
+        const { 
+          resume, photograph, signature, panCard: panDoc, aadharCard: aadharDoc,
+          tenthMarksheet, twelfthMarksheet, graduationDegree, mastersDegree 
+        } = invite.documents;
+
+        if (resume) employeeData.resume = resume;
+        if (photograph) employeeData.photograph = photograph;
+        if (signature) employeeData.signature = signature;
+        
+        // Map split marksheets to Employee schema fields
+        if (tenthMarksheet) employeeData.tenthMarksheet = tenthMarksheet;
+        if (twelfthMarksheet) employeeData.twelfthMarksheet = twelfthMarksheet;
+        if (graduationDegree) employeeData.bachelorDegree = graduationDegree;
+        if (mastersDegree) employeeData.postgraduateDegree = mastersDegree;
+
+        // Store ID documents in the general documents bucket to avoid type collision with ID number strings
+        if (panDoc) employeeData.documents.panCard = panDoc;
+        if (aadharDoc) employeeData.documents.aadharCard = aadharDoc;
+        
+        // Also copy any other documents from the invite
+        Object.keys(invite.documents).forEach(key => {
+          const excluded = ["resume", "photograph", "signature", "tenthMarksheet", "twelfthMarksheet", "graduationDegree", "mastersDegree"];
+          if (!excluded.includes(key)) {
+            employeeData.documents[key] = invite.documents[key];
+          }
+        });
+      }
+
+      const newEmployee = await Employee.create(employeeData);
+
+      // 4. Link User -> Employee
+      newUser.employeeId = newEmployee._id;
+      await newUser.save();
+
+      // 5. Update invite
+      invite.onboardingStatus = "JOINED";
+      invite.employeeId = newEmployee._id;
+      invite.officialEmail = officialEmail;
+      invite.username = username || officialEmail;
+      invite.reportingManagerId = reportingManagerId;
+      invite.confirmedSalary = confirmedSalary;
+      invite.probationPeriod = probationPeriod;
+      invite.workMode = workMode;
+      invite.joinedAt = new Date();
+      invite.onboardingToken = null;
+      await invite.save();
+
+      // (Optional success steps like emails)
+      try {
+        await sendJoiningDayWelcomeEmail({ user: newUser, employee: newEmployee, password: temporaryPassword, reportingManagerId });
+        await JourneyService.startJourney("Employee Onboarding", newEmployee._id, req.user.id);
+      } catch (e) { console.error("Non-critical finalize steps failed:", e.message); }
+
+      await notifyAdmins({
+        type: "EMPLOYEE_JOINED",
+        message: `${invite.fullName} has officially joined as Employee. Account created by ${req.user.fullName}`,
+      });
+
+      res.status(201).json({
+        success: true,
+        message: "Employee account created successfully",
+        data: { invite, employee: newEmployee, user: { _id: newUser._id, email: newUser.email } },
+      });
+    } catch (error) {
+      // 🚨 CRITICAL CLEANUP: If employee creation fails, delete the ghost user
+      if (newUser) {
+        console.log(`🧹 Cleaning up ghost user ${newUser.email} after finalize failure`);
+        await User.findByIdAndDelete(newUser._id);
+      }
+      throw error;
+    }
 
     res.status(201).json({
       success: true,
@@ -677,12 +712,7 @@ exports.submitForm = async (req, res) => {
         for (const file of filesArr) {
           try {
             const result = await fileStorage.uploadEmployeeDoc(file, fieldName);
-            if (fieldName === "educationalDocs") {
-              if (!invite.documents.educationalDocs) invite.documents.educationalDocs = [];
-              invite.documents.educationalDocs.push(result);
-            } else {
-              invite.documents[fieldName] = result;
-            }
+            invite.documents[fieldName] = result;
           } catch (uploadErr) {
             console.error(`Failed to upload ${fieldName}:`, uploadErr.message);
           }

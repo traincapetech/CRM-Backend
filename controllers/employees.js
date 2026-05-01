@@ -852,6 +852,17 @@ exports.deleteEmployee = async (req, res) => {
       await User.findByIdAndDelete(employee.userId);
     }
 
+    // 🔄 SYNC Onboarding Queue: If this employee came from onboarding, reset the invite
+    const CandidateInvite = require("../models/CandidateInvite");
+    const invite = await CandidateInvite.findOne({ employeeId: req.params.id });
+    if (invite) {
+      console.log(`🔄 Syncing Onboarding: Resetting invite for ${invite.fullName}`);
+      invite.onboardingStatus = "APPROVED"; // Move back to approved so they can be finalized again if needed
+      invite.employeeId = null;
+      invite.joinedAt = null;
+      await invite.save();
+    }
+
     await Employee.findByIdAndDelete(req.params.id);
 
     res.status(200).json({

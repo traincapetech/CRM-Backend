@@ -56,7 +56,7 @@ const uploadMiddleware = multer({
   storage: multerStorage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit
-    files: 10, // Allow up to 10 files
+    files: 20, // Allow up to 20 files for split document uploads
   },
 });
 
