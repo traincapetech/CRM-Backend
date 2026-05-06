@@ -15,15 +15,22 @@ const getPermissionsForRoles = async (roleNames) => {
   if (!roleNames || roleNames.length === 0) {
     return new Set();
   }
-  const roles = await AccessRole.find({
-    name: { $in: roleNames },
-    isActive: true
-  }).select('permissions');
-
+  
   const permissions = new Set();
-  roles.forEach((role) => {
-    (role.permissions || []).forEach((permission) => permissions.add(permission));
-  });
+  
+  try {
+    const roles = await AccessRole.find({
+      name: { $in: roleNames },
+      isActive: true
+    }).select('permissions');
+
+    roles.forEach((role) => {
+      (role.permissions || []).forEach((permission) => permissions.add(permission));
+    });
+  } catch (error) {
+    console.error('Error fetching permissions for roles:', error);
+    // Continue with empty set or default permissions instead of crashing
+  }
 
   return permissions;
 };

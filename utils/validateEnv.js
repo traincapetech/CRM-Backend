@@ -6,6 +6,7 @@
 const requiredEnvVars = [
   'MONGO_URI',
   'JWT_SECRET',
+  'REFRESH_TOKEN_SECRET',
   'EMAIL_USER',
   'EMAIL_PASS',
   'NODE_ENV'

@@ -359,11 +359,22 @@ exports.login = async (req, res) => {
     console.log("--- LOGIN PROCESS COMPLETED SUCCESSFULLY ---");
   } catch (error) {
     console.error("--- LOGIN PROCESS CRASHED ---");
-    console.error("Error Detail:", error);
-    res.status(500).json({
+    console.error("Error Name:", error.name);
+    console.error("Error Message:", error.message);
+    console.error("Error Stack:", error.stack);
+    
+    // Check for specific common errors
+    let status = 500;
+    let message = "Internal server error during login";
+    
+    if (error.message.includes("JWT_SECRET") || error.message.includes("REFRESH_TOKEN_SECRET")) {
+      message = "Server configuration error: Authentication secrets are not set.";
+    }
+
+    res.status(status).json({
       success: false,
-      message: "Internal server error during login",
-      error: error.message
+      message: message,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
