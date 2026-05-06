@@ -37,20 +37,23 @@ exports.getTasks = async (req, res) => {
       // Admin sees all filtered tasks
       query = Task.find(filter)
         .populate("assignedTo", "fullName")
-        .populate("assignedBy", "fullName");
+        .populate("assignedBy", "fullName")
+        .populate("customer", "name NAME fullName customerName email EMAIL");
     } else if (req.user.role === "IT Manager") {
       // IT Manager sees all tasks in the IT department, applying filters
       filter.department = "IT";
       query = Task.find(filter)
         .populate("assignedTo", "fullName")
-        .populate("assignedBy", "fullName");
+        .populate("assignedBy", "fullName")
+        .populate("customer", "name NAME fullName customerName email EMAIL");
     } else if (["IT Intern", "IT Permanent"].includes(req.user.role)) {
       // IT Intern/Permanent see only their assigned IT tasks, applying filters
       filter.assignedTo = req.user.id;
       filter.department = "IT";
       query = Task.find(filter)
         .populate("assignedTo", "fullName")
-        .populate("assignedBy", "fullName");
+        .populate("assignedBy", "fullName")
+        .populate("customer", "name NAME fullName customerName email EMAIL");
     } else {
       // Other employees (like Sales Person) see tasks assigned to them or where they are the salesPerson
       // Using $or to allow seeing tasks they assigned or are responsible for
@@ -61,7 +64,8 @@ exports.getTasks = async (req, res) => {
         ],
       })
         .populate("assignedTo", "fullName")
-        .populate("assignedBy", "fullName");
+        .populate("assignedBy", "fullName")
+        .populate("customer", "name NAME fullName customerName email EMAIL");
     }
 
     const tasks = await query;
@@ -269,6 +273,9 @@ exports.updateTask = async (req, res) => {
       if (req.body.title) task.title = req.body.title;
       if (req.body.description) task.description = req.body.description;
       if (req.body.assignedTo) task.assignedTo = req.body.assignedTo;
+      if (req.body.examDate) task.examDate = req.body.examDate;
+      if (req.body.examDateTime) task.examDateTime = req.body.examDateTime;
+      if (req.body.course) task.course = req.body.course;
       if (task.status === "Manager Confirmed") task.confirmedAt = Date.now();
     } else {
       // Optional: allow other roles for Sales/Admin tasks if they are the salesPerson

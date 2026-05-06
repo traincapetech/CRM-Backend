@@ -199,37 +199,9 @@ exports.validate2FA = async (req, res) => {
       });
     }
 
-    // Generate JWT token
-    const jwtToken = user.getSignedJwtToken();
-
-    // Cookie options
-    const cookieOptions = {
-      expires: new Date(Date.now() + 9 * 60 * 60 * 1000), // 9 hours
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    };
-
-    res.cookie("token", jwtToken, cookieOptions);
-
-    const { getUserPermissions } = require("../utils/rbac");
-    const permissionPayload = await getUserPermissions(user);
-
-    res.status(200).json({
-      success: true,
-      token: jwtToken,
-      user: {
-        _id: user._id,
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        role: user.role,
-        roles: permissionPayload.roleNames,
-        permissions: permissionPayload.permissions,
-        twoFactorEnabled: user.twoFactorEnabled,
-        createdAt: user.createdAt,
-      },
-    });
+    // Generate JWT and Refresh tokens
+    const { sendTokenResponse } = require("./auth");
+    await sendTokenResponse(user, 200, res);
   } catch (error) {
     console.error("2FA validate error:", error);
     res.status(500).json({

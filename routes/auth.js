@@ -21,6 +21,7 @@ const {
   updateUserWithDocuments,
   getLoginHistory,
   getActiveSessions,
+  refreshToken,
 } = require("../controllers/auth");
 
 // 2FA Controller
@@ -59,6 +60,8 @@ router.use(debugMiddleware);
 router.route("/register").post(register);
 
 router.route("/login").post(login);
+ 
+router.route("/refresh").post(refreshToken);
 
 router.route("/forgot-password").post(forgotPassword);
 

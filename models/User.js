@@ -94,6 +94,17 @@ const UserSchema = new mongoose.Schema(
         select: false, // Hashed backup codes
       },
     ],
+    refreshToken: {
+      type: String,
+      select: false,
+    },
+    failedLoginAttempts: {
+      type: Number,
+      default: 0,
+    },
+    lockUntil: {
+      type: Number,
+    },
   },
   {
     // Use the existing collection
@@ -116,29 +127,32 @@ UserSchema.pre("save", async function (next) {
   }
 });
 
-// Sign JWT and return
+// Sign Access Token (JWT)
 UserSchema.methods.getSignedJwtToken = function () {
-  // SECURITY: Fail fast if JWT_SECRET is not configured
   if (!process.env.JWT_SECRET) {
-    throw new Error(
-      "CRITICAL: JWT_SECRET environment variable is not set. Cannot generate tokens.",
-    );
+    throw new Error("CRITICAL: JWT_SECRET not set.");
   }
 
-  console.log("Generating JWT token for user:", {
-    id: this._id,
-    role: this.role,
-    JWT_SECRET: "Set",
-    JWT_EXPIRE: process.env.JWT_EXPIRE || "30d",
-  });
-
-  const token = jwt.sign(
+  // Issuing short-lived access token (15 minutes)
+  return jwt.sign(
     { id: this._id, role: this.role },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRE || "30d" },
+    { expiresIn: process.env.JWT_EXPIRE || "15m" }
   );
+};
 
-  return token;
+// Sign Refresh Token (JWT)
+UserSchema.methods.getSignedRefreshToken = function () {
+  if (!process.env.REFRESH_TOKEN_SECRET) {
+    throw new Error("CRITICAL: REFRESH_TOKEN_SECRET not set.");
+  }
+
+  // Issuing long-lived refresh token (7 days)
+  return jwt.sign(
+    { id: this._id },
+    process.env.REFRESH_TOKEN_SECRET,
+    { expiresIn: process.env.REFRESH_TOKEN_EXPIRE || "7d" }
+  );
 };
 
 // Match user entered password to hashed password in database

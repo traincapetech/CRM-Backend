@@ -951,9 +951,14 @@ class PerformanceCalculationService {
       let updatedCount = 0;
 
       for (const kpi of kpis) {
-        // 2. Find all active employees with this role
+        // 2. Optimization: Instead of finding ALL employees by role, 
+        // find employees who ALREADY have this KPI assigned in previous periods.
+        // This prevents auto-assigning manual KPIs to the entire workforce.
+        const previouslyAssigned = await EmployeeTarget.find({ kpiId: kpi._id }).distinct("employeeId");
+        
+        // Find active employees from that list
         const employees = await User.find({
-          role: kpi.role,
+          _id: { $in: previouslyAssigned },
           active: true
         });
 

@@ -6,11 +6,12 @@ const path = require("path"); // Added for path.join
 const { UPLOAD_PATHS } = require("../config/storage");
 const { sendEmail } = require("../config/nodemailer");
 const asyncHandler = require("../middleware/async"); // Added for asyncHandler
-const { getUserPermissions } = require("../utils/rbac");
-const uaparser = require("ua-parser-js"); // You might need to install this, or just do basic parsing
+const UAParser = require("ua-parser-js"); // Changed to default import for better compatibility
 const { notifyAdmins } = require("../services/notificationService");
+const { getUserPermissions } = require("../utils/rbac");
+ 
+const strongPassword = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$/;
 
-// Helper to record login history
 const recordLoginHistory = async (
   req,
   userId,
@@ -18,16 +19,16 @@ const recordLoginHistory = async (
   failureReason = null,
 ) => {
   try {
-    const ua = uaparser(req.headers["user-agent"]);
+    const parser = new UAParser();
+    const ua = parser.setUA(req.headers["user-agent"] || "").getResult();
 
     await LoginHistory.create({
       userId,
       ipAddress: req.ip || req.connection.remoteAddress,
       userAgent: req.headers["user-agent"],
       deviceType: ua.device.type || "Desktop",
-      browser:
-        `${ua.browser.name || "Unknown"} ${ua.browser.version || ""}`.trim(),
-      os: `${ua.os.name || "Unknown"} ${ua.os.version || ""}`.trim(),
+      browser: `${ua.browser.name || "Unknown"} ${ua.browser.version || ""}`.trim() || "Unknown",
+      os: `${ua.os.name || "Unknown"} ${ua.os.version || ""}`.trim() || "Unknown",
       status,
       failureReason,
     });
@@ -66,6 +67,14 @@ exports.register = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Email already registered",
+      });
+    }
+
+    // Password complexity check
+    if (!strongPassword.test(password)) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.",
       });
     }
 
@@ -123,14 +132,16 @@ exports.register = async (req, res) => {
 // @route   POST /api/auth/login
 // @access  Public
 exports.login = async (req, res) => {
+  console.log("--- LOGIN PROCESS STARTED ---");
   try {
     const { email, password } = req.body;
     const identifier = email ? email.toLowerCase().trim() : "";
 
-    console.log("Login attempt for identifier:", identifier);
+    console.log(`[LOGIN] Attempt for: ${identifier}`);
 
     // Validate identifier & password
     if (!identifier || !password) {
+      console.log("[LOGIN] Missing credentials");
       return res.status(400).json({
         success: false,
         message: "Please provide email and password",
@@ -138,28 +149,27 @@ exports.login = async (req, res) => {
     }
 
     // Check for user by email
-    let user = await User.findOne({ email: { $regex: new RegExp(`^${identifier}$`, 'i') } }).select("+password -__v");
+    console.log("[LOGIN] Searching for user in DB...");
+    let user = await User.findOne({ email: { $regex: new RegExp(`^${identifier}$`, 'i') } }).select("+password +failedLoginAttempts +lockUntil");
 
     if (!user) {
-      // Record failed attempt if user not found (optional, but good for security)
-      // Note: Cannot record userId if user doesn't exist.
+      console.log("[LOGIN] User not found");
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
       });
     }
+    console.log(`[LOGIN] User found: ${user._id}`);
 
-    console.log(
-      "Found user:",
-      user
-        ? {
-          id: user._id,
-          email: user.email,
-          role: user.role,
-          active: user.active,
-        }
-        : "Not found",
-    );
+    // Check if account is locked
+    if (user.lockUntil && user.lockUntil > Date.now()) {
+      const remainingMinutes = Math.ceil((user.lockUntil - Date.now()) / (60 * 1000));
+      console.log(`[LOGIN] Account is locked for ${remainingMinutes} more mins`);
+      return res.status(403).json({
+        success: false,
+        message: `Account is temporarily locked. Please try again in ${remainingMinutes} minutes.`,
+      });
+    }
 
     // --- Internship Extension Pre-Check ---
     // Run this BEFORE the user.active check so a deactivated intern with a
@@ -244,120 +254,116 @@ exports.login = async (req, res) => {
 
 
     // Check if password matches
+    console.log("[LOGIN] Verifying password...");
     const isMatch = await user.matchPassword(password);
 
     if (!isMatch) {
-      console.log("❌ LOGIN FAILED: Password mismatch for user:", {
-        id: user._id.toString(),
-        email: user.email,
-        role: user.role,
-      });
+      console.log("[LOGIN] Password mismatch");
+      // Increment failed attempts
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+      
+      let message = "Invalid credentials";
+      
+      if (user.failedLoginAttempts >= 5) {
+        user.lockUntil = Date.now() + 30 * 60 * 1000; // Lock for 30 minutes
+        message = "Too many failed attempts. Account locked for 30 minutes.";
+        console.log("[LOGIN] Account LOCKING now");
+      }
+      
+      await user.save({ validateBeforeSave: false });
+
       await recordLoginHistory(req, user._id, "FAILED", "Invalid Password");
       return res.status(401).json({
         success: false,
-        message: "Invalid credentials",
+        message,
       });
     }
+    console.log("[LOGIN] Password match success");
 
-    console.log("✅ LOGIN SUCCESS: Password matched for user:", {
-      id: user._id.toString(),
-      email: user.email,
-      role: user.role,
-    });
+    // Reset failed attempts on successful password match
+    if (user.failedLoginAttempts > 0 || user.lockUntil) {
+      user.failedLoginAttempts = 0;
+      user.lockUntil = undefined;
+      await user.save({ validateBeforeSave: false });
+    }
 
-    // Record success
-    await recordLoginHistory(req, user._id, "SUCCESS");
+    // --- POST-LOGIN BACKGROUND TASKS ---
+    // Wrapped in try-catch to ensure login success even if secondary tasks fail
+    try {
+      // Check for anomaly: Login from new IP
+      const currentIp = req.ip || req.connection.remoteAddress;
+      const previousLogin = await LoginHistory.findOne({ 
+        userId: user._id, 
+        status: "SUCCESS",
+        ipAddress: { $ne: currentIp }
+      }).sort({ timestamp: -1 });
 
-    // Notify Admins about login (optional, but requested)
-    await notifyAdmins({
-      type: "USER_LOGIN",
-      message: `${user.fullName} (${user.role}) has logged in.`,
-      userId: user._id,
-      ipAddress: req.ip || req.connection.remoteAddress
-    });
+      if (previousLogin) {
+        // This is a known user but different IP - check if IP was ever seen before
+        const knownIp = await LoginHistory.findOne({ 
+          userId: user._id, 
+          status: "SUCCESS",
+          ipAddress: currentIp 
+        });
 
-    // Create token
-    const token = user.getSignedJwtToken();
-    console.log("Generated token for user:", user._id.toString());
+        if (!knownIp) {
+          // IP never seen before for this user
+          console.log(`⚠️ Security Alert: New login IP detected for ${user.email}: ${currentIp}`);
+          
+          try {
+            await sendEmail({
+              email: user.email,
+              subject: "Security Alert: New Login Detected",
+              message: `Hello ${user.fullName},\n\nA new login was detected for your account from a new IP address: ${currentIp}.\n\nIf this was you, you can ignore this email. If not, please change your password immediately.\n\nDevice Details: ${req.headers["user-agent"]}`
+            });
+          } catch (emailErr) {
+            console.error("Failed to send security alert email:", emailErr);
+          }
+        }
+      }
 
-    // Cookie options for security
-    const cookieOptions = {
-      expires: new Date(Date.now() + 9 * 60 * 60 * 1000), // 9 hours
-      httpOnly: true, // Prevents XSS attacks - cookie not accessible via JavaScript
-      secure: process.env.NODE_ENV === "production", // HTTPS only in production
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // Cross-site cookie handling
-    };
+      // Record success in history
+      await recordLoginHistory(req, user._id, "SUCCESS");
 
-    const permissionPayload = await getUserPermissions(user);
+      // Notify Admins about login
+      await notifyAdmins({
+        type: "USER_LOGIN",
+        message: `${user.fullName} (${user.role}) has logged in.`,
+        userId: user._id,
+        ipAddress: currentIp
+      });
+    } catch (bgError) {
+      console.error("Error in post-login background tasks:", bgError);
+      // Don't rethrow - we want the user to stay logged in
+    }
 
     // Check if 2FA is enabled
     if (user.twoFactorEnabled) {
       console.log("🔐 2FA required for user:", user._id.toString());
+      
+      // Issue a temporary token just for the 2FA step (not a full session)
+      const token = user.getSignedJwtToken(); 
+      
       return res.status(200).json({
-        token,
         success: true,
         requires2FA: true,
+        token, 
         userId: user._id,
         message: "Please enter your 2FA code",
       });
     }
 
-    // Set httpOnly cookie with JWT token
-    res.cookie("token", token, cookieOptions);
-
-    // Notify Admins of User Login
-    await notifyAdmins({
-      type: "USER_LOGGED_IN",
-      message: `User Logged In: ${user.fullName} (${user.role}) from ${req.ip || "unknown IP"}`,
-      userId: user._id
-    });
-
-    res.status(200).json({
-      success: true,
-      token, // Still include token in response for backward compatibility during transition
-      user: {
-        _id: user._id, // Added for consistency with getMe
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        role: user.role,
-        roles: permissionPayload.roleNames,
-        permissions: permissionPayload.permissions,
-        twoFactorEnabled: user.twoFactorEnabled || false,
-        createdAt: user.createdAt,
-      },
-    });
+    // Create tokens and send response
+    console.log("[LOGIN] Issuing tokens...");
+    await sendTokenResponse(user, 200, res);
+    console.log("--- LOGIN PROCESS COMPLETED SUCCESSFULLY ---");
   } catch (error) {
-    console.error("Login error:", {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-    });
-
-    // Handle specific error types
-    if (error.name === "ValidationError") {
-      return res.status(400).json({
-        success: false,
-        message: "Validation error",
-        errors: Object.values(error.errors).map((err) => err.message),
-      });
-    }
-
-    if (error.name === "MongoError" || error.name === "MongoServerError") {
-      return res.status(500).json({
-        success: false,
-        message: "Database error",
-        error: "Please try again later",
-      });
-    }
-
+    console.error("--- LOGIN PROCESS CRASHED ---");
+    console.error("Error Detail:", error);
     res.status(500).json({
       success: false,
-      message: "Error logging in. Please try again.",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
+      message: "Internal server error during login",
+      error: error.message
     });
   }
 };
@@ -479,17 +485,25 @@ exports.getMe = async (req, res) => {
   });
 };
 
-// @desc    Logout user / clear cookie
+// @desc    Logout user / clear cookies
 // @route   POST /api/auth/logout
 // @access  Private
 exports.logout = async (req, res) => {
-  // Clear the token cookie by setting it to 'none' and expiring immediately
-  res.cookie("token", "none", {
-    expires: new Date(Date.now() + 10 * 1000), // Expires in 10 seconds
+  // Clear Refresh Token from DB
+  if (req.user) {
+    await User.findByIdAndUpdate(req.user.id, { $unset: { refreshToken: 1 } });
+  }
+
+  // Clear cookies
+  const clearOptions = {
+    expires: new Date(Date.now() + 10 * 1000),
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  });
+  };
+
+  res.cookie("refreshToken", "none", { ...clearOptions, path: "/api/auth/refresh" });
+  res.cookie("token", "none", clearOptions);
 
   // Notify Admins about logout
   if (req.user) {
@@ -597,6 +611,13 @@ exports.updateUser = async (req, res) => {
 
     // If password is provided, update it
     if (req.body.password && req.body.password.trim() !== "") {
+      // Password complexity check
+      if (!strongPassword.test(req.body.password)) {
+        return res.status(400).json({
+          success: false,
+          message: "Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.",
+        });
+      }
       user.password = req.body.password;
       // The password will be hashed via the pre-save middleware
     }
@@ -2074,31 +2095,87 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
-// Get token from model, create cookie and send response
-const sendTokenResponse = (user, statusCode, res) => {
-  // Create token
-  const token = user.getSignedJwtToken();
+// Get tokens from model, create cookies and send response
+const sendTokenResponse = async (user, statusCode, res) => {
+  // Create Access Token
+  const accessToken = user.getSignedJwtToken();
+  
+  // Create Refresh Token
+  const refreshToken = user.getSignedRefreshToken();
 
-  const options = {
+  // Save Refresh Token to User record (for invalidation/rotation)
+  user.refreshToken = refreshToken;
+  await user.save({ validateBeforeSave: false });
+
+  // Cookie options for Refresh Token
+  const refreshCookieOptions = {
     expires: new Date(
-      Date.now() + (process.env.JWT_COOKIE_EXPIRE || 30) * 24 * 60 * 60 * 1000,
+      Date.now() + (process.env.REFRESH_TOKEN_COOKIE_EXPIRE || 7) * 24 * 60 * 60 * 1000
     ),
     httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    path: "/api/auth/refresh" // Limit cookie exposure to refresh endpoint only
   };
 
-  if (process.env.NODE_ENV === "production") {
-    options.secure = true;
-  }
+  const permissionPayload = await getUserPermissions(user);
 
-  res.status(statusCode).json({
-    success: true,
-    token,
-    user: {
-      id: user._id,
-      name: user.fullName,
-      email: user.email,
-      role: user.role,
-      profilePicture: user.profilePicture,
-    },
-  });
+  res
+    .status(statusCode)
+    .cookie("refreshToken", refreshToken, refreshCookieOptions)
+    .json({
+      success: true,
+      token: accessToken, // Return access token in body
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        roles: permissionPayload.roleNames,
+        permissions: permissionPayload.permissions,
+        profilePicture: user.profilePicture,
+      },
+    });
 };
+
+// @desc    Refresh Access Token
+// @route   POST /api/auth/refresh
+// @access  Public
+exports.refreshToken = async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(401).json({ success: false, message: "Refresh token missing" });
+    }
+
+    // Verify token
+    const jwt = require("jsonwebtoken");
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
+    } catch (err) {
+      return res.status(401).json({ success: false, message: "Invalid refresh token" });
+    }
+
+    // Check if user exists and has this refresh token
+    const user = await User.findById(decoded.id).select("+refreshToken");
+
+    if (!user || user.refreshToken !== refreshToken) {
+      return res.status(401).json({ success: false, message: "Session expired" });
+    }
+
+    // Generate new access token
+    const accessToken = user.getSignedJwtToken();
+
+    res.status(200).json({
+      success: true,
+      token: accessToken
+    });
+  } catch (err) {
+    console.error("Refresh token error:", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+exports.sendTokenResponse = sendTokenResponse;
