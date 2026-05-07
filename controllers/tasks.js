@@ -130,6 +130,25 @@ exports.getTasks = async (req, res) => {
           }
         }
 
+        // Handle customer population - if Lead populate failed, try Sale
+        if (taskObj.customer) {
+          const customerId = typeof taskObj.customer === "object" ? taskObj.customer._id : taskObj.customer;
+          
+          // If customer object is empty or only has _id (meaning Lead population failed)
+          if (typeof taskObj.customer === "string" || (!taskObj.customer.name && !taskObj.customer.NAME && !taskObj.customer.fullName)) {
+            const sale = await Sale.findById(customerId);
+            if (sale) {
+              taskObj.customer = {
+                _id: sale._id,
+                name: sale.customerName,
+                email: sale.email,
+                phone: sale.contactNumber,
+                isReferenceSale: true
+              };
+            }
+          }
+        }
+
         return taskObj;
       }),
     );

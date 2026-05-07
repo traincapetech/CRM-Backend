@@ -1508,23 +1508,35 @@ exports.getAllCustomers = async (req, res) => {
       req.user.fullName,
     );
 
-    // 1. Get assigned leads first
-    const leads = await Lead.find({
-      assignedTo: req.user._id,
-    })
+    // 1. Get leads based on role
+    let leadsQuery;
+    if (req.user.role === "Admin" || req.user.role === "Manager") {
+      leadsQuery = Lead.find({});
+    } else {
+      leadsQuery = Lead.find({ assignedTo: req.user._id });
+    }
+
+    const leads = await leadsQuery
       .populate("leadPerson", "fullName email")
       .populate("createdBy", "fullName email")
       .populate("assignedTo", "fullName email")
       .sort({ createdAt: -1 });
 
-    console.log(`Found ${leads.length} assigned leads`);
+    console.log(`Found ${leads.length} leads`);
 
-    // 2. Get reference sales for this sales person
+    // 2. Get reference sales based on role
     const Sale = require("../models/Sale");
-    const referenceSales = await Sale.find({
-      salesPerson: req.user._id,
-      isReference: true,
-    }).sort({ date: -1 });
+    let salesQuery;
+    if (req.user.role === "Admin" || req.user.role === "Manager") {
+      salesQuery = Sale.find({ isReference: true });
+    } else {
+      salesQuery = Sale.find({
+        salesPerson: req.user._id,
+        isReference: true,
+      });
+    }
+
+    const referenceSales = await salesQuery.sort({ date: -1 });
 
     console.log(`Found ${referenceSales.length} reference sales`);
 

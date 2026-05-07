@@ -40,7 +40,7 @@ router.get('/repeat-customers', authorize('Admin', 'Manager'), getRepeatCustomer
 
 // The '/assigned' route must come BEFORE the '/:id' route
 router.get('/assigned', authorize('Sales Person'), getAssignedLeads);
-router.get('/customers', authorize('Sales Person'), getAllCustomers);
+router.get('/customers', authorize('Sales Person', 'Admin', 'Manager'), getAllCustomers);
 
 // Rajesh duplicate checking routes - must come before /:id route
 router.get('/check-rajesh-duplicates', authorize('Admin', 'Manager'), async (req, res) => {
