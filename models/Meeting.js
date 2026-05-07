@@ -13,6 +13,11 @@ const MeetingSchema = new mongoose.Schema(
       trim: true,
       default: "CRM Meeting",
     },
+    description: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     meetingUrl: {
       type: String,
       required: true,
@@ -86,5 +91,7 @@ const MeetingSchema = new mongoose.Schema(
 MeetingSchema.index({ leadId: 1, createdAt: -1 });
 MeetingSchema.index({ contactId: 1, createdAt: -1 });
 MeetingSchema.index({ createdBy: 1, createdAt: -1 });
+MeetingSchema.index({ invitedParticipants: 1, createdAt: -1 });
+MeetingSchema.index({ meetingType: 1, status: 1 });
 
 module.exports = mongoose.model("Meeting", MeetingSchema);

@@ -9,7 +9,7 @@ const notificationService = require("../services/notificationService");
 // @access  Private
 exports.createMeeting = async (req, res) => {
   try {
-    const { leadId, contactId, title, type, invitedParticipants = [] } = req.body;
+    const { leadId, contactId, title, description, type, meetingType: meetingTypeBody, invitedParticipants = [] } = req.body;
     const timestamp = Date.now();
     
     // Slugify title for better room ID readability
@@ -25,11 +25,12 @@ exports.createMeeting = async (req, res) => {
     const roomId = `${roomSlug}-${timestamp}`;
     const meetingUrl = `https://meet.jit.si/${roomId}`;
 
-    const meetingType = type || (leadId || contactId ? "external" : "internal");
+    const meetingType = meetingTypeBody || type || (leadId || contactId ? "external" : "internal");
 
     const meeting = await Meeting.create({
       roomId,
       title: title || "CRM Meeting",
+      description: description || "",
       meetingUrl,
       leadId: leadId || null,
       contactId: contactId || null,
@@ -187,25 +188,100 @@ exports.endMeeting = async (req, res) => {
 exports.getMyMeetings = async (req, res) => {
   try {
     const userId = req.user.id;
-    
-    // Find internal meetings where user is either the creator OR invited
+
+    // Find internal meetings where:
+    // 1. User is the creator
+    // 2. User is explicitly invited
+    // 3. It's a general internal meeting (no specific invites)
     const meetings = await Meeting.find({
       meetingType: "internal",
       $or: [
         { invitedParticipants: userId },
-        { createdBy: userId }
-      ]
+        { createdBy: userId },
+        { invitedParticipants: { $size: 0 } },
+        { invitedParticipants: { $exists: false } }
+      ],
     })
-    .populate("createdBy", "fullName")
-    .sort("-createdAt");
+      .populate("createdBy", "fullName email")
+      .populate("invitedParticipants", "fullName email")
+      .sort({ status: 1, createdAt: -1 }); // active meetings first (alphabetically 'active' < 'ended')
+
+    // Re-sort: active first, then by date descending
+    const sorted = [
+      ...meetings.filter((m) => m.status === "active"),
+      ...meetings.filter((m) => m.status !== "active").sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
+    ];
 
     res.status(200).json({
       success: true,
-      count: meetings.length,
-      data: meetings,
+      count: sorted.length,
+      data: sorted,
     });
   } catch (error) {
     console.error("Error fetching my huddles:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+// @desc    Add more participants to an active meeting
+// @route   PATCH /api/meetings/:id/invite
+// @access  Private
+exports.inviteParticipants = async (req, res) => {
+  try {
+    const { participants } = req.body;
+    if (!participants || !Array.isArray(participants)) {
+      return res.status(400).json({ success: false, message: "Participants list required" });
+    }
+
+    const meeting = await Meeting.findById(req.params.id);
+    if (!meeting) {
+      return res.status(404).json({ success: false, message: "Meeting not found" });
+    }
+
+    if (meeting.status !== "active") {
+      return res.status(400).json({ success: false, message: "Meeting is no longer active" });
+    }
+
+    // Add new participants, avoiding duplicates
+    const currentParticipants = meeting.invitedParticipants.map(id => id.toString());
+    const newParticipants = participants.filter(id => !currentParticipants.includes(id.toString()));
+
+    if (newParticipants.length > 0) {
+      meeting.invitedParticipants.push(...newParticipants);
+      await meeting.save();
+
+      const creator = await User.findById(meeting.createdBy).select("fullName");
+
+      // Send real-time call alert to the NEWLY added participants
+      notificationService.sendCallAlert(newParticipants, {
+        roomId: meeting.roomId,
+        title: meeting.title,
+        creatorId: meeting.createdBy,
+        creatorName: creator?.fullName || "Admin",
+      });
+
+      // Also create formal notifications
+      for (const pId of newParticipants) {
+        try {
+          await notificationService.createNotification({
+            recipient: pId,
+            type: "TEAM_HUDDLE",
+            message: `🎥 You've been added to a huddle: "${meeting.title}" by ${creator?.fullName || "Admin"}. Come join us.`,
+          });
+        } catch (notifErr) {
+          console.error("❌ Notification creation failed for participant:", pId, notifErr);
+        }
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: meeting,
+    });
+  } catch (error) {
+    console.error("Error inviting participants:", error);
     res.status(500).json({
       success: false,
       message: "Server Error",
