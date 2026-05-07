@@ -23,6 +23,19 @@ class JourneyService {
     const employee = await Employee.findById(employeeId).populate("userId");
     if (!employee) throw new Error("Employee not found");
 
+    // 2.5 Prevent Duplicate Active Journeys for the same template
+    const existingJourney = await JourneyInstance.findOne({
+      templateId: template._id,
+      employeeId: employee._id,
+      status: "ACTIVE",
+    });
+    if (existingJourney) {
+      console.log(
+        `Journey '${templateName}' already active for employee ${employee.fullName}. Skipping creation.`,
+      );
+      return existingJourney;
+    }
+
     // 3. Initialize Steps
     const steps = template.steps.map((step) => ({
       stepId: step.stepId,

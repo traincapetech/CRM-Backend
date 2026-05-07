@@ -7,6 +7,7 @@ const { UPLOAD_PATHS } = require("../config/storage");
 const { sendEmail } = require("../config/nodemailer");
 const asyncHandler = require("../middleware/async"); // Added for asyncHandler
 const UAParser = require("ua-parser-js"); // Changed to default import for better compatibility
+const geoip = require("geoip-lite");
 const { notifyAdmins } = require("../services/notificationService");
 const { getUserPermissions } = require("../utils/rbac");
  
@@ -19,16 +20,21 @@ const recordLoginHistory = async (
   failureReason = null,
 ) => {
   try {
+    const ip = req.ip || req.connection.remoteAddress || "127.0.0.1";
+    const geo = geoip.lookup(ip);
+    const location = geo ? `${geo.city || "Unknown"}, ${geo.country || "Unknown"}` : "Unknown";
+
     const parser = new UAParser();
     const ua = parser.setUA(req.headers["user-agent"] || "").getResult();
 
     await LoginHistory.create({
       userId,
-      ipAddress: req.ip || req.connection.remoteAddress,
+      ipAddress: ip,
       userAgent: req.headers["user-agent"],
       deviceType: ua.device.type || "Desktop",
       browser: `${ua.browser.name || "Unknown"} ${ua.browser.version || ""}`.trim() || "Unknown",
       os: `${ua.os.name || "Unknown"} ${ua.os.version || ""}`.trim() || "Unknown",
+      location,
       status,
       failureReason,
     });
@@ -268,6 +274,17 @@ exports.login = async (req, res) => {
         user.lockUntil = Date.now() + 30 * 60 * 1000; // Lock for 30 minutes
         message = "Too many failed attempts. Account locked for 30 minutes.";
         console.log("[LOGIN] Account LOCKING now");
+
+        // Send security email about lockout
+        try {
+          await sendEmail({
+            email: user.email,
+            subject: "Security Alert: Account Temporarily Locked",
+            message: `Hello ${user.fullName},\n\nYour account has been temporarily locked for 30 minutes due to 5 consecutive failed login attempts.\n\nIf this was not you, please contact your administrator immediately or reset your password once the lock expires.\n\nTime of lockout: ${new Date().toLocaleString()}\nIP Address: ${req.ip || req.connection.remoteAddress}`
+          });
+        } catch (emailErr) {
+          console.error("Failed to send lockout alert email:", emailErr);
+        }
       }
       
       await user.save({ validateBeforeSave: false });
@@ -299,22 +316,32 @@ exports.login = async (req, res) => {
       }).sort({ timestamp: -1 });
 
       if (previousLogin) {
-        // This is a known user but different IP - check if IP was ever seen before
-        const knownIp = await LoginHistory.findOne({ 
+        const ip = req.ip || req.connection.remoteAddress || "127.0.0.1";
+        const geo = geoip.lookup(ip);
+        const currentCountry = geo ? geo.country : "Unknown";
+        const currentUserAgent = req.headers["user-agent"] || "Unknown";
+
+        // Check if IP, Country or User-Agent has been seen before
+        const knownActivity = await LoginHistory.findOne({ 
           userId: user._id, 
           status: "SUCCESS",
-          ipAddress: currentIp 
+          $or: [
+            { ipAddress: ip },
+            { location: new RegExp(currentCountry, "i") },
+            { userAgent: currentUserAgent }
+          ]
         });
 
-        if (!knownIp) {
-          // IP never seen before for this user
-          console.log(`⚠️ Security Alert: New login IP detected for ${user.email}: ${currentIp}`);
+        if (!knownActivity) {
+          // This combination of IP/Country/UA has never been seen before
+          console.log(`⚠️ Security Alert: Anomaly detected for ${user.email} (New Location/Device)`);
           
           try {
+            const locationStr = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
             await sendEmail({
               email: user.email,
               subject: "Security Alert: New Login Detected",
-              message: `Hello ${user.fullName},\n\nA new login was detected for your account from a new IP address: ${currentIp}.\n\nIf this was you, you can ignore this email. If not, please change your password immediately.\n\nDevice Details: ${req.headers["user-agent"]}`
+              message: `Hello ${user.fullName},\n\nA new login was detected for your account from a new location or device.\n\n📍 Location: ${locationStr}\n🌐 IP Address: ${ip}\n📱 Device: ${currentUserAgent}\n\nIf this was you, you can ignore this email. If not, please change your password immediately or contact support.`
             });
           } catch (emailErr) {
             console.error("Failed to send security alert email:", emailErr);

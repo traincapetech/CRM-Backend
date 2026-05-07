@@ -6,7 +6,7 @@ const JourneyTemplate = require("../models/JourneyTemplate");
 // @route   GET /api/journeys
 exports.getJourneys = async (req, res) => {
   try {
-    const { category } = req.query;
+    const { category, status } = req.query;
     let query = {};
 
     // 1. Visibility Logic
@@ -27,6 +27,11 @@ exports.getJourneys = async (req, res) => {
         // If no employee record, only show journeys where they are an assignee
         query = { "steps.assignedToUser": req.user.id };
       }
+    }
+
+    // Add status filter if provided
+    if (status) {
+      query.status = status;
     }
 
     // 2. Fetch with population
