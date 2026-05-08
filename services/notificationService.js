@@ -232,7 +232,7 @@ const sendCallAlert = (recipients, callData) => {
       // 🕵️ Debugging: Count how many people are in the room
       const roomObj = io.sockets.adapter.rooms.get(room);
       const onlineCount = roomObj ? roomObj.size : 0;
-      console.log(`📞 [CALL ALERT] Sending to ${room} (S-instances: ${onlineCount})`);
+      console.log(`📞 [CALL ALERT] Sending to ${room} | Sockets Online: ${onlineCount} | Room: ${room}`);
 
       io.to(room).emit("incoming_call", {
         ...callData,
@@ -240,7 +240,7 @@ const sendCallAlert = (recipients, callData) => {
       });
     });
   } else {
-    console.warn("⚠️ sendCallAlert: io not initialized or recipients list invalid", !!io, !!recipients);
+    console.warn(`⚠️ sendCallAlert Failure: io initialized: ${!!io}, recipients valid: ${!!recipients && Array.isArray(recipients)}`);
   }
 };
 

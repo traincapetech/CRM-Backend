@@ -44,6 +44,8 @@ exports.createMeeting = async (req, res) => {
 
     // Case 1: Targeted Meeting (specific participants)
     if (invitedParticipants.length > 0) {
+      console.log(`🚀 [CREATE MEETING] Inviting ${invitedParticipants.length} users:`, invitedParticipants);
+      
       // 1. Send High-Intensity Socket Alert
       notificationService.sendCallAlert(invitedParticipants, {
         roomId: meeting.roomId,
@@ -188,6 +190,10 @@ exports.endMeeting = async (req, res) => {
 exports.getMyMeetings = async (req, res) => {
   try {
     const userId = req.user.id;
+    const mongoose = require("mongoose");
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
+    console.log(`🔍 [GET MY MEETINGS] Fetching huddles for user: ${userId}`);
 
     // Find internal meetings where:
     // 1. User is the creator
@@ -196,8 +202,8 @@ exports.getMyMeetings = async (req, res) => {
     const meetings = await Meeting.find({
       meetingType: "internal",
       $or: [
-        { invitedParticipants: userId },
-        { createdBy: userId },
+        { invitedParticipants: userObjectId },
+        { createdBy: userObjectId },
         { invitedParticipants: { $size: 0 } },
         { invitedParticipants: { $exists: false } }
       ],
