@@ -12,6 +12,13 @@ exports.createMeeting = async (req, res) => {
     const { leadId, contactId, title, description, type, meetingType: meetingTypeBody, invitedParticipants = [] } = req.body;
     const timestamp = Date.now();
     
+    console.log("🚀 [CREATE MEETING] Request body:", {
+      title,
+      type,
+      meetingTypeBody,
+      invitedCount: invitedParticipants.length,
+      invitedParticipants: invitedParticipants // Log full array to see IDs
+    });
     // Slugify title for better room ID readability
     const slugify = (text) => text
       .toString()
@@ -25,6 +32,11 @@ exports.createMeeting = async (req, res) => {
     const roomId = `${roomSlug}-${timestamp}`;
     const meetingUrl = `https://meet.jit.si/${roomId}`;
 
+    const validParticipants = invitedParticipants.filter(id => id && mongoose.Types.ObjectId.isValid(id));
+    if (validParticipants.length !== invitedParticipants.length) {
+      console.warn(`⚠️ [CREATE MEETING] Filtered out ${invitedParticipants.length - validParticipants.length} invalid participant IDs`);
+    }
+
     const meetingType = meetingTypeBody || type || (leadId || contactId ? "external" : "internal");
 
     const meeting = await Meeting.create({
@@ -35,7 +47,7 @@ exports.createMeeting = async (req, res) => {
       leadId: leadId || null,
       contactId: contactId || null,
       meetingType,
-      invitedParticipants,
+      invitedParticipants: validParticipants,
       createdBy: req.user.id,
       status: "active",
     });
@@ -47,11 +59,20 @@ exports.createMeeting = async (req, res) => {
       console.log(`🚀 [CREATE MEETING] Inviting ${invitedParticipants.length} users:`, invitedParticipants);
       
       // 1. Send High-Intensity Socket Alert
-      notificationService.sendCallAlert(invitedParticipants, {
-        roomId: meeting.roomId,
-        title: meeting.title,
+      console.log(`🚀 [CREATE MEETING] Result:`, {
+        id: meeting._id,
+        meetingType: meeting.meetingType,
+        invited: meeting.invitedParticipants
+      });
+
+      notificationService.sendCallAlert(validParticipants, {
+        meetingId: meeting._id,
+        roomId: roomId,
+        title: title || "Internal Huddle",
+        description: description || "",
         creatorId: req.user.id,
-        creatorName: creator?.fullName || "Admin",
+        creatorName: creator?.fullName || req.user.fullName || "Team Member",
+        type: meetingType
       });
 
       // 2. Also create a formal notification for their history
@@ -194,7 +215,8 @@ exports.getMyMeetings = async (req, res) => {
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
     console.log(`🔍 [GET MY MEETINGS] Fetching huddles for user: ${userId}`);
-
+    console.log(`🔍 [GET MY MEETINGS] Querying for user: ${req.user.id} (${userObjectId})`);
+    
     // Find internal meetings where:
     // 1. User is the creator
     // 2. User is explicitly invited
@@ -208,9 +230,12 @@ exports.getMyMeetings = async (req, res) => {
         { invitedParticipants: { $exists: false } }
       ],
     })
-      .populate("createdBy", "fullName email")
-      .populate("invitedParticipants", "fullName email")
-      .sort({ status: 1, createdAt: -1 }); // active meetings first (alphabetically 'active' < 'ended')
+    .populate("createdBy", "fullName email avatar")
+    .populate("invitedParticipants", "fullName email avatar")
+    .sort({ createdAt: -1 });
+
+    console.log(`🔍 [GET MY MEETINGS] Found ${meetings.length} internal meetings`);
+ // active meetings first (alphabetically 'active' < 'ended')
 
     // Re-sort: active first, then by date descending
     const sorted = [
