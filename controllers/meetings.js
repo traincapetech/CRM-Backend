@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Meeting = require("../models/Meeting");
 const Lead = require("../models/Lead");
 const Prospect = require("../models/Prospect");
@@ -211,7 +212,6 @@ exports.endMeeting = async (req, res) => {
 exports.getMyMeetings = async (req, res) => {
   try {
     const userId = req.user.id;
-    const mongoose = require("mongoose");
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
     console.log(`🔍 [GET MY MEETINGS] Fetching huddles for user: ${userId}`);
