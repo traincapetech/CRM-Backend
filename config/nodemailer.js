@@ -107,11 +107,12 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
       const brevoStatus = error.response?.status;
       const brevoCode = error.response?.data?.code;
       if (brevoStatus === 401 || brevoStatus === 403 || brevoCode === 'unauthorized') {
-        throw new Error('Brevo authorization failed. Check BREVO_API_KEY.');
+        console.error('❌ Brevo authorization failed. Check BREVO_API_KEY. Falling back to SMTP...');
+      } else {
+        console.error('❌ Brevo send failed, falling back to SMTP:', {
+          message: error.response?.data || error.message
+        });
       }
-      console.error('❌ Brevo send failed, falling back to SMTP:', {
-        message: error.response?.data || error.message
-      });
       // Fall back to SMTP below
     }
   }
