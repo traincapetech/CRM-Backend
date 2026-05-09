@@ -16,6 +16,7 @@ const smtpConfigs = [
     host: 'smtp.hostinger.com',
     port: 465,
     secure: true, // SSL for port 465
+    family: 4,    // Force IPv4 — Render's IPv6 routing to Hostinger is blocked
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
@@ -32,6 +33,7 @@ const smtpConfigs = [
     port: 587,
     secure: false, // STARTTLS for port 587
     requireTLS: true,
+    family: 4,    // Force IPv4
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
@@ -65,12 +67,18 @@ const sendViaBrevo = async ({ to, subject, text, html }) => {
     throw new Error('FATAL: FROM_EMAIL or EMAIL_USER is required for Brevo');
   }
 
+  // Brevo rejects emails where both text fields are empty/null
+  // Auto-generate plain text from HTML if no text provided
+  const textContent = (text && text.trim()) 
+    ? text 
+    : (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'Please view this email in an HTML-compatible client.';
+
   const payload = {
     sender: { email: fromEmail, name: fromName },
     to: [{ email: to }],
     subject,
-    textContent: text,
-    htmlContent: html
+    textContent,
+    htmlContent: html || textContent
   };
 
   await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
