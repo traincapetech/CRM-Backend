@@ -622,8 +622,8 @@ const sendOnboardingInviteEmail = async ({
         </div>
       </div>`;
 
-    await sendEmail(candidateEmail, subject, "", html);
-    return { success: true };
+    const result = await sendEmail(candidateEmail, subject, "", html);
+    return { success: !!result, info: result };
   } catch (error) {
     console.error("sendOnboardingInviteEmail error:", error.message);
     return { success: false, error: error.message };

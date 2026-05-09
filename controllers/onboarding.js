@@ -36,7 +36,7 @@ const getPortalUrl = (token) => {
   const base =
     process.env.CLIENT_URL ||
     process.env.FRONTEND_URL ||
-    "http://localhost:5173";
+    "https://traincapecrm.traincapetech.in"; // Default to production instead of localhost
   return `${base}/onboarding/${token}`;
 };
 
@@ -101,9 +101,10 @@ exports.createInvite = async (req, res) => {
 
     // Send invite email
     const portalUrl = getPortalUrl(token);
-    console.log("🚀 GENERATED PORTAL URL:", portalUrl);
+    let emailStatus = { sent: false };
+    
     try {
-      await sendOnboardingInviteEmail({
+      const emailRes = await sendOnboardingInviteEmail({
         candidateName: fullName,
         candidateEmail: personalEmail,
         portalUrl,
@@ -111,8 +112,13 @@ exports.createInvite = async (req, res) => {
         joiningDate,
         invitedByName: req.user.fullName,
       });
+      emailStatus.sent = emailRes.success;
+      if (!emailRes.success) {
+        emailStatus.error = emailRes.error;
+      }
     } catch (emailErr) {
       console.error("Invite email failed:", emailErr.message);
+      emailStatus.error = emailErr.message;
     }
 
     // Notify admins
@@ -125,7 +131,11 @@ exports.createInvite = async (req, res) => {
       success: true,
       data: invite,
       portalUrl,
-      message: "Invite sent successfully",
+      emailSent: emailStatus.sent,
+      emailError: emailStatus.error,
+      message: emailStatus.sent 
+        ? "Invite sent successfully" 
+        : "Invite saved, but email failed to send. Please share the link manually.",
     });
   } catch (error) {
     console.error("createInvite error:", error);
@@ -274,8 +284,9 @@ exports.resendLink = async (req, res) => {
     await invite.save();
 
     const portalUrl = getPortalUrl(token);
+    let emailStatus = { sent: false };
     try {
-      await sendOnboardingInviteEmail({
+      const emailRes = await sendOnboardingInviteEmail({
         candidateName: invite.fullName,
         candidateEmail: invite.personalEmail,
         portalUrl,
@@ -284,11 +295,22 @@ exports.resendLink = async (req, res) => {
         invitedByName: req.user.fullName,
         isResend: true,
       });
+      emailStatus.sent = emailRes.success;
+      if (!emailRes.success) emailStatus.error = emailRes.error;
     } catch (e) {
       console.error("Resend email failed:", e.message);
+      emailStatus.error = e.message;
     }
-
-    res.json({ success: true, portalUrl, message: "New link sent successfully" });
+    
+    res.json({ 
+      success: true, 
+      portalUrl, 
+      emailSent: emailStatus.sent,
+      emailError: emailStatus.error,
+      message: emailStatus.sent 
+        ? "New link sent successfully" 
+        : "New link generated, but email failed to send. Please share manually."
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
