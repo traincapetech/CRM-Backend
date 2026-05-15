@@ -206,6 +206,19 @@ const payrollSchema = new mongoose.Schema(
       type: String,
       maxlength: 1000,
     },
+    auditLogs: [
+      {
+        message: String,
+        changedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        timestamp: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
   {
     timestamps: true,

@@ -448,6 +448,7 @@ exports.getPayroll = async (req, res) => {
         ],
       })
       .populate("userId", "fullName email")
+      .populate("auditLogs.changedBy", "fullName")
       .sort({ year: -1, month: -1 });
 
     console.log(
@@ -640,6 +641,16 @@ exports.updatePayroll = async (req, res) => {
     
     if (changes.length > 0) {
       const employeeName = payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee");
+      const changeMessage = `Updated: ${changes.join(", ")}`;
+      
+      // Store in payroll record for permanent audit trail
+      payroll.auditLogs.push({
+        message: changeMessage,
+        changedBy: req.user.id,
+        timestamp: new Date()
+      });
+      await payroll.save();
+
       await notifyAdmins({
         type: "PAYROLL_UPDATED",
         message: `${req.user.fullName} updated payroll for ${employeeName} (${payroll.monthName || "this month"}). Changes: ${changes.join(", ")}`,

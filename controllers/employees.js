@@ -784,12 +784,47 @@ exports.updateEmployee = async (req, res) => {
       personalEmail: "Personal Email"
     };
 
-    const changes = trackChanges(oldEmployee, employee.toObject(), fieldLabels);
+    // List of PII fields that are encrypted in the database
+    const PII_FIELDS = [
+      "phoneNumber",
+      "whatsappNumber",
+      "currentAddress",
+      "permanentAddress",
+      "dateOfBirth",
+      "aadharCard",
+      "panCard",
+      "bankAccountNumber",
+      "upiId",
+    ];
+
+    // Helper to decrypt fields for the change log comparison
+    const decryptForLog = (obj) => {
+      const decrypted = { ...obj };
+      for (const field of PII_FIELDS) {
+        if (decrypted[field]) {
+          try {
+            decrypted[field] = decrypt(decrypted[field]);
+          } catch (e) {
+            // If decryption fails, keep as is
+          }
+        }
+      }
+      return decrypted;
+    };
+
+    const changes = trackChanges(
+      decryptForLog(oldEmployee),
+      decryptForLog(employee.toObject()),
+      fieldLabels,
+    );
+
     if (changes.length > 0) {
       await notifyAdmins({
         type: "EMPLOYEE_UPDATED",
-        message: `${req.user.fullName} updated profile for ${employee.fullName}. Changes: ${changes.join(", ")}`,
-        employeeId: employee._id
+        message: `${req.user.fullName} updated profile for ${
+          employee.fullName
+        }. Changes: ${changes.join(", ")}`,
+        employeeId: employee._id,
       });
     }
 
