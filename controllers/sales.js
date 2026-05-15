@@ -5,6 +5,7 @@ const {
   sendPaymentConfirmationEmail,
   sendServiceDeliveryEmail,
 } = require("../services/emailService");
+const trackChanges = require("../utils/changeTracker");
 
 // @desc    Get all sales
 // @route   GET /api/sales
@@ -401,6 +402,8 @@ exports.updateSale = async (req, res) => {
       });
     }
 
+    const oldSale = sale.toObject();
+
     // Store original values for comparison
     const originalStatus = sale.status;
     const originalTokenAmount = sale.tokenAmount;
@@ -640,22 +643,34 @@ exports.updateSale = async (req, res) => {
       }
     }
 
-    // Notify all admins of the update
+    // Notify all admins of the update with details
     try {
       const notificationService = require("../services/notificationService");
-      let updateInfo = "";
-      if (req.body.status && req.body.status !== originalStatus) {
-        updateInfo = `Status changed from ${originalStatus} to ${req.body.status}. `;
-      }
-      if (req.body.feedback) {
-        updateInfo += `Feedback updated. `;
-      }
+      
+      const fieldLabels = {
+        customerName: "Customer Name",
+        email: "Email",
+        phoneNumber: "Phone",
+        course: "Course",
+        totalCost: "Total Cost",
+        tokenAmount: "Token Amount",
+        status: "Status",
+        paymentMethod: "Payment Method",
+        salesPerson: "Sales Person",
+        leadPerson: "Lead Person",
+        remarks: "Remarks",
+        feedback: "Feedback"
+      };
 
-      await notificationService.notifyAdmins({
-        type: "ACTIVITY",
-        message: `Sale updated by ${req.user.fullName} for customer ${sale.customerName}. ${updateInfo}`,
-        data: { saleId: sale._id }
-      });
+      const changes = trackChanges(oldSale, sale.toObject(), fieldLabels);
+
+      if (changes.length > 0) {
+        await notificationService.notifyAdmins({
+          type: "ACTIVITY",
+          message: `${req.user.fullName} updated sale for ${sale.customerName}. Changes: ${changes.join(", ")}`,
+          data: { saleId: sale._id }
+        });
+      }
     } catch (notifyError) {
       console.error("Admin notification error (non-blocking):", notifyError);
     }

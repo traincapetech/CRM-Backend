@@ -1,6 +1,70 @@
 const Lead = require("../models/Lead");
 const { decrypt } = require("../utils/encryption");
 
+/**
+ * Helper to notify admins about detailed lead updates
+ */
+const notifyAdminOfLeadUpdate = async (req, oldLead, newLead) => {
+  try {
+    const notificationService = require("../services/notificationService");
+    
+    // Fields we want to track for changes
+    const trackedFields = {
+      name: "Name",
+      email: "Email",
+      phone: "Phone",
+      course: "Course",
+      status: "Status",
+      assignedTo: "Assigned To",
+      leadPerson: "Lead Person",
+      country: "Country",
+      feedback: "Feedback",
+      remarks: "Remarks",
+      client: "Client Remark"
+    };
+
+    let changes = [];
+    
+    // Get plain objects for comparison
+    const oldData = oldLead.toObject ? oldLead.toObject() : oldLead;
+    const newData = newLead.toObject ? newLead.toObject() : newLead;
+
+    for (const [field, label] of Object.entries(trackedFields)) {
+      let oldValue = oldData[field];
+      let newValue = newData[field];
+
+      // Special handling for ObjectIds/Populated fields
+      if (field === "assignedTo" || field === "leadPerson") {
+        const oldId = oldData[field]?._id || oldData[field];
+        const newId = newData[field]?._id || newData[field];
+        
+        if (String(oldId || "") !== String(newId || "")) {
+          const oldName = oldData[field]?.fullName || (oldId ? "ID: " + oldId : "None");
+          const newName = newData[field]?.fullName || (newId ? "ID: " + newId : "None");
+          changes.push(`${label}: ${oldName} -> ${newName}`);
+        }
+        continue;
+      }
+
+      // String comparison for most fields
+      if (String(oldValue || "") !== String(newValue || "")) {
+        changes.push(`${label}: ${oldValue || "N/A"} -> ${newValue || "N/A"}`);
+      }
+    }
+
+    if (changes.length > 0) {
+      console.log(`🔔 Detailed notification for lead ${newLead._id}:`, changes.join(", "));
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `${req.user.fullName} updated lead for ${newLead.name}. Changes: ${changes.join(", ")}`,
+        data: { leadId: newLead._id }
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error in notifyAdminOfLeadUpdate:", error);
+  }
+};
+
 // @desc    Get all leads
 // @route   GET /api/leads
 // @access  Private
@@ -578,7 +642,7 @@ exports.updateLead = async (req, res) => {
     });
     console.log("Update data:", req.body);
 
-    let lead = await Lead.findById(req.params.id);
+    let lead = await Lead.findById(req.params.id).populate("assignedTo leadPerson", "fullName");
 
     if (!lead) {
       return res.status(404).json({
@@ -593,6 +657,7 @@ exports.updateLead = async (req, res) => {
       assignedTo: lead.assignedTo,
     });
 
+    const oldLead = lead.toObject(); // Capture old state (decrypted)
     const originalStatus = lead.status;
 
     // Check if user is authorized to update this lead
@@ -627,7 +692,10 @@ exports.updateLead = async (req, res) => {
       lead = await Lead.findByIdAndUpdate(req.params.id, updateData, {
         new: true,
         runValidators: true,
-      });
+      }).populate("assignedTo leadPerson", "fullName");
+
+      // Detailed Admin Notification
+      await notifyAdminOfLeadUpdate(req, oldLead, lead);
 
       return res.status(200).json({
         success: true,
@@ -699,7 +767,10 @@ exports.updateLead = async (req, res) => {
     lead = await Lead.findByIdAndUpdate(req.params.id, finalUpdateData, {
       new: true,
       runValidators: true,
-    });
+    }).populate("assignedTo leadPerson", "fullName");
+
+    // Detailed Admin Notification
+    await notifyAdminOfLeadUpdate(req, oldLead, lead);
 
     // Trigger workflows for lead_status_changed if status was updated
     if (req.body.status && req.body.status !== lead.status) {
@@ -742,25 +813,7 @@ exports.updateLead = async (req, res) => {
         );
       }
 
-      // Notify all admins of what exactly has happened
-      try {
-        const notificationService = require("../services/notificationService");
-        let updateMsg = `${req.user.fullName} updated lead for ${lead.name}.`;
-        if (req.body.status && req.body.status !== lead.status) {
-          updateMsg += ` Status changed from ${lead.status} to ${req.body.status}.`;
-        }
-        if (req.body.FEEDBACK || req.body.feedback) {
-          updateMsg += ` Feedback added: ${req.body.FEEDBACK || req.body.feedback}`;
-        }
-
-        await notificationService.notifyAdmins({
-          type: "ACTIVITY",
-          message: updateMsg,
-          data: { leadId: lead._id },
-        });
-      } catch (notifyError) {
-        console.error("Admin notification error (non-blocking):", notifyError);
-      }
+      // Detailed notification logic moved to notifyAdminOfLeadUpdate helper
 
       // Update for lead person
       if (lead.leadPerson) {
@@ -1039,6 +1092,8 @@ exports.updateFeedback = async (req, res) => {
       });
     }
 
+    const oldLead = lead.toObject();
+
     // Update only the feedback field and updatedAt
     lead = await Lead.findByIdAndUpdate(
       req.params.id,
@@ -1051,6 +1106,9 @@ exports.updateFeedback = async (req, res) => {
         runValidators: true,
       },
     );
+
+    // Detailed Admin Notification
+    await notifyAdminOfLeadUpdate(req, oldLead, lead);
 
     res.status(200).json({
       success: true,

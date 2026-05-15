@@ -8,7 +8,8 @@ const {
   sendTicketAssignedEmail,
   sendTicketStatusUpdateEmail,
 } = require("../services/emailService");
-const { createNotification } = require("../services/notificationService");
+const { createNotification, notifyAdmins } = require("../services/notificationService");
+const trackChanges = require("../utils/changeTracker");
 const TicketChat = require("../models/TicketChat");
 
 const fileStorage = require("../services/fileStorageService");
@@ -300,6 +301,7 @@ exports.assignTicket = async (req, res) => {
       });
     }
 
+    const oldTicket = ticket.toObject();
     ticket.assignTicket(departmentId, memberId);
 
     // Add activity log
@@ -336,6 +338,23 @@ exports.assignTicket = async (req, res) => {
         ticketId: fullTicket._id,
         message: `Your ticket "${fullTicket.title}" has been assigned to ${fullTicket.assignedTo?.fullName || departmentId}`,
       });
+
+      // Detailed Admin Notification
+      const fieldLabels = {
+        status: "Status",
+        assignedTo: "Assigned Member",
+        assignedDept: "Assigned Dept",
+        priority: "Priority"
+      };
+
+      const changes = trackChanges(oldTicket, fullTicket.toObject(), fieldLabels);
+      if (changes.length > 0) {
+        await notifyAdmins({
+          type: "TICKET_UPDATED",
+          message: `${req.user.fullName} updated ticket "${fullTicket.title}". Changes: ${changes.join(", ")}`,
+          ticketId: fullTicket._id
+        });
+      }
 
       // BROADCAST UPDATE to ticket room (for real-time update if user has ticket open)
       const { broadcastTicketUpdate } = require("../services/notificationService");
@@ -416,6 +435,20 @@ exports.startProgress = async (req, res) => {
         message: `Progress has started on your ticket: "${fullTicket.title}"`,
       });
 
+      // Detailed Admin Notification
+      const fieldLabels = {
+        status: "Status"
+      };
+
+      const changes = trackChanges(oldTicket, fullTicket.toObject(), fieldLabels);
+      if (changes.length > 0) {
+        await notifyAdmins({
+          type: "TICKET_UPDATED",
+          message: `${req.user.fullName} updated ticket "${fullTicket.title}". Changes: ${changes.join(", ")}`,
+          ticketId: fullTicket._id
+        });
+      }
+
       // BROADCAST UPDATE
       const { broadcastTicketUpdate } = require("../services/notificationService");
       broadcastTicketUpdate(fullTicket._id, { status: fullTicket.status });
@@ -485,6 +518,20 @@ exports.resolveTicket = async (req, res) => {
         ticketId: fullTicket._id,
         message: `Your ticket "${fullTicket.title}" has been marked as RESOLVED`,
       });
+
+      // Detailed Admin Notification
+      const fieldLabels = {
+        status: "Status"
+      };
+
+      const changes = trackChanges(oldTicket, fullTicket.toObject(), fieldLabels);
+      if (changes.length > 0) {
+        await notifyAdmins({
+          type: "TICKET_UPDATED",
+          message: `${req.user.fullName} updated ticket "${fullTicket.title}". Changes: ${changes.join(", ")}`,
+          ticketId: fullTicket._id
+        });
+      }
 
       // BROADCAST UPDATE
       const { broadcastTicketUpdate } = require("../services/notificationService");

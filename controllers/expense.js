@@ -2,6 +2,8 @@ const Expense = require("../models/Expense");
 const User = require("../models/User");
 const Employee = require("../models/Employee");
 const { uploadToR2 } = require("../services/r2Service"); // Assuming R2 service exists
+const trackChanges = require("../utils/changeTracker");
+const { notifyAdmins } = require("../services/notificationService");
 const fs = require("fs");
 const path = require("path");
 
@@ -137,13 +139,15 @@ exports.updateExpenseStatus = async (req, res) => {
       });
     }
 
-    const expense = await Expense.findById(req.params.id);
+    const expense = await Expense.findById(req.params.id).populate("employeeId userId", "fullName firstName lastName");
     if (!expense) {
       return res.status(404).json({
         success: false,
         message: "Expense not found",
       });
     }
+
+    const oldExpense = expense.toObject();
 
     if (expense.status === "PAID") {
       return res.status(400).json({
@@ -160,6 +164,25 @@ exports.updateExpenseStatus = async (req, res) => {
     }
 
     await expense.save();
+
+    // Detailed Admin Notification
+    const fieldLabels = {
+      status: "Status",
+      rejectionReason: "Rejection Reason",
+      amount: "Amount",
+      title: "Title"
+    };
+
+    const changes = trackChanges(oldExpense, expense.toObject(), fieldLabels);
+    
+    if (changes.length > 0) {
+      const employeeName = expense.employeeId?.fullName || `${expense.employeeId?.firstName || ""} ${expense.employeeId?.lastName || ""}`.trim() || "Employee";
+      await notifyAdmins({
+        type: "ACTIVITY",
+        message: `${req.user.fullName} updated expense for ${employeeName}. Changes: ${changes.join(", ")}`,
+        data: { expenseId: expense._id }
+      });
+    }
 
     res.status(200).json({
       success: true,

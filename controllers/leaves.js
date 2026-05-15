@@ -6,6 +6,7 @@ const Attendance = require("../models/Attendance");
 const Holiday = require("../models/Holiday");
 const mongoose = require("mongoose");
 const { notifyAdmins } = require("../services/notificationService");
+const trackChanges = require("../utils/changeTracker");
 
 /**
  * Helper to sync approved leave dates into attendance records
@@ -466,7 +467,7 @@ exports.approveLeave = async (req, res) => {
       });
     }
 
-    const leave = await Leave.findById(req.params.id);
+    const leave = await Leave.findById(req.params.id).populate("employeeId", "fullName");
     if (!leave) {
       return res.status(404).json({
         success: false,
@@ -474,6 +475,7 @@ exports.approveLeave = async (req, res) => {
       });
     }
 
+    const oldLeave = leave.toObject();
     leave.status = "approved";
     leave.approvedBy = req.user.id;
     leave.approvedDate = Date.now();
@@ -482,12 +484,24 @@ exports.approveLeave = async (req, res) => {
     // Trigger Attendance Sync
     await syncLeaveToAttendance(leave, req.user.id);
 
-    // Notify Admins
-    await notifyAdmins({
-      type: "LEAVE_APPROVED",
-      message: `Leave Approved: ${leave.employeeId?.fullName || 'Employee'} by ${req.user.fullName}`,
-      leaveId: leave._id
-    });
+    // Detailed Admin Notification
+    const fieldLabels = {
+      status: "Status",
+      approvedBy: "Approved By",
+      rejectedBy: "Rejected By",
+      rejectionReason: "Rejection Reason"
+    };
+
+    const changes = trackChanges(oldLeave, leave.toObject(), fieldLabels);
+    
+    if (changes.length > 0) {
+      const employeeName = leave.employeeId?.fullName || "Employee";
+      await notifyAdmins({
+        type: "LEAVE_UPDATED",
+        message: `${req.user.fullName} updated leave for ${employeeName}. Changes: ${changes.join(", ")}`,
+        leaveId: leave._id
+      });
+    }
 
     res.json({
       success: true,
@@ -516,7 +530,7 @@ exports.rejectLeave = async (req, res) => {
       });
     }
 
-    const leave = await Leave.findById(req.params.id);
+    const leave = await Leave.findById(req.params.id).populate("employeeId", "fullName");
     if (!leave) {
       return res.status(404).json({
         success: false,
@@ -524,18 +538,31 @@ exports.rejectLeave = async (req, res) => {
       });
     }
 
+    const oldLeave = leave.toObject();
     leave.status = "rejected";
     leave.rejectedBy = req.user.id;
     leave.rejectedDate = Date.now();
     leave.rejectionReason = req.body.reason;
     await leave.save();
 
-    // Notify Admins
-    await notifyAdmins({
-      type: "LEAVE_REJECTED",
-      message: `Leave Rejected: ${leave.employeeId?.fullName || 'Employee'} by ${req.user.fullName}. Reason: ${req.body.reason}`,
-      leaveId: leave._id
-    });
+    // Detailed Admin Notification
+    const fieldLabels = {
+      status: "Status",
+      approvedBy: "Approved By",
+      rejectedBy: "Rejected By",
+      rejectionReason: "Rejection Reason"
+    };
+
+    const changes = trackChanges(oldLeave, leave.toObject(), fieldLabels);
+    
+    if (changes.length > 0) {
+      const employeeName = leave.employeeId?.fullName || "Employee";
+      await notifyAdmins({
+        type: "LEAVE_UPDATED",
+        message: `${req.user.fullName} updated leave for ${employeeName}. Changes: ${changes.join(", ")}`,
+        leaveId: leave._id
+      });
+    }
 
     res.json({
       success: true,

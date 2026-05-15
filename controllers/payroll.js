@@ -2,6 +2,7 @@ const Payroll = require("../models/Payroll");
 const Employee = require("../models/Employee");
 const PayoutAuditLog = require("../models/PayoutAuditLog");
 const { notifyAdmins } = require("../services/notificationService");
+const trackChanges = require("../utils/changeTracker");
 const Attendance = require("../models/Attendance");
 const Expense = require("../models/Expense"); // Added Expense model
 const PDFDocument = require("pdfkit");
@@ -524,13 +525,15 @@ exports.updatePayroll = async (req, res) => {
       });
     }
 
-    const payroll = await Payroll.findById(req.params.id);
+    const payroll = await Payroll.findById(req.params.id).populate("employeeId userId", "fullName");
     if (!payroll) {
       return res.status(404).json({
         success: false,
         message: "Payroll record not found",
       });
     }
+
+    const oldPayroll = payroll.toObject();
 
     // Update allowed fields
     const allowedFields = [
@@ -603,16 +606,46 @@ exports.updatePayroll = async (req, res) => {
 
     await payroll.save();
 
-    // Notify Admins
-    await notifyAdmins({
-      type: "PAYROLL_UPDATED",
-      message: `Payroll Updated: ${payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee")} (${payroll.monthName || "this month"}) by ${req.user.fullName}`,
-      payrollId: payroll._id,
-    });
+    // Populate employee details for response and change tracking
+    await payroll.populate("employeeId userId", "fullName email department");
 
-    // Populate employee details for response
-    await payroll.populate("employeeId", "fullName email department");
-    await payroll.populate("userId", "fullName email");
+    // Detailed Admin Notification
+    const fieldLabels = {
+      baseSalary: "Base Salary",
+      daysPresent: "Days Present",
+      calculatedSalary: "Calculated Salary",
+      workingDays: "Working Days",
+      hra: "HRA",
+      da: "DA",
+      conveyanceAllowance: "Conveyance",
+      medicalAllowance: "Medical",
+      specialAllowance: "Special Allowance",
+      overtimeAmount: "Overtime Amount",
+      performanceBonus: "Performance Bonus",
+      projectBonus: "Project Bonus",
+      attendanceBonus: "Attendance Bonus",
+      festivalBonus: "Festival Bonus",
+      pf: "PF",
+      esi: "ESI",
+      tax: "Tax",
+      loan: "Loan",
+      advanceDeduction: "Advance Deduction",
+      other: "Other Deduction",
+      reimbursements: "Reimbursements",
+      notes: "Notes",
+      status: "Status"
+    };
+
+    const changes = trackChanges(oldPayroll, payroll.toObject(), fieldLabels);
+    
+    if (changes.length > 0) {
+      const employeeName = payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee");
+      await notifyAdmins({
+        type: "PAYROLL_UPDATED",
+        message: `${req.user.fullName} updated payroll for ${employeeName} (${payroll.monthName || "this month"}). Changes: ${changes.join(", ")}`,
+        payrollId: payroll._id,
+      });
+    }
 
     res.status(200).json({
       success: true,

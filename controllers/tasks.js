@@ -4,6 +4,7 @@ const Lead = require("../models/Lead");
 const Sale = require("../models/Sale");
 const PerformanceSummary = require("../models/PerformanceSummary");
 const { notifyAdmins } = require("../services/notificationService");
+const trackChanges = require("../utils/changeTracker");
 
 // @desc    Get all tasks
 // @route   GET /api/tasks?department=IT
@@ -236,6 +237,7 @@ exports.updateTask = async (req, res) => {
         .json({ success: false, message: "Task not found" });
     }
 
+    const oldTask = task.toObject();
     const isAssignee =
       task.assignedTo?._id?.toString() === req.user.id.toString() ||
       task.assignedTo?.toString() === req.user.id.toString();
@@ -350,11 +352,23 @@ exports.updateTask = async (req, res) => {
       }
     }
 
-    // Notify Admins about status change
-    if (req.body.status && req.body.status !== previousStatus) {
+    // Detailed Admin Notification about status/field changes
+    const fieldLabels = {
+      status: "Status",
+      title: "Title",
+      description: "Description",
+      assignedTo: "Assigned To",
+      priority: "Priority",
+      examDate: "Exam Date",
+      course: "Course"
+    };
+
+    const changes = trackChanges(oldTask, task.toObject(), fieldLabels);
+    
+    if (changes.length > 0) {
       await notifyAdmins({
-        type: "TASK_STATUS_UPDATED",
-        message: `Task "${task.title}" status changed to ${task.status} by ${req.user.fullName}`,
+        type: "TASK_UPDATED",
+        message: `${req.user.fullName} updated task "${task.title}". Changes: ${changes.join(", ")}`,
         taskId: task._id
       });
     }

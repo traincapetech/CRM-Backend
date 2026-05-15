@@ -7,6 +7,7 @@ const path = require("path");
 const fileStorage = require("../services/fileStorageService");
 const { decrypt } = require("../utils/encryption");
 const { notifyAdmins } = require("../services/notificationService");
+const trackChanges = require("../utils/changeTracker");
 const { sendWelcomeEmail } = require("../services/emailService");
 
 // Export multer upload middleware
@@ -676,6 +677,8 @@ exports.updateEmployee = async (req, res) => {
       });
     }
 
+    const oldEmployee = employee.toObject();
+
     // Check authorization - Allow only HR, Admin, and Manager to update employees
     // Also allow users to update their own profile
     if (
@@ -768,12 +771,27 @@ exports.updateEmployee = async (req, res) => {
 
     console.log("Employee updated successfully");
 
-    // Notify Admins
-    await notifyAdmins({
-      type: "EMPLOYEE_UPDATED",
-      message: `Employee Profile Updated: ${employee.fullName} by ${req.user.fullName}`,
-      employeeId: employee._id
-    });
+    // Detailed Admin Notification
+    const fieldLabels = {
+      fullName: "Full Name",
+      email: "Email",
+      role: "Role",
+      department: "Department",
+      status: "Status",
+      employmentType: "Employment Type",
+      joiningDate: "Joining Date",
+      phoneNumber: "Phone Number",
+      personalEmail: "Personal Email"
+    };
+
+    const changes = trackChanges(oldEmployee, employee.toObject(), fieldLabels);
+    if (changes.length > 0) {
+      await notifyAdmins({
+        type: "EMPLOYEE_UPDATED",
+        message: `${req.user.fullName} updated profile for ${employee.fullName}. Changes: ${changes.join(", ")}`,
+        employeeId: employee._id
+      });
+    }
 
     res.status(200).json({
       success: true,

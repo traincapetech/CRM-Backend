@@ -2,6 +2,7 @@ const Incentive = require('../models/Incentive');
 const Employee = require('../models/Employee');
 const User = require('../models/User');
 const { notifyAdmins } = require("../services/notificationService");
+const trackChanges = require("../utils/changeTracker");
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -323,12 +324,23 @@ exports.updateIncentive = async (req, res) => {
 
     await incentive.save();
 
-    // Notify Admins
-    await notifyAdmins({
-      type: "INCENTIVE_UPDATED",
-      message: `Incentive Updated: ${incentive.employeeId?.fullName || "Employee"} by ${req.user.fullName}`,
-      incentiveId: incentive._id,
-    });
+    // Detailed Admin Notification
+    const fieldLabels = {
+      title: "Title",
+      description: "Description",
+      amount: "Amount",
+      status: "Status",
+      type: "Type"
+    };
+
+    const changes = trackChanges(oldIncentive, incentive.toObject(), fieldLabels);
+    if (changes.length > 0) {
+      await notifyAdmins({
+        type: "INCENTIVE_UPDATED",
+        message: `${req.user.fullName} updated incentive. Changes: ${changes.join(", ")}`,
+        incentiveId: incentive._id,
+      });
+    }
 
     const updatedIncentive = await Incentive.findById(incentive._id)
       .populate('employeeId', 'fullName email department')

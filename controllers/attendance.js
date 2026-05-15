@@ -2,6 +2,8 @@ const Attendance = require('../models/Attendance');
 const Employee = require('../models/Employee');
 const User = require('../models/User');
 const Holiday = require('../models/Holiday');
+const { notifyAdmins } = require("../services/notificationService");
+const trackChanges = require("../utils/changeTracker");
 
 // @desc    Check-in employee
 // @route   POST /api/attendance/checkin
@@ -445,6 +447,8 @@ exports.updateAttendance = async (req, res) => {
       });
     }
 
+    const oldAttendance = attendance.toObject();
+
     if (attendance.source === 'BIOMETRIC' && req.user.role !== 'Admin') {
       return res.status(403).json({
         success: false,
@@ -460,6 +464,22 @@ exports.updateAttendance = async (req, res) => {
     attendance.approvedBy = req.user.id;
     
     await attendance.save();
+
+    // Detailed Admin Notification
+    const fieldLabels = {
+      status: "Status",
+      notes: "Notes",
+      totalHours: "Total Hours"
+    };
+
+    const changes = trackChanges(oldAttendance, attendance.toObject(), fieldLabels);
+    if (changes.length > 0) {
+      await notifyAdmins({
+        type: "ATTENDANCE_UPDATED",
+        message: `${req.user.fullName} updated attendance record. Changes: ${changes.join(", ")}`,
+        attendanceId: attendance._id
+      });
+    }
 
     res.status(200).json({
       success: true,
