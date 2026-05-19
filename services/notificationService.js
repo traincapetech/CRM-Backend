@@ -267,9 +267,9 @@ const sendWebPush = async (userId, payload) => {
       try {
         await webpush.sendNotification(sub.subscription, pushPayload);
       } catch (error) {
-        // If subscription is expired or invalid, remove it
-        if (error.statusCode === 404 || error.statusCode === 410) {
-          console.log(`🗑️ Removing expired push subscription for user ${userId}`);
+        // If subscription is expired, invalid, or unauthorized (VAPID key mismatch), remove it
+        if (error.statusCode === 404 || error.statusCode === 410 || error.statusCode === 403) {
+          console.log(`🗑️ Removing invalid/expired/unauthorized push subscription (status ${error.statusCode}) for user ${userId}`);
           await NotificationSubscription.findByIdAndDelete(sub._id);
         } else {
           console.error("❌ Error sending push notification:", error);

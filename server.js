@@ -1,3 +1,9 @@
+// Force IPv4 DNS resolution first to prevent ENETUNREACH errors on IPv6-only/restricted environments (e.g. Render)
+const dns = require("dns");
+if (dns && typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
+
 const express = require("express");
 const dotenv = require("dotenv");
 const morgan = require("morgan");

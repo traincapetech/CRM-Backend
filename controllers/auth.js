@@ -1317,7 +1317,8 @@ exports.updateUserWithDocuments = async (req, res) => {
 
     // Handle password update if provided
     if (req.body.password && req.body.password.trim() !== "") {
-      updateData.password = req.body.password;
+      const salt = await bcrypt.genSalt(10);
+      updateData.password = await bcrypt.hash(req.body.password, salt);
     }
 
     // Ensure we have at least some data to update
@@ -1817,7 +1818,8 @@ exports.updateProfile = async (req, res) => {
 
     // Update password if provided
     if (req.body.password) {
-      updateData.password = req.body.password;
+      const salt = await bcrypt.genSalt(10);
+      updateData.password = await bcrypt.hash(req.body.password, salt);
     }
 
     // Update user
