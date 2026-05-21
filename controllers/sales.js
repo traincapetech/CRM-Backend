@@ -646,7 +646,7 @@ exports.updateSale = async (req, res) => {
     // Notify all admins of the update with details
     try {
       const notificationService = require("../services/notificationService");
-      
+
       const fieldLabels = {
         customerName: "Customer Name",
         email: "Email",
