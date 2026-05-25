@@ -71,7 +71,7 @@ const options = {
         description: "Development server",
       },
       {
-        url: "https://crm-backend-o36v.onrender.com",
+        url: "https://crm-backend-7ad5.onrender.com",
         description: "Production server",
       },
     ],
