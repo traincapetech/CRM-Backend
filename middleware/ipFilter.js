@@ -68,7 +68,7 @@ const refreshCache = async () => {
     const activeNetworks = await OfficeNetwork.find({ status: true });
     cachedNetworks = activeNetworks;
     lastCacheUpdate = Date.now();
-    
+
     if (process.env.DEBUG_IP === "true") {
       console.log(`📡 IP Filter: Cache refreshed. ${cachedNetworks.length} offices loaded.`);
     }
@@ -86,7 +86,7 @@ const seedFromEnv = async () => {
     if (count === 0) {
       const User = require("../models/User");
       const admin = await User.findOne({ role: "Admin" });
-      
+
       if (admin && (process.env.ALLOWED_IP_RANGES || process.env.ALLOWED_PUBLIC_IPS)) {
         await OfficeNetwork.create({
           officeName: "Delhi Office (Migrated)",
@@ -115,7 +115,7 @@ const ipFilter = async (req, res, next) => {
   if (bypassPaths.some(hp => req.path === hp || req.originalUrl === hp)) {
     return next();
   }
-  
+
   // Public Onboarding Portal Bypass
   if (req.originalUrl.includes("/api/onboarding/portal") || req.path.includes("/api/onboarding/portal")) {
     return next();
@@ -133,9 +133,18 @@ const ipFilter = async (req, res, next) => {
   const clientIP = normalizeIP(req.ip);
   const logCtx = `| Path: ${req.originalUrl || req.path} | Method: ${req.method}`;
 
-  // Check against cached networks
+  // Always include IPs from .env to prevent accidental lockouts if DB is empty or out of sync
+  const envPrivate = process.env.ALLOWED_IP_RANGES ? process.env.ALLOWED_IP_RANGES.split(",").map(i => i.trim()) : [];
+  const envPublic = process.env.ALLOWED_PUBLIC_IPS ? process.env.ALLOWED_PUBLIC_IPS.split(",").map(i => i.trim()) : [];
+  
+  const allNetworksToEvaluate = [
+    ...cachedNetworks,
+    { officeName: ".env Fallback", privateRanges: envPrivate, publicIPs: envPublic }
+  ];
+
+  // Check against cached networks and .env
   let allowedOffice = null;
-  for (const office of cachedNetworks) {
+  for (const office of allNetworksToEvaluate) {
     const combined = [...(office.privateRanges || []), ...(office.publicIPs || [])];
     const isMatched = combined.some(range => isIPInRange(clientIP, range));
     if (isMatched) {
@@ -157,7 +166,7 @@ const ipFilter = async (req, res, next) => {
   }
 
   console.error(`🚫 Blocked IP: ${clientIP} ${logCtx}`);
-  
+
   return res.status(403).json({
     success: false,
     error: "IP_NOT_ALLOWED",
