@@ -1,5 +1,6 @@
 const OfficeNetwork = require("../models/OfficeNetwork");
 const asyncHandler = require("../middleware/async");
+const { refreshCache } = require("../middleware/ipFilter");
 
 // @desc    Get all office networks
 // @route   GET /api/office-networks
@@ -23,6 +24,9 @@ exports.createOfficeNetwork = asyncHandler(async (req, res, next) => {
   req.body.createdBy = req.user.id;
 
   const officeNetwork = await OfficeNetwork.create(req.body);
+
+  // Invalidate in-memory IP filter cache immediately
+  await refreshCache();
 
   res.status(201).json({
     success: true,
@@ -48,6 +52,9 @@ exports.updateOfficeNetwork = asyncHandler(async (req, res, next) => {
     runValidators: true,
   });
 
+  // Invalidate in-memory IP filter cache immediately
+  await refreshCache();
+
   res.status(200).json({
     success: true,
     data: officeNetwork,
@@ -68,6 +75,9 @@ exports.deleteOfficeNetwork = asyncHandler(async (req, res, next) => {
   }
 
   await officeNetwork.deleteOne();
+
+  // Invalidate in-memory IP filter cache immediately
+  await refreshCache();
 
   res.status(200).json({
     success: true,

@@ -13,9 +13,10 @@ const CACHE_TTL = 60 * 1000; // 60 seconds
  */
 const normalizeIP = (ip) => {
   if (!ip) return "";
-  if (ip.startsWith("::ffff:")) return ip.split(":").pop();
-  if (ip === "::1") return "127.0.0.1";
-  return ip;
+  let cleanIP = ip.trim();
+  if (cleanIP.startsWith("::ffff:")) cleanIP = cleanIP.split(":").pop();
+  if (cleanIP === "::1") return "127.0.0.1";
+  return cleanIP;
 };
 
 /**
@@ -107,6 +108,46 @@ const seedFromEnv = async () => {
 // Initial cache load
 refreshCache().then(() => seedFromEnv());
 
+/**
+ * Reusable IP matching function for HTTP middleware and WebSockets
+ */
+const isIPAllowed = async (ip) => {
+  const clientIP = normalizeIP(ip);
+
+  // Refresh cache if expired
+  if (Date.now() - lastCacheUpdate > CACHE_TTL) {
+    await refreshCache();
+  }
+
+  const envPrivate = process.env.ALLOWED_IP_RANGES ? process.env.ALLOWED_IP_RANGES.split(",").map(i => i.trim()) : [];
+  const envPublic = process.env.ALLOWED_PUBLIC_IPS ? process.env.ALLOWED_PUBLIC_IPS.split(",").map(i => i.trim()) : [];
+  
+  const allNetworksToEvaluate = [
+    ...cachedNetworks,
+    { officeName: ".env Fallback", privateRanges: envPrivate, publicIPs: envPublic }
+  ];
+
+  let allowedOffice = null;
+  for (const office of allNetworksToEvaluate) {
+    const combined = [...(office.privateRanges || []), ...(office.publicIPs || [])];
+    const isMatched = combined.some(range => isIPInRange(clientIP, range));
+    if (isMatched) {
+      allowedOffice = office.officeName;
+      break;
+    }
+  }
+
+  if (!allowedOffice && ["127.0.0.1", "::1", "localhost"].includes(clientIP)) {
+    allowedOffice = "Localhost";
+  }
+
+  return {
+    isAllowed: !!allowedOffice,
+    officeName: allowedOffice,
+    clientIP
+  };
+};
+
 const ipFilter = async (req, res, next) => {
   if (process.env.ENABLE_IP_FILTER !== "true") return next();
 
@@ -125,42 +166,25 @@ const ipFilter = async (req, res, next) => {
     return next();
   }
 
-  // Refresh cache if expired
-  if (Date.now() - lastCacheUpdate > CACHE_TTL) {
-    await refreshCache();
-  }
-
-  const clientIP = normalizeIP(req.ip);
+  const rawIP = req.ip;
+  const clientIP = normalizeIP(rawIP);
   const logCtx = `| Path: ${req.originalUrl || req.path} | Method: ${req.method}`;
 
-  // Always include IPs from .env to prevent accidental lockouts if DB is empty or out of sync
-  const envPrivate = process.env.ALLOWED_IP_RANGES ? process.env.ALLOWED_IP_RANGES.split(",").map(i => i.trim()) : [];
-  const envPublic = process.env.ALLOWED_PUBLIC_IPS ? process.env.ALLOWED_PUBLIC_IPS.split(",").map(i => i.trim()) : [];
-  
-  const allNetworksToEvaluate = [
-    ...cachedNetworks,
-    { officeName: ".env Fallback", privateRanges: envPrivate, publicIPs: envPublic }
-  ];
-
-  // Check against cached networks and .env
-  let allowedOffice = null;
-  for (const office of allNetworksToEvaluate) {
-    const combined = [...(office.privateRanges || []), ...(office.publicIPs || [])];
-    const isMatched = combined.some(range => isIPInRange(clientIP, range));
-    if (isMatched) {
-      allowedOffice = office.officeName;
-      break;
-    }
+  // Detailed debugging logs for root-cause analysis (Check 4)
+  if (process.env.DEBUG_IP === "true" || process.env.NODE_ENV === "development") {
+    console.log("------- IP FILTER DEBUG START -------");
+    console.log("x-forwarded-for:", req.headers["x-forwarded-for"]);
+    console.log("req.ip:", req.ip);
+    console.log("remoteAddress:", req.socket.remoteAddress);
+    console.log("Detected IP:", clientIP);
+    console.log("-------------------------------------");
   }
 
-  // Fallback for loopback if not explicitly in DB
-  if (!allowedOffice && ["127.0.0.1", "::1", "localhost"].includes(clientIP)) {
-    allowedOffice = "Localhost";
-  }
+  const { isAllowed, officeName } = await isIPAllowed(clientIP);
 
-  if (allowedOffice) {
+  if (isAllowed) {
     if (process.env.DEBUG_IP === "true" || process.env.NODE_ENV === "development") {
-      console.log(`✅ Allowed IP: ${clientIP} | Office: ${allowedOffice} ${logCtx}`);
+      console.log(`✅ Allowed IP: ${clientIP} | Office: ${officeName} ${logCtx}`);
     }
     return next();
   }
@@ -176,3 +200,5 @@ const ipFilter = async (req, res, next) => {
 
 module.exports = ipFilter;
 module.exports.refreshCache = refreshCache;
+module.exports.isIPAllowed = isIPAllowed;
+module.exports.normalizeIP = normalizeIP;

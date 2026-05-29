@@ -337,6 +337,37 @@ notificationService.init(io);
 //   });
 // });
 
+// Socket.IO IP Filter Middleware (Security Fix for Check 8)
+io.use(async (socket, next) => {
+  if (process.env.ENABLE_IP_FILTER !== "true") {
+    return next();
+  }
+
+  try {
+    const { isIPAllowed, normalizeIP } = require("./middleware/ipFilter");
+    
+    // Retrieve client IP under proxy (Render) from handshake headers
+    const xForwardedFor = socket.handshake.headers["x-forwarded-for"];
+    let clientIP = xForwardedFor ? xForwardedFor.split(",")[0].trim() : socket.handshake.address;
+    clientIP = normalizeIP(clientIP);
+
+    const { isAllowed, officeName } = await isIPAllowed(clientIP);
+
+    if (isAllowed) {
+      if (process.env.DEBUG_IP === "true" || process.env.NODE_ENV === "development") {
+        console.log(`✅ Allowed Socket.IO connection: ${clientIP} | Office: ${officeName} | Socket ID: ${socket.id}`);
+      }
+      return next();
+    }
+
+    console.error(`🚫 Blocked Socket.IO connection attempt: ${clientIP} | Socket ID: ${socket.id}`);
+    return next(new Error("IP_NOT_ALLOWED"));
+  } catch (err) {
+    console.error("❌ Socket.IO IP Filter error:", err);
+    return next(new Error("INTERNAL_SERVER_ERROR"));
+  }
+});
+
 io.on("connection", (socket) => {
   console.log("New client connected:", socket.id);
 
