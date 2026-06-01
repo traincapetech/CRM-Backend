@@ -188,7 +188,7 @@ exports.validate2FA = async (req, res) => {
         secret: user.twoFactorSecret,
         encoding: "base32",
         token: token,
-        window: 2,
+        window: 4, // Increased to 4 to allow up to 120s of clock drift
       });
     }
 
