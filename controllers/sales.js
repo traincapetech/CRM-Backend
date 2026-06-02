@@ -228,7 +228,7 @@ exports.getSales = async (req, res) => {
 exports.getSale = async (req, res) => {
   try {
     const sale = await Sale.findById(req.params.id).populate(
-      "salesPerson leadPerson",
+      "salesPerson leadPerson createdBy",
       "fullName email",
     );
 
@@ -515,7 +515,7 @@ exports.updateSale = async (req, res) => {
     sale = await Sale.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
-    }).populate("salesPerson leadPerson", "fullName email");
+    }).populate("salesPerson leadPerson createdBy", "fullName email");
 
     // Trigger workflows for sale_updated
     try {

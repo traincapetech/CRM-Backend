@@ -267,7 +267,8 @@ exports.getLead = async (req, res) => {
   try {
     const lead = await Lead.findById(req.params.id)
       .populate("assignedTo", "fullName email")
-      .populate("leadPerson", "fullName email");
+      .populate("leadPerson", "fullName email")
+      .populate("createdBy", "fullName email");
 
     console.log("Lead found:", lead ? lead._id : "None");
 
@@ -347,6 +348,7 @@ exports.createLead = async (req, res) => {
       "NUMBER",
       "COUNTRY",
       "SALE PERSON",
+      "E-MAIL",
     ];
     const missingFields = requiredFields.filter((field) => !req.body[field]);
 
@@ -362,7 +364,7 @@ exports.createLead = async (req, res) => {
     // Map the new field names to the database model field names
     const leadData = {
       name: req.body.NAME,
-      email: req.body["E-MAIL"] || "",
+      email: "",
       course: req.body.COURSE,
       countryCode: req.body.CODE,
       phone: req.body.NUMBER,
@@ -372,6 +374,7 @@ exports.createLead = async (req, res) => {
       status: req.body.status || "Introduction",
       source: req.body.SOURSE,
       sourceLink: req.body["SOURCE LINK"],
+      googleFormLink: req.body.googleFormLink || "",
       assignedTo: req.body["SALE PERSON"],
       leadPerson: req.body["LEAD PERSON"] || req.body.leadPerson,
       feedback: req.body.FEEDBACK || req.body.feedback,
@@ -381,6 +384,18 @@ exports.createLead = async (req, res) => {
       previousCourses: [],
       relatedLeads: [],
     };
+
+    // Check if lead with this email already exists (No duplicates allowed)
+    if (leadData.email && leadData.email.trim() !== "") {
+      const existingLeads = await Lead.findByEmail(leadData.email.trim());
+      if (existingLeads.length > 0) {
+        console.error(`Attempt to create duplicate lead with email: ${leadData.email}`);
+        return res.status(400).json({
+          success: false,
+          message: `A lead with the email '${leadData.email}' already exists. Duplicate leads are not allowed.`,
+        });
+      }
+    }
 
     // Set createdBy to the current user
     leadData.createdBy = req.user._id;
@@ -551,59 +566,12 @@ exports.createLead = async (req, res) => {
 
     // Handle duplicate key errors (commonly for email)
     if (err.code === 11000 && err.keyPattern) {
-      // Get the field name causing the duplicate
       const field = Object.keys(err.keyPattern)[0];
-      const value = err.keyValue[field];
-
-      console.error(`Duplicate key error for field: ${field}, value: ${value}`);
-
-      // Instead of returning an error, we'll allow duplicates for repeat customers
-      console.log("Allowing duplicate value for repeat customer");
-
-      // Try creating the lead again without the unique constraint
-      try {
-        // Modify the data to work around the duplicate key issue
-        if (field === "email") {
-          // For email duplicates, proceed with creating the lead
-          // The email validation in the model already allows duplicates
-          const leadData = {
-            name: req.body.NAME,
-            email: "", // Set empty email to avoid duplicate
-            course: req.body.COURSE,
-            countryCode: req.body.CODE,
-            phone: req.body.NUMBER,
-            country: req.body.COUNTRY,
-            pseudoId: req.body["PSUDO ID"],
-            client: req.body["CLIENT REMARK"],
-            status: req.body.status || "Introduction",
-            source: req.body.SOURSE,
-            sourceLink: req.body["SOURCE LINK"],
-            assignedTo: req.body["SALE PERSON"],
-            leadPerson: req.body["LEAD PERSON"],
-            feedback: req.body.FEEDBACK,
-            createdAt: req.body.DATE ? new Date(req.body.DATE) : Date.now(),
-            isRepeatCustomer: true,
-            previousCourses: [],
-            relatedLeads: [],
-            createdBy: req.user._id,
-            updatedAt: Date.now(),
-          };
-
-          // Create the lead with the modified data
-          const lead = await Lead.create(leadData);
-
-          return res.status(201).json({
-            success: true,
-            data: lead,
-          });
-        }
-      } catch (retryErr) {
-        console.error("Error on retry after duplicate key:", retryErr);
-        return res.status(400).json({
-          success: false,
-          message: "Failed to create lead even after handling duplicate key",
-        });
-      }
+      console.error(`Duplicate key error for field: ${field}`);
+      return res.status(400).json({
+        success: false,
+        message: `A lead with this ${field === 'emailHash' ? 'email' : field} already exists. Duplicate leads are not allowed.`,
+      });
     }
 
     // Provide more detailed error messages for common validation errors
@@ -738,6 +706,7 @@ exports.updateLead = async (req, res) => {
       client: "client",
       source: "source",
       sourceLink: "sourceLink",
+      googleFormLink: "googleFormLink",
       assignedTo: "assignedTo",
       leadPerson: "leadPerson",
       feedback: "feedback",
@@ -767,7 +736,7 @@ exports.updateLead = async (req, res) => {
     lead = await Lead.findByIdAndUpdate(req.params.id, finalUpdateData, {
       new: true,
       runValidators: true,
-    }).populate("assignedTo leadPerson", "fullName");
+    }).populate("assignedTo leadPerson createdBy", "fullName email");
 
     // Detailed Admin Notification
     await notifyAdminOfLeadUpdate(req, oldLead, lead);
