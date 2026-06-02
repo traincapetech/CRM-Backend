@@ -364,7 +364,7 @@ exports.createLead = async (req, res) => {
     // Map the new field names to the database model field names
     const leadData = {
       name: req.body.NAME,
-      email: "",
+      email: req.body["E-MAIL"] || req.body.email || "",
       course: req.body.COURSE,
       countryCode: req.body.CODE,
       phone: req.body.NUMBER,
@@ -733,10 +733,30 @@ exports.updateLead = async (req, res) => {
 
     const finalUpdateData = updatedData;
 
-    lead = await Lead.findByIdAndUpdate(req.params.id, finalUpdateData, {
-      new: true,
-      runValidators: true,
-    }).populate("assignedTo leadPerson createdBy", "fullName email");
+    // Check if the email is being updated and if it matches another existing lead
+    const newEmail = finalUpdateData.email;
+    if (newEmail !== undefined && newEmail !== null && newEmail.trim() !== "") {
+      const existingLeads = await Lead.findByEmail(newEmail.trim());
+      const isDuplicate = existingLeads.some(
+        (existing) => existing._id.toString() !== lead._id.toString()
+      );
+      if (isDuplicate) {
+        console.error(`Attempt to update lead ${lead._id} to duplicate email: ${newEmail}`);
+        return res.status(400).json({
+          success: false,
+          message: `A lead with the email '${newEmail}' already exists. Duplicate leads are not allowed.`,
+        });
+      }
+    }
+
+    // Apply updates directly to the Mongoose document instance
+    Object.assign(lead, finalUpdateData);
+
+    // Save lead (triggers pre-save hooks for encryption and search hashes)
+    await lead.save();
+
+    // Re-retrieve to populate assignedTo, leadPerson, createdBy fields
+    lead = await Lead.findById(lead._id).populate("assignedTo leadPerson createdBy", "fullName email");
 
     // Detailed Admin Notification
     await notifyAdminOfLeadUpdate(req, oldLead, lead);
@@ -832,6 +852,31 @@ exports.updateLead = async (req, res) => {
     });
   } catch (err) {
     console.error("Error updating lead:", err);
+
+    // Handle duplicate key errors (commonly for email)
+    if (err.code === 11000 && err.keyPattern) {
+      const field = Object.keys(err.keyPattern)[0];
+      console.error(`Duplicate key error for field: ${field}`);
+      return res.status(400).json({
+        success: false,
+        message: `A lead with this ${field === 'emailHash' ? 'email' : field} already exists. Duplicate leads are not allowed.`,
+      });
+    }
+
+    // Handle Mongoose validation errors
+    if (err.name === "ValidationError") {
+      const validationErrors = Object.keys(err.errors).map((field) => ({
+        field: field,
+        message: err.errors[field].message,
+      }));
+
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed: " + validationErrors.map((e) => e.message).join(", "),
+        errors: validationErrors,
+      });
+    }
+
     res.status(400).json({
       success: false,
       message: err.message,
