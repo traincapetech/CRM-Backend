@@ -273,15 +273,34 @@ class PerformanceCalculationService {
     return this.calculateSales(userId, date, "monthly");
   }
 
-  /**
-   * Fetch all active EmployeeTargets for a specific month
-   */
   static async getTargetsForPeriod(employeeId, year, month) {
     const periodKey = `${year}-${month.toString().padStart(2, "0")}`;
-    return await EmployeeTarget.find({
+    let targets = await EmployeeTarget.find({
       employeeId,
       "period.periodKey": periodKey,
     }).populate("kpiId");
+
+    // Self-healing: If no targets exist for the current month, auto-initialize them
+    const now = new Date();
+    if (
+      (!targets || targets.length === 0) &&
+      year === now.getFullYear() &&
+      month === (now.getMonth() + 1)
+    ) {
+      console.log(`[SELF-HEALING] No targets found for current period ${periodKey}. Initializing monthly targets...`);
+      try {
+        await this.initializeMonthlyTargets(month, year);
+        // Query again after initialization
+        targets = await EmployeeTarget.find({
+          employeeId,
+          "period.periodKey": periodKey,
+        }).populate("kpiId");
+      } catch (err) {
+        console.error(`[SELF-HEALING] Failed to initialize monthly targets:`, err.message);
+      }
+    }
+
+    return targets;
   }
 
   /**
@@ -621,7 +640,14 @@ class PerformanceCalculationService {
             employeeId,
             date: { $gte: startOfMonth, $lte: endOfPeriod },
           });
-          const expectedDays = await this.getWorkingDaysInMonth(y, m, employee.role);
+          const holidays = await this.fetchHolidays(startOfMonth, endOfPeriod);
+          const expectedDays = this.getWorkingDays(
+            startOfMonth,
+            endOfPeriod,
+            holidays.fullDays,
+            holidays.halfDays,
+            employee.role,
+          );
           return getAvg(records, expectedDays);
         }
       };
