@@ -292,7 +292,7 @@ exports.getLead = async (req, res) => {
     console.log(`  - Current User ID: ${req.user._id}`);
 
     const leadAssignedId = lead.assignedTo
-      ? lead.assignedTo._id.toString()
+      ? (lead.assignedTo._id ? lead.assignedTo._id.toString() : lead.assignedTo.toString())
       : null;
     const userId = req.user._id.toString();
     console.log(`  - String comparison: ${leadAssignedId === userId}`);
@@ -301,11 +301,11 @@ exports.getLead = async (req, res) => {
     if (
       req.user.role !== "Admin" &&
       req.user.role !== "Manager" &&
-      lead.assignedTo.toString() !== req.user._id.toString() &&
+      (!leadAssignedId || leadAssignedId !== userId) &&
       !(
         req.user.role === "Lead Person" &&
         lead.leadPerson &&
-        lead.leadPerson._id.toString() === req.user._id.toString()
+        lead.leadPerson._id.toString() === userId
       )
     ) {
       return res.status(403).json({
@@ -528,8 +528,11 @@ exports.createLead = async (req, res) => {
     // Emit Socket.IO event for Real-Time Notification to Assigned User
     try {
       const io = req.app.get("io");
-      if (io && lead.assignedTo && lead.assignedTo.toString() !== req.user._id.toString()) {
-        const assignedToId = lead.assignedTo.toString();
+      const leadAssignedId = lead.assignedTo
+        ? (lead.assignedTo._id ? lead.assignedTo._id.toString() : lead.assignedTo.toString())
+        : null;
+      if (io && leadAssignedId && leadAssignedId !== req.user._id.toString()) {
+        const assignedToId = leadAssignedId;
         
         io.to(`user-${assignedToId}`).emit("leadAssigned", {
           leadId: lead._id,
@@ -628,12 +631,17 @@ exports.updateLead = async (req, res) => {
     const oldLead = lead.toObject(); // Capture old state (decrypted)
     const originalStatus = lead.status;
 
+    const leadAssignedId = lead.assignedTo
+      ? (lead.assignedTo._id ? lead.assignedTo._id.toString() : lead.assignedTo.toString())
+      : null;
+    const userId = req.user._id.toString();
+
     // Check if user is authorized to update this lead
     if (
       req.user.role !== "Admin" &&
       req.user.role !== "Manager" &&
       req.user.role !== "Lead Person" &&
-      lead.assignedTo.toString() !== req.user._id.toString()
+      (!leadAssignedId || leadAssignedId !== userId)
     ) {
       return res.status(403).json({
         success: false,
@@ -1089,15 +1097,18 @@ exports.updateFeedback = async (req, res) => {
       });
     }
 
+    const leadAssignedId = lead.assignedTo ? lead.assignedTo.toString() : null;
+    const userId = req.user._id.toString();
+
     // Check if user is authorized to update feedback for this lead
     if (
       req.user.role !== "Admin" &&
       req.user.role !== "Manager" &&
-      lead.assignedTo.toString() !== req.user._id.toString() &&
+      (!leadAssignedId || leadAssignedId !== userId) &&
       !(
         req.user.role === "Lead Person" &&
         lead.leadPerson &&
-        lead.leadPerson.toString() === req.user._id.toString()
+        lead.leadPerson.toString() === userId
       )
     ) {
       return res.status(403).json({
@@ -1780,7 +1791,15 @@ exports.getLeadStats = async (req, res) => {
     // Role-based filtering
     if (req.user.role === "Sales Person") {
       filter.assignedTo = req.user._id;
+    } else if (req.user.role === "Lead Person") {
+      filter.$or = [
+        { leadPerson: req.user._id },
+        { assignedTo: req.user._id }
+      ];
     }
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
 
     const stats = await Lead.aggregate([
       { $match: filter },
@@ -1788,6 +1807,15 @@ exports.getLeadStats = async (req, res) => {
         $group: {
           _id: null,
           total: { $sum: 1 },
+          assignedToday: {
+            $sum: {
+              $cond: [
+                { $gte: ["$createdAt", startOfToday] },
+                1,
+                0
+              ]
+            }
+          },
           new: { $sum: { $cond: [{ $eq: ["$status", "New"] }, 1, 0] } },
           contacted: {
             $sum: { $cond: [{ $eq: ["$status", "Contacted"] }, 1, 0] },
@@ -1820,6 +1848,7 @@ exports.getLeadStats = async (req, res) => {
     const result = {
       overview: stats[0] || {
         total: 0,
+        assignedToday: 0,
         new: 0,
         contacted: 0,
         interested: 0,

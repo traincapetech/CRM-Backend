@@ -211,11 +211,14 @@ exports.endMeeting = async (req, res) => {
 // @access  Private
 exports.getMyMeetings = async (req, res) => {
   try {
-    const userId = req.user.id;
+    let userId = req.user.id;
+    if (["Admin", "Manager", "IT Manager", "HR"].includes(req.user.role) && req.query.userId) {
+      userId = req.query.userId;
+    }
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
     console.log(`🔍 [GET MY MEETINGS] Fetching huddles for user: ${userId}`);
-    console.log(`🔍 [GET MY MEETINGS] Querying for user: ${req.user.id} (${userObjectId})`);
+    console.log(`🔍 [GET MY MEETINGS] Querying for user: ${userId} (${userObjectId})`);
     
     // Find internal meetings where:
     // 1. User is the creator

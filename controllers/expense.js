@@ -46,6 +46,15 @@ exports.getExpenses = async (req, res) => {
       const startDate = new Date(year, month - 1, 1);
       const endDate = new Date(year, month, 0, 23, 59, 59);
       query.date = { $gte: startDate, $lte: endDate };
+    } else if (year) {
+      const startDate = new Date(year, 0, 1);
+      const endDate = new Date(year, 11, 31, 23, 59, 59);
+      query.date = { $gte: startDate, $lte: endDate };
+    } else if (month) {
+      const currentYear = new Date().getFullYear();
+      const startDate = new Date(currentYear, month - 1, 1);
+      const endDate = new Date(currentYear, month, 0, 23, 59, 59);
+      query.date = { $gte: startDate, $lte: endDate };
     }
 
     const expenses = await Expense.find(query)

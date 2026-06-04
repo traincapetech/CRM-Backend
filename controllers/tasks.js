@@ -16,6 +16,11 @@ exports.getTasks = async (req, res) => {
     // Build filter object
     const filter = {};
 
+    // Support assignedTo filter from query params
+    if (req.query.assignedTo) {
+      filter.assignedTo = req.query.assignedTo;
+    }
+
     // Support department filter from query params
     if (req.query.department) {
       filter.department = req.query.department;
