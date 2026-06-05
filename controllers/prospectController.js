@@ -36,7 +36,10 @@ const getProspects = async (req, res) => {
 
     // Role-based filtering
     if (req.user.role === 'Sales Person') {
-      filter.assignedTo = req.user._id;
+      filter.$or = [
+        { assignedTo: req.user._id },
+        { createdBy: req.user._id }
+      ];
     }
 
     const skip = (page - 1) * limit;
@@ -90,7 +93,9 @@ const getProspectById = async (req, res) => {
     // Role-based access check
     if (req.user.role === 'Sales Person' && 
         prospect.assignedTo && 
-        prospect.assignedTo._id.toString() !== req.user._id.toString()) {
+        prospect.assignedTo._id.toString() !== req.user._id.toString() &&
+        prospect.createdBy && 
+        prospect.createdBy._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -161,7 +166,9 @@ const updateProspect = async (req, res) => {
     // Role-based access check
     if (req.user.role === 'Sales Person' && 
         prospect.assignedTo && 
-        prospect.assignedTo.toString() !== req.user._id.toString()) {
+        prospect.assignedTo.toString() !== req.user._id.toString() &&
+        prospect.createdBy && 
+        prospect.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -248,7 +255,9 @@ const convertToLead = async (req, res) => {
     // Role-based access check
     if (req.user.role === 'Sales Person' && 
         prospect.assignedTo && 
-        prospect.assignedTo.toString() !== req.user._id.toString()) {
+        prospect.assignedTo.toString() !== req.user._id.toString() &&
+        prospect.createdBy && 
+        prospect.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -296,7 +305,10 @@ const getProspectStats = async (req, res) => {
     
     // Role-based filtering
     if (req.user.role === 'Sales Person') {
-      filter.assignedTo = req.user._id;
+      filter.$or = [
+        { assignedTo: req.user._id },
+        { createdBy: req.user._id }
+      ];
     }
 
     const stats = await Prospect.aggregate([
