@@ -173,6 +173,12 @@ exports.createLeadPersonSale = async (req, res) => {
       });
     }
     
+    // Enforce 100% payment on Completed status
+    if (req.body.status === "Completed") {
+      req.body.tokenAmount = req.body.totalCost || 0;
+      req.body.pending = false;
+    }
+
     console.log('Creating lead person sale with data:', req.body);
 
     // Create lead person sale
@@ -230,6 +236,13 @@ exports.updateLeadPersonSale = async (req, res) => {
         success: false,
         message: `User ${req.user.id} is not authorized to update this sale`
       });
+    }
+
+    // Enforce 100% payment on Completed status
+    const finalStatus = req.body.status !== undefined ? req.body.status : sale.status;
+    if (finalStatus === "Completed") {
+      req.body.tokenAmount = req.body.totalCost !== undefined ? parseFloat(req.body.totalCost) : sale.totalCost;
+      req.body.pending = false;
     }
 
     // Add user to req.body as updater

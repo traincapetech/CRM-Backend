@@ -249,6 +249,9 @@ exports.updateTask = async (req, res) => {
     const isAssigner =
       task.assignedBy?._id?.toString() === req.user.id.toString() ||
       task.assignedBy?.toString() === req.user.id.toString();
+    const isSalesPerson =
+      task.salesPerson?._id?.toString() === req.user.id.toString() ||
+      task.salesPerson?.toString() === req.user.id.toString();
     const isAdmin = req.user.role === "Admin";
     const isManager =
       req.user.role === "IT Manager" && task.department === "IT";
@@ -259,7 +262,7 @@ exports.updateTask = async (req, res) => {
     // Update completed status if provided
     if (req.body.completed !== undefined) {
       // Prevent employee from resubmitting if already confirmed
-      if (previousStatus === "Manager Confirmed" && !isAdmin && !isManager && !isAssigner) {
+      if (previousStatus === "Manager Confirmed" && !isAdmin && !isManager && !isAssigner && !isSalesPerson) {
         return res.status(403).json({ success: false, message: "Task is already confirmed and cannot be resubmitted." });
       }
 
@@ -272,10 +275,39 @@ exports.updateTask = async (req, res) => {
       }
     }
 
-    // Assignee actions
-    if (isAssignee) {
+    // Determine authorization level and perform updates
+    if (isAdmin || isManager || isAssigner || isSalesPerson) {
+      // Manager/Admin/Assigner/SalesPerson actions (Full Access)
+      if (req.body.status) task.status = req.body.status;
+      if (req.body.title !== undefined) task.title = req.body.title;
+      if (req.body.description !== undefined) task.description = req.body.description;
+      if (req.body.assignedTo) task.assignedTo = req.body.assignedTo;
+      if (req.body.examDate !== undefined) task.examDate = req.body.examDate;
+      if (req.body.examDateTime !== undefined) task.examDateTime = req.body.examDateTime;
+      if (req.body.course !== undefined) task.course = req.body.course;
+      if (req.body.taskType !== undefined) task.taskType = req.body.taskType;
+      if (req.body.priority !== undefined) task.priority = req.body.priority;
+      if (req.body.department !== undefined) task.department = req.body.department;
+
+      // Handle customer / manualCustomer fields cleanly
+      if (req.body.customer !== undefined) {
+        task.customer = req.body.customer || undefined;
+        if (req.body.customer) {
+          task.manualCustomer = undefined;
+        }
+      }
+      if (req.body.manualCustomer !== undefined) {
+        task.manualCustomer = req.body.manualCustomer || undefined;
+        if (req.body.manualCustomer) {
+          task.customer = undefined;
+        }
+      }
+
+      if (task.status === "Manager Confirmed") task.confirmedAt = Date.now();
+    } else if (isAssignee) {
+      // Assignee actions (Status & Completion Only)
       // Prevent assignee from changing status if confirmed
-      if (previousStatus === "Manager Confirmed" && !isAdmin && !isManager && !isAssigner) {
+      if (previousStatus === "Manager Confirmed") {
         return res.status(403).json({ success: false, message: "Task is locked after manager confirmation." });
       }
 
@@ -293,26 +325,11 @@ exports.updateTask = async (req, res) => {
           task.completed = true;
         }
       }
-    } else if (isAdmin || isManager || isAssigner) {
-      // Manager/Admin/Assigner actions
-      if (req.body.status) task.status = req.body.status;
-      if (req.body.title) task.title = req.body.title;
-      if (req.body.description) task.description = req.body.description;
-      if (req.body.assignedTo) task.assignedTo = req.body.assignedTo;
-      if (req.body.examDate) task.examDate = req.body.examDate;
-      if (req.body.examDateTime) task.examDateTime = req.body.examDateTime;
-      if (req.body.course) task.course = req.body.course;
-      if (task.status === "Manager Confirmed") task.confirmedAt = Date.now();
     } else {
-      // Optional: allow other roles for Sales/Admin tasks if they are the salesPerson
-      const isSalesPerson =
-        task.salesPerson?.toString() === req.user.id.toString();
-      if (!isSalesPerson) {
-        return res.status(403).json({
-          success: false,
-          message: "Not authorized to update this task.",
-        });
-      }
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update this task.",
+      });
     }
 
     task = await task.save();

@@ -296,6 +296,12 @@ exports.createSale = async (req, res) => {
       delete req.body.leadPerson;
     }
 
+    // Enforce 100% payment on Completed status
+    if (req.body.status === "Completed") {
+      req.body.tokenAmount = req.body.totalCost || 0;
+      req.body.pending = false;
+    }
+
     // Removed: Overwriting leadPerson for reference sales prevented them from appearing on lead person's sheet
 
     // Create sale
@@ -434,6 +440,13 @@ exports.updateSale = async (req, res) => {
           message: "Not authorized to update this sale",
         });
       }
+    }
+
+    // Enforce 100% payment on Completed status
+    const finalStatus = req.body.status !== undefined ? req.body.status : sale.status;
+    if (finalStatus === "Completed") {
+      req.body.tokenAmount = req.body.totalCost !== undefined ? parseFloat(req.body.totalCost) : sale.totalCost;
+      req.body.pending = false;
     }
 
     // Add updatedBy field and timestamp

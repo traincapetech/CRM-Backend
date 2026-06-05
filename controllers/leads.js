@@ -1827,7 +1827,7 @@ exports.getLeadStats = async (req, res) => {
             $sum: { $cond: [{ $eq: ["$status", "Qualified"] }, 1, 0] },
           },
           converted: {
-            $sum: { $cond: [{ $eq: ["$status", "Converted to Sale"] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$status", "Converted"] }, 1, 0] },
           },
           lost: { $sum: { $cond: [{ $eq: ["$status", "Lost"] }, 1, 0] } },
         },
