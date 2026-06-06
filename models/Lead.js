@@ -34,6 +34,14 @@ const LeadSchema = new mongoose.Schema({
     type: String, // Hash for searching
     index: true,
   },
+  // PII - encrypted at rest
+  telegramId: {
+    type: String, // Encrypted
+  },
+  telegramIdHash: {
+    type: String, // Hash for searching
+    index: true,
+  },
   country: {
     type: String,
     trim: true,
@@ -142,6 +150,11 @@ LeadSchema.pre("save", function (next) {
       this.phoneHash = hashForSearch(this.phone);
       this.phone = encrypt(this.phone);
     }
+    // Encrypt and hash telegramId
+    if (this.isModified("telegramId") && this.telegramId) {
+      this.telegramIdHash = hashForSearch(this.telegramId);
+      this.telegramId = encrypt(this.telegramId);
+    }
     next();
   } catch (error) {
     console.error("Error encrypting Lead PII:", error);
@@ -154,6 +167,7 @@ LeadSchema.methods.getDecryptedPII = function () {
   return {
     email: this.email ? decrypt(this.email) : null,
     phone: this.phone ? decrypt(this.phone) : null,
+    telegramId: this.telegramId ? decrypt(this.telegramId) : null,
   };
 };
 
@@ -163,6 +177,7 @@ LeadSchema.set("toJSON", {
     try {
       if (ret.email) ret.email = decrypt(ret.email);
       if (ret.phone) ret.phone = decrypt(ret.phone);
+      if (ret.telegramId) ret.telegramId = decrypt(ret.telegramId);
     } catch (e) {
       // If decryption fails (e.g. already plain text or invalid), keep original
       // console.error('Decryption error in toJSON:', e.message);
@@ -177,6 +192,7 @@ LeadSchema.set("toObject", {
     try {
       if (ret.email) ret.email = decrypt(ret.email);
       if (ret.phone) ret.phone = decrypt(ret.phone);
+      if (ret.telegramId) ret.telegramId = decrypt(ret.telegramId);
     } catch (e) {
       // If decryption fails, keep original
     }
@@ -194,6 +210,12 @@ LeadSchema.statics.findByEmail = function (email) {
 LeadSchema.statics.findByPhone = function (phone) {
   const hash = hashForSearch(phone);
   return this.find({ phoneHash: hash });
+};
+
+// Static method to find by telegramId (using hash)
+LeadSchema.statics.findByTelegramId = function (telegramId) {
+  const hash = hashForSearch(telegramId);
+  return this.find({ telegramIdHash: hash });
 };
 
 // PERFORMANCE OPTIMIZATION: Add indexes for faster queries

@@ -118,6 +118,7 @@ exports.getLeads = async (req, res) => {
           { name: searchRegex },
           { email: searchRegex },
           { phone: searchRegex },
+          { telegramId: searchRegex },
         ],
       });
       console.log(`Searching for: ${req.query.search}`);
@@ -341,15 +342,19 @@ exports.createLead = async (req, res) => {
     });
 
     // Validate required fields before processing
+    const isTelegramSource = req.body.SOURSE === "Telegram";
     const requiredFields = [
       "NAME",
       "COURSE",
       "CODE",
-      "NUMBER",
       "COUNTRY",
       "SALE PERSON",
-      "E-MAIL",
     ];
+    if (isTelegramSource) {
+      requiredFields.push("TELEGRAM_ID");
+    } else {
+      requiredFields.push("NUMBER", "E-MAIL");
+    }
     const missingFields = requiredFields.filter((field) => !req.body[field]);
 
     if (missingFields.length > 0) {
@@ -379,6 +384,7 @@ exports.createLead = async (req, res) => {
       leadPerson: req.body["LEAD PERSON"] || req.body.leadPerson,
       feedback: req.body.FEEDBACK || req.body.feedback,
       remarks: req.body.REMARKS || req.body.remarks,
+      telegramId: req.body.TELEGRAM_ID || req.body.telegramId || "",
       createdAt: req.body.DATE ? new Date(req.body.DATE) : Date.now(),
       isRepeatCustomer: false, // Default value, will be updated if needed
       previousCourses: [],
@@ -393,6 +399,18 @@ exports.createLead = async (req, res) => {
         return res.status(400).json({
           success: false,
           message: `A lead with the email '${leadData.email}' already exists. Duplicate leads are not allowed.`,
+        });
+      }
+    }
+
+    // Check if lead with this Telegram ID already exists (No duplicates allowed)
+    if (leadData.telegramId && leadData.telegramId.trim() !== "") {
+      const existingLeads = await Lead.findByTelegramId(leadData.telegramId.trim());
+      if (existingLeads.length > 0) {
+        console.error(`Attempt to create duplicate lead with Telegram ID: ${leadData.telegramId}`);
+        return res.status(400).json({
+          success: false,
+          message: `A lead with the Telegram ID '${leadData.telegramId}' already exists. Duplicate leads are not allowed.`,
         });
       }
     }
@@ -567,13 +585,13 @@ exports.createLead = async (req, res) => {
   } catch (err) {
     console.error("Error creating lead:", err);
 
-    // Handle duplicate key errors (commonly for email)
+    // Handle duplicate key errors (commonly for email/telegram)
     if (err.code === 11000 && err.keyPattern) {
       const field = Object.keys(err.keyPattern)[0];
       console.error(`Duplicate key error for field: ${field}`);
       return res.status(400).json({
         success: false,
-        message: `A lead with this ${field === 'emailHash' ? 'email' : field} already exists. Duplicate leads are not allowed.`,
+        message: `A lead with this ${field === 'emailHash' ? 'email' : field === 'telegramIdHash' ? 'Telegram ID' : field} already exists. Duplicate leads are not allowed.`,
       });
     }
 
@@ -702,6 +720,7 @@ exports.updateLead = async (req, res) => {
       "LEAD PERSON": "leadPerson",
       FEEDBACK: "feedback",
       REMARKS: "remarks",
+      TELEGRAM_ID: "telegramId",
 
       // Standard Keys (from other UI components)
       name: "name",
@@ -718,6 +737,7 @@ exports.updateLead = async (req, res) => {
       assignedTo: "assignedTo",
       leadPerson: "leadPerson",
       feedback: "feedback",
+      telegramId: "telegramId",
       // Date Mapping
       customCreatedAt: "createdAt",
       DATE: "createdAt",
@@ -753,6 +773,22 @@ exports.updateLead = async (req, res) => {
         return res.status(400).json({
           success: false,
           message: `A lead with the email '${newEmail}' already exists. Duplicate leads are not allowed.`,
+        });
+      }
+    }
+
+    // Check if the Telegram ID is being updated and if it matches another existing lead
+    const newTelegramId = finalUpdateData.telegramId;
+    if (newTelegramId !== undefined && newTelegramId !== null && newTelegramId.trim() !== "") {
+      const existingLeads = await Lead.findByTelegramId(newTelegramId.trim());
+      const isDuplicate = existingLeads.some(
+        (existing) => existing._id.toString() !== lead._id.toString()
+      );
+      if (isDuplicate) {
+        console.error(`Attempt to update lead ${lead._id} to duplicate Telegram ID: ${newTelegramId}`);
+        return res.status(400).json({
+          success: false,
+          message: `A lead with the Telegram ID '${newTelegramId}' already exists. Duplicate leads are not allowed.`,
         });
       }
     }
@@ -861,13 +897,13 @@ exports.updateLead = async (req, res) => {
   } catch (err) {
     console.error("Error updating lead:", err);
 
-    // Handle duplicate key errors (commonly for email)
+    // Handle duplicate key errors (commonly for email/telegram)
     if (err.code === 11000 && err.keyPattern) {
       const field = Object.keys(err.keyPattern)[0];
       console.error(`Duplicate key error for field: ${field}`);
       return res.status(400).json({
         success: false,
-        message: `A lead with this ${field === 'emailHash' ? 'email' : field} already exists. Duplicate leads are not allowed.`,
+        message: `A lead with this ${field === 'emailHash' ? 'email' : field === 'telegramIdHash' ? 'Telegram ID' : field} already exists. Duplicate leads are not allowed.`,
       });
     }
 

@@ -127,7 +127,7 @@ router.get('/count', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'
 router.route('/:id')
   .get(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSale)
   .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), updateSale)
-  .delete(authorize('Sales Person','Manager', 'Admin'), deleteSale);
+  .delete(authorize('Sales Person', 'Manager', 'Admin'), deleteSale);
 
 // Reports routes
 router.get('/reports/course-analysis', protect, authorize('Admin', 'Manager'), async (req, res) => {
