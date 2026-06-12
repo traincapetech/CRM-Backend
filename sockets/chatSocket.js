@@ -87,8 +87,9 @@ module.exports = (io, socket) => {
         replyTo,
       });
 
-      // Broadcast to group room
-      io.to(`group_${groupId}`).emit("newGroupMessage", {
+      // Broadcast to all group members EXCEPT the sender
+      // (sender already has an optimistic message; they get the real _id via groupMessageDelivered below)
+      socket.to(`group_${groupId}`).emit("newGroupMessage", {
         ...(message.toJSON ? message.toJSON() : message),
         chatId: `group_${groupId}`
       });
