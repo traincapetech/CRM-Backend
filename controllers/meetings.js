@@ -101,6 +101,17 @@ exports.createMeeting = async (req, res) => {
       }
     }
 
+    // Notify all admins of the new meeting
+    try {
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `New meeting '${meeting.title}' (${meeting.meetingType}) was created by ${req.user.fullName}.`,
+        data: { meetingId: meeting._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     res.status(201).json({
       success: true,
       data: meeting,
@@ -193,6 +204,17 @@ exports.endMeeting = async (req, res) => {
     meeting.duration = duration;
 
     await meeting.save();
+
+    // Notify all admins that the meeting ended
+    try {
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `Meeting '${meeting.title}' was ended by ${req.user.fullName}. Duration: ${Math.floor(duration / 60)} minutes.`,
+        data: { meetingId: meeting._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
 
     res.status(200).json({
       success: true,

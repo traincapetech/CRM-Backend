@@ -745,6 +745,18 @@ exports.deleteSale = async (req, res) => {
 
     await sale.deleteOne();
 
+    // Notify all admins of the deletion
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `Sale for ${sale.customerName} (${sale.course || "N/A"}) of amount ${sale.totalCost || 0} ${sale.currency || "USD"} was deleted by ${req.user.fullName}.`,
+        data: { saleId: sale._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     res.status(200).json({
       success: true,
       data: {},

@@ -967,7 +967,7 @@ exports.deletePayroll = async (req, res) => {
       });
     }
 
-    const payroll = await Payroll.findById(req.params.id);
+    const payroll = await Payroll.findById(req.params.id).populate("employeeId");
     if (!payroll) {
       console.log("Payroll not found with ID:", req.params.id);
       return res.status(404).json({
@@ -1040,6 +1040,19 @@ exports.deletePayroll = async (req, res) => {
 
     await Payroll.findByIdAndDelete(req.params.id);
     console.log("Payroll deleted successfully");
+
+    // Notify all admins of payroll deletion
+    try {
+      const { notifyAdmins } = require("../services/notificationService");
+      const employeeName = payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee");
+      await notifyAdmins({
+        type: "ACTIVITY",
+        message: `Payroll record for ${employeeName} (${payroll.monthName || "Month " + payroll.month}/${payroll.year}) was deleted by ${req.user.fullName}. Amount: ${payroll.netSalary} INR.`,
+        data: { payrollId: payroll._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
 
     res.status(200).json({
       success: true,

@@ -224,6 +224,18 @@ exports.createInvoice = async (req, res) => {
       .populate('relatedSale', 'customerName course totalCost')
       .populate('relatedLead', 'name course');
 
+    // Notify all admins of the new invoice creation
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `New invoice ${populatedInvoice.invoiceNumber} created by ${req.user.fullName} for ${populatedInvoice.clientInfo?.name || "Client"}. Total Amount: ${populatedInvoice.totalAmount} ${populatedInvoice.currency || "USD"}.`,
+        data: { invoiceId: populatedInvoice._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     console.log(`Invoice created successfully with number: ${populatedInvoice.invoiceNumber}`);
 
     res.status(201).json({
@@ -315,6 +327,18 @@ exports.updateInvoice = async (req, res) => {
       .populate('relatedSale', 'customerName course totalCost')
       .populate('relatedLead', 'name course');
 
+    // Notify all admins of the invoice update
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `Invoice ${invoice.invoiceNumber} was updated by ${req.user.fullName}. Total Amount: ${invoice.totalAmount} ${invoice.currency || "USD"}.`,
+        data: { invoiceId: invoice._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     console.log(`Invoice updated successfully: ${invoice.invoiceNumber}`);
 
     res.status(200).json({
@@ -370,6 +394,18 @@ exports.deleteInvoice = async (req, res) => {
     invoice.isDeleted = true;
     invoice.updatedBy = req.user._id;
     await invoice.save();
+
+    // Notify all admins of the invoice deletion
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `Invoice ${invoice.invoiceNumber} was deleted by ${req.user.fullName}.`,
+        data: { invoiceId: invoice._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
 
     console.log(`Invoice ${invoice.invoiceNumber} soft-deleted successfully.`);
 
@@ -554,6 +590,18 @@ exports.recordPayment = async (req, res) => {
       .populate('payments.recordedBy', 'fullName')
       .populate('relatedSale', 'customerName course totalCost')
       .populate('relatedLead', 'name course');
+
+    // Notify all admins of the payment recording
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `Payment of ${amount} ${updatedInvoice.currency || "USD"} recorded for invoice ${updatedInvoice.invoiceNumber} by ${req.user.fullName}. New Status: ${updatedInvoice.status}.`,
+        data: { invoiceId: updatedInvoice._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
 
     console.log(`Payment of ${amount} recorded successfully for invoice: ${invoice.invoiceNumber}`);
 

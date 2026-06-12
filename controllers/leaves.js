@@ -401,7 +401,18 @@ exports.updateLeave = async (req, res) => {
       req.params.id,
       req.body,
       { new: true, runValidators: true },
-    );
+    ).populate("employeeId", "fullName");
+
+    // Notify all admins of the leave update
+    try {
+      await notifyAdmins({
+        type: "LEAVE_UPDATED",
+        message: `Leave request for ${updatedLeave.employeeId?.fullName || "Employee"} was updated by ${req.user.fullName}. Status: ${updatedLeave.status}, Type: ${updatedLeave.leaveType}`,
+        leaveId: updatedLeave._id
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
 
     res.json({
       success: true,
@@ -422,7 +433,7 @@ exports.updateLeave = async (req, res) => {
 // @access  Private
 exports.deleteLeave = async (req, res) => {
   try {
-    const leave = await Leave.findById(req.params.id);
+    const leave = await Leave.findById(req.params.id).populate("employeeId", "fullName");
     if (!leave) {
       return res.status(404).json({
         success: false,
@@ -431,7 +442,7 @@ exports.deleteLeave = async (req, res) => {
     }
 
     // Only allow deletion if status is PENDING
-    if (leave.status !== "PENDING") {
+    if (leave.status !== "PENDING" && leave.status !== "pending") {
       return res.status(400).json({
         success: false,
         message: "Cannot delete processed leave application",
@@ -439,6 +450,17 @@ exports.deleteLeave = async (req, res) => {
     }
 
     await leave.remove();
+
+    // Notify all admins of the leave deletion
+    try {
+      await notifyAdmins({
+        type: "ACTIVITY",
+        message: `Leave request for ${leave.employeeId?.fullName || "Employee"} (${leave.totalDays} days, ${leave.leaveType}) was deleted by ${req.user.fullName}.`,
+        data: { leaveId: leave._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
 
     res.json({
       success: true,

@@ -952,6 +952,18 @@ exports.deleteLead = async (req, res) => {
 
     await lead.deleteOne();
 
+    // Notify all admins of the delete
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `Lead ${lead.name} was deleted by ${req.user.fullName}. Course: ${lead.course || "N/A"}`,
+        data: { leadId: lead._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     res.status(200).json({
       success: true,
       data: {},

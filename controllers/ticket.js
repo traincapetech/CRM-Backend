@@ -110,6 +110,17 @@ exports.createTicket = async (req, res) => {
       });
     });
 
+    // Notify all admins of the new ticket (creates persistent DB notifications)
+    try {
+      await notifyAdmins({
+        type: "TICKET_CREATED",
+        message: `New ticket '${populatedTicket.title}' raised by ${populatedTicket.raisedBy?.fullName || "a user"}. Priority: ${populatedTicket.priority}`,
+        ticketId: populatedTicket._id
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     return res.status(201).json({
       success: true,
       data: populatedTicket,
@@ -608,6 +619,17 @@ exports.closeTicket = async (req, res) => {
       broadcastTicketUpdate(fullTicket._id, { status: fullTicket.status });
     }
 
+    // Notify all admins of ticket closure
+    try {
+      await notifyAdmins({
+        type: "TICKET_UPDATED",
+        message: `Ticket '${fullTicket.title}' was closed by ${req.user.fullName}.`,
+        ticketId: fullTicket._id
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     return res.status(200).json({
       success: true,
       message: "Ticket closed (3-day reopen window started)",
@@ -671,6 +693,17 @@ exports.reopenTicket = async (req, res) => {
       broadcastTicketUpdate(fullTicket._id, { status: fullTicket.status });
     }
 
+    // Notify all admins of ticket reopening
+    try {
+      await notifyAdmins({
+        type: "TICKET_UPDATED",
+        message: `Ticket '${fullTicket.title}' was reopened by ${req.user.fullName}.`,
+        ticketId: fullTicket._id
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     return res.status(200).json({
       success: true,
       message: "Ticket reopened",
@@ -705,6 +738,17 @@ exports.deleteTicket = async (req, res) => {
         success: false,
         message: "Ticket not found",
       });
+    }
+
+    // Notify all admins of the ticket deletion
+    try {
+      await notifyAdmins({
+        type: "ACTIVITY",
+        message: `Ticket '${ticket.title}' was deleted by ${req.user.fullName}.`,
+        data: { ticketId: ticket._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
     }
 
     return res.status(200).json({

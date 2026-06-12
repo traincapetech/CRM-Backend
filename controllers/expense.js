@@ -121,6 +121,17 @@ exports.createExpense = async (req, res) => {
       status: "PENDING",
     });
 
+    // Notify all admins of the new expense claim
+    try {
+      await notifyAdmins({
+        type: "ACTIVITY",
+        message: `New expense claim '${expense.title}' (${expense.amount} INR) submitted by ${req.user.fullName}. Category: ${expense.category}`,
+        data: { expenseId: expense._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
     res.status(201).json({
       success: true,
       data: expense,
@@ -244,6 +255,17 @@ exports.deleteExpense = async (req, res) => {
     }
 
     await expense.deleteOne();
+
+    // Notify all admins of the expense claim deletion
+    try {
+      await notifyAdmins({
+        type: "ACTIVITY",
+        message: `Expense claim '${expense.title}' (${expense.amount} INR) was deleted by ${req.user.fullName}.`,
+        data: { expenseId: expense._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
 
     res.status(200).json({
       success: true,

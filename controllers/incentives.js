@@ -548,7 +548,7 @@ exports.deleteIncentive = async (req, res) => {
       });
     }
 
-    const incentive = await Incentive.findById(req.params.id);
+    const incentive = await Incentive.findById(req.params.id).populate("employeeId");
     if (!incentive) {
       return res.status(404).json({
         success: false,
@@ -566,6 +566,17 @@ exports.deleteIncentive = async (req, res) => {
     }
 
     await Incentive.findByIdAndDelete(req.params.id);
+
+    // Notify all admins of the incentive deletion
+    try {
+      await notifyAdmins({
+        type: "ACTIVITY",
+        message: `Incentive request for ${incentive.employeeId?.fullName || "Employee"} (Rs. ${incentive.amount}, ${incentive.type}) was deleted by ${req.user.fullName}.`,
+        data: { incentiveId: incentive._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
 
     res.status(200).json({
       success: true,
