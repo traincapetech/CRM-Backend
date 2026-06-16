@@ -219,6 +219,7 @@ LeadSchema.statics.findByTelegramId = function (telegramId) {
 };
 
 // PERFORMANCE OPTIMIZATION: Add indexes for faster queries
+LeadSchema.index({ name: 1 });
 LeadSchema.index({ assignedTo: 1, createdAt: -1 });
 LeadSchema.index({ leadPerson: 1, createdAt: -1 });
 LeadSchema.index({ createdBy: 1, createdAt: -1 });

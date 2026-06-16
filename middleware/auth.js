@@ -54,6 +54,14 @@ const protect = async (req, res, next) => {
     }
 
     req.user = user;
+
+    // Store user ID in request context store for Mongoose audit logs
+    const { requestContext } = require("./context");
+    const store = requestContext.getStore();
+    if (store) {
+      store.set("userId", user._id.toString());
+    }
+
     next();
   } catch (err) {
     // Only log full error for non-JWT errors or critical issues

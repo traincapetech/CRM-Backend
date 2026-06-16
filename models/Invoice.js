@@ -220,6 +220,10 @@ const InvoiceSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+  roundOff: {
+    type: Number,
+    default: 0
+  },
   totalAmount: {
     type: Number,
     required: true,
@@ -425,7 +429,11 @@ InvoiceSchema.pre('save', function(next) {
     this.subtotal = this.items.reduce((sum, item) => sum + (item.subtotal || 0), 0);
     this.totalDiscount = this.items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0) - (item.subtotal || 0)), 0);
     this.totalTax = this.items.reduce((sum, item) => sum + (item.taxAmount || 0), 0);
-    this.totalAmount = this.subtotal + this.totalTax;
+    
+    const rawTotal = this.subtotal + this.totalTax;
+    this.totalAmount = Math.round(rawTotal);
+    this.roundOff = parseFloat((this.totalAmount - rawTotal).toFixed(2));
+    
     this.balanceDue = this.totalAmount - (this.amountPaid || 0);
     
     // Update status based on payment

@@ -3,29 +3,7 @@ const mongoose = require('mongoose');
 const logSchema = new mongoose.Schema({
   action: {
     type: String,
-    required: true,
-    enum: [
-      'LOGIN',
-      'LOGOUT',
-      'LEAD_CREATE',
-      'LEAD_UPDATE',
-      'LEAD_DELETE',
-      'LEAD_ASSIGN',
-      'SALE_CREATE',
-      'SALE_UPDATE',
-      'SALE_DELETE',
-      'USER_CREATE',
-      'USER_UPDATE',
-      'USER_DELETE',
-      'EMPLOYEE_CREATE',
-      'EMPLOYEE_UPDATE',
-      'EMPLOYEE_DELETE',
-      'ATTENDANCE_MARK',
-      'LEAVE_REQUEST',
-      'LEAVE_UPDATE',
-      'PAYROLL_UPDATE',
-      'SETTINGS_UPDATE'
-    ]
+    required: true
   },
   performedBy: {
     type: mongoose.Schema.Types.ObjectId,

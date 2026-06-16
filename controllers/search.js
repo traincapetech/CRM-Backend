@@ -3,6 +3,7 @@ const Employee = require("../models/Employee");
 const ActionItem = require("../models/ActionItem");
 const User = require("../models/User");
 const Sale = require("../models/Sale");
+const { hashForSearch } = require("../utils/encryption");
 
 // Hardcoded App Pages
 // In a real app, this might come from a config or database
@@ -58,10 +59,19 @@ exports.globalSearch = async (req, res) => {
     results.push(...pageMatches);
 
     // 2. Parallel Database Queries
+    const searchVal = query.trim();
+    const searchHash = hashForSearch(searchVal);
+
     const [leads, employees, actionItems] = await Promise.all([
-      // LEADS: Search Name, Company
+      // LEADS: Search Name, Company, Email, Phone, Telegram
       Lead.find({
-        $or: [{ name: regex }, { company: regex }],
+        $or: [
+          { name: regex },
+          { company: regex },
+          { emailHash: searchHash },
+          { phoneHash: searchHash },
+          { telegramIdHash: searchHash },
+        ],
       })
         .select("name company _id")
         .limit(5)

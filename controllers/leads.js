@@ -1,5 +1,5 @@
 const Lead = require("../models/Lead");
-const { decrypt } = require("../utils/encryption");
+const { decrypt, hashForSearch } = require("../utils/encryption");
 
 /**
  * Helper to notify admins about detailed lead updates
@@ -112,16 +112,19 @@ exports.getLeads = async (req, res) => {
 
     // Mobile/Name/Email Search
     if (req.query.search) {
-      const searchRegex = new RegExp(req.query.search, "i");
+      const searchVal = req.query.search.trim();
+      const searchRegex = new RegExp(searchVal, "i");
+      const searchHash = hashForSearch(searchVal);
+      
       query = query.where({
         $or: [
           { name: searchRegex },
-          { email: searchRegex },
-          { phone: searchRegex },
-          { telegramId: searchRegex },
+          { emailHash: searchHash },
+          { phoneHash: searchHash },
+          { telegramIdHash: searchHash },
         ],
       });
-      console.log(`Searching for: ${req.query.search}`);
+      console.log(`Searching for: ${searchVal} (Hash: ${searchHash})`);
     }
 
     // Filter by Source

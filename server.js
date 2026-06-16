@@ -4,6 +4,11 @@ if (dns && typeof dns.setDefaultResultOrder === "function") {
   dns.setDefaultResultOrder("ipv4first");
 }
 
+// Global Mongoose Audit Log Plugin registration prior to schema loading
+const mongoose = require("mongoose");
+const auditLogPlugin = require("./plugins/auditLogPlugin");
+mongoose.plugin(auditLogPlugin);
+
 const express = require("express");
 const dotenv = require("dotenv");
 const morgan = require("morgan");
@@ -407,6 +412,10 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Cookie parser for JWT cookies
 app.use(cookieParser());
+
+// Request context middleware for Mongoose audit logging
+const { contextMiddleware } = require("./middleware/context");
+app.use(contextMiddleware);
 
 // Compression middleware - reduces response size by ~70%
 app.use(

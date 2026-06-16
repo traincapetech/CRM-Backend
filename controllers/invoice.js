@@ -201,10 +201,13 @@ exports.createInvoice = async (req, res) => {
 
     // Calculate the overall GST and total amounts.
     const gstAmount = parseFloat((subtotal * 0.18).toFixed(2));
-    const totalAmount = subtotal + gstAmount;
+    const rawTotal = subtotal + gstAmount;
+    const totalAmount = Math.round(rawTotal);
+    const roundOff = parseFloat((totalAmount - rawTotal).toFixed(2));
 
     req.body.subtotal = subtotal;
     req.body.gstAmount = gstAmount;
+    req.body.roundOff = roundOff;
     req.body.totalAmount = totalAmount;
 
     if (typeof req.body.balanceDue === 'undefined') {
@@ -312,10 +315,13 @@ exports.updateInvoice = async (req, res) => {
       });
 
       const gstAmount = parseFloat((subtotal * 0.18).toFixed(2));
-      const totalAmount = subtotal + gstAmount;
+      const rawTotal = subtotal + gstAmount;
+      const totalAmount = Math.round(rawTotal);
+      const roundOff = parseFloat((totalAmount - rawTotal).toFixed(2));
       
       req.body.subtotal = subtotal;
       req.body.gstAmount = gstAmount;
+      req.body.roundOff = roundOff;
       req.body.totalAmount = totalAmount;
     }
 
@@ -912,17 +918,17 @@ function generatePDFContent(doc, invoice) {
 
   // --- Items Table ---
   const col1X = margin + 8;
-  const col2X = margin + 200;
-  const col3X = margin + 280;
-  const col4X = margin + 360;
-  const col5X = margin + 440;
+  const col2X = margin + 195;
+  const col3X = margin + 270;
+  const col4X = margin + 345;
+  const col5X = margin + 395;
   const colWidth = pageWidth - col5X - margin;
 
   doc.rect(margin, y, contentWidth, 20).fillAndStroke(tableHeaderColor, tableHeaderColor);
   addText('DESCRIPTION', col1X, y + 6, { fontSize: 8, bold: true, color: primaryColor });
   addText('UNIT PRICE', col2X, y + 6, { fontSize: 8, bold: true, color: primaryColor, align: 'right', width: 70 });
   addText('GST', col3X, y + 6, { fontSize: 8, bold: true, color: primaryColor, align: 'right', width: 70 });
-  addText('QTY', col4X, y + 6, { fontSize: 8, bold: true, color: primaryColor, align: 'right', width: 70 });
+  addText('QTY', col4X, y + 6, { fontSize: 8, bold: true, color: primaryColor, align: 'right', width: 45 });
   addText('TOTAL', col5X, y + 6, { fontSize: 8, bold: true, color: primaryColor, align: 'right', width: colWidth });
   y += 20;
 
@@ -930,7 +936,7 @@ function generatePDFContent(doc, invoice) {
     addText(item.description || '', col1X, y + 6, { fontSize: 8, color: primaryColor });
     addText(formatNumber(item.unitPrice), col2X, y + 6, { fontSize: 8, color: primaryColor, align: 'right', width: 70 });
     addText(formatNumber(item.gst), col3X, y + 6, { fontSize: 8, color: primaryColor, align: 'right', width: 70 });
-    addText(item.quantity.toString(), col4X, y + 6, { fontSize: 8, color: primaryColor, align: 'right', width: 70 });
+    addText(item.quantity.toString(), col4X, y + 6, { fontSize: 8, color: primaryColor, align: 'right', width: 45 });
     
     // ✅ Clean number formatting with proper currency symbol and font handling
     addText(`${currencySymbol} ${formatNumber(item.total)}`, col5X, y + 6, { fontSize: 8, color: primaryColor, align: 'right', width: colWidth });
@@ -953,6 +959,15 @@ function generatePDFContent(doc, invoice) {
   // ✅ Clean number formatting with proper currency symbol and font handling
   addText(`${currencySymbol} ${formatNumber(invoice.gstAmount)}`, totalsValueX, y, { fontSize: 9, bold: true, color: primaryColor, align: 'right', width: totalsValueWidth });
   y += totalsLineSpacing;
+  
+  if (invoice.roundOff && Math.abs(invoice.roundOff) >= 0.01) {
+    addText('ROUND OFF', totalsX, y, { fontSize: 9, bold: true, color: primaryColor });
+    const formattedRoundOff = invoice.roundOff > 0 
+      ? `+${formatNumber(invoice.roundOff)}` 
+      : `${formatNumber(invoice.roundOff)}`;
+    addText(`${currencySymbol} ${formattedRoundOff}`, totalsValueX, y, { fontSize: 9, bold: true, color: primaryColor, align: 'right', width: totalsValueWidth });
+    y += totalsLineSpacing;
+  }
   
   addText('TOTAL', totalsX, y, { fontSize: 9, bold: true, color: primaryColor });
   // ✅ Clean number formatting with proper currency symbol and font handling
