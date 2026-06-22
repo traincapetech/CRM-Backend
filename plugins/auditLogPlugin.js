@@ -49,6 +49,11 @@ const auditLogPlugin = (schema) => {
   schema.pre("save", async function(next) {
     const modelName = this.constructor.modelName;
     
+    // Skip subdocuments/embedded documents (they don't have a modelName)
+    if (!modelName) {
+      return next();
+    }
+    
     // Skip logging internal log tables to avoid infinite recursion loops
     if (
       [
@@ -79,7 +84,13 @@ const auditLogPlugin = (schema) => {
 
   // Post-save hook: Log creation or diffs on updates
   schema.post("save", async function(doc) {
-    const modelName = doc.constructor.modelName;
+    const modelName = doc?.constructor?.modelName;
+    
+    // Skip subdocuments/embedded documents (they don't have a modelName)
+    if (!modelName) {
+      return;
+    }
+    
     if (
       [
         "Log",

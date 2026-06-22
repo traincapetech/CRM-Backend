@@ -49,6 +49,7 @@
     "xss-clean": "^0.1.4"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "pdf-parse": "^2.4.5"
   }
 }
