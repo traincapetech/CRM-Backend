@@ -38,3 +38,25 @@ exports.getOverview = async (req, res) => {
     }
   });
 };
+
+// @desc    Get detailed attempts list
+// @route   GET /api/test-reports/attempts
+// @access  Permission: test.report
+exports.getAttempts = async (req, res) => {
+  try {
+    const attempts = await TestAttempt.find({})
+      .populate('user', 'fullName email')
+      .populate('test', 'title passingScore')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      data: attempts
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch detailed attempts'
+    });
+  }
+};

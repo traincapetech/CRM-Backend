@@ -3,7 +3,7 @@ const TestAttempt = require('../models/TestAttempt');
 const TestAssignment = require('../models/TestAssignment');
 const Test = require('../models/Test');
 const TestQuestion = require('../models/TestQuestion');
-const { getUserRoleNames } = require('../utils/rbac');
+const { getUserRoleNames, getUserPermissions } = require('../utils/rbac');
 const { assignmentMatchesUser, isAssignmentActive } = require('./testAssignments');
 
 const shuffleArray = (items) => {
@@ -216,14 +216,21 @@ exports.getAttempt = async (req, res) => {
 
 // @desc    Get attempt review (with correct answers)
 // @route   GET /api/test-attempts/:id/review
-// @access  Permission: test.take
+// @access  Permission: test.take (owners) or test.report / test.evaluate (admins/managers)
 exports.getAttemptReview = async (req, res) => {
-  const attempt = await TestAttempt.findById(req.params.id);
+  const attempt = await TestAttempt.findById(req.params.id)
+    .populate('user', 'fullName email')
+    .populate('test', 'title passingScore');
+    
   if (!attempt) {
     return res.status(404).json({ success: false, message: 'Attempt not found' });
   }
 
-  if (attempt.user.toString() !== req.user._id.toString()) {
+  const { permissions } = await getUserPermissions(req.user);
+  const isOwner = attempt.user?._id?.toString() === req.user._id.toString() || attempt.user?.toString() === req.user._id.toString();
+  const canReview = isOwner || permissions.includes('test.report') || permissions.includes('test.evaluate');
+
+  if (!canReview) {
     return res.status(403).json({ success: false, message: 'Not allowed' });
   }
 
