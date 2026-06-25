@@ -508,7 +508,7 @@ exports.createLead = async (req, res) => {
     // REAL-TIME PERFORMANCE UPDATE
     // Calculate performance for assignedTo and leadPerson immediately
     try {
-      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
       const today = new Date();
 
       // Update for assigned sales person
@@ -516,7 +516,7 @@ exports.createLead = async (req, res) => {
         console.log(
           `⚡️ Triggering real-time performance update for assignedTo (created): ${lead.assignedTo}`,
         );
-        PerformanceCalculationService.calculateEmployeePerformance(
+        queuePerformanceCalculation(
           lead.assignedTo,
           today,
         ).catch((err) =>
@@ -532,7 +532,7 @@ exports.createLead = async (req, res) => {
         console.log(
           `⚡️ Triggering real-time performance update for leadPerson (created): ${lead.leadPerson}`,
         );
-        PerformanceCalculationService.calculateEmployeePerformance(
+        queuePerformanceCalculation(
           lead.leadPerson,
           today,
         ).catch((err) =>
@@ -829,7 +829,7 @@ exports.updateLead = async (req, res) => {
     // REAL-TIME PERFORMANCE UPDATE
     // Calculate performance for assignedTo and leadPerson
     try {
-      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
       const today = new Date();
 
       // Update for assigned sales person
@@ -838,7 +838,7 @@ exports.updateLead = async (req, res) => {
         console.log(
           `⚡️ Triggering real-time performance update for assignedTo: ${assignedToId}`,
         );
-        PerformanceCalculationService.calculateEmployeePerformance(
+        queuePerformanceCalculation(
           assignedToId,
           today,
         ).catch((err) =>
@@ -857,7 +857,7 @@ exports.updateLead = async (req, res) => {
         console.log(
           `⚡️ Triggering real-time performance update for leadPerson: ${leadPersonId}`,
         );
-        PerformanceCalculationService.calculateEmployeePerformance(
+        queuePerformanceCalculation(
           leadPersonId,
           today,
         ).catch((err) =>
@@ -1430,33 +1430,55 @@ exports.importLeads = async (req, res) => {
       allUsers.map((u) => `${u.fullName} (${u.role})`),
     );
 
+    // Pre-index users by role and name for O(1) lookups
+    const leadPersons = allUsers.filter(u => u.role === "Lead Person");
+    const salesTeam = allUsers.filter(u => ["Sales Person", "Admin", "Manager"].includes(u.role));
+
+    const buildUserIndices = (users) => {
+      const exactMap = new Map();
+      const firstNameMap = new Map();
+      users.forEach(user => {
+        const lowerName = user.fullName.toLowerCase();
+        exactMap.set(lowerName, user);
+        
+        const firstName = lowerName.split(" ")[0];
+        if (firstName && !firstNameMap.has(firstName)) {
+          firstNameMap.set(firstName, user);
+        }
+      });
+      return { exactMap, firstNameMap, list: users };
+    };
+
+    const leadPersonIndices = buildUserIndices(leadPersons);
+    const salesTeamIndices = buildUserIndices(salesTeam);
+
+    const resolveUserByName = (searchName, indices) => {
+      if (!searchName) return null;
+      const cleanSearchName = searchName.trim().toLowerCase();
+
+      // 1. Try exact match (O(1))
+      let match = indices.exactMap.get(cleanSearchName);
+      if (match) return match;
+
+      // 2. Try partial contains match (O(U_role))
+      match = indices.list.find(user => {
+        const lowerName = user.fullName.toLowerCase();
+        return lowerName.includes(cleanSearchName) || cleanSearchName.includes(lowerName);
+      });
+      if (match) return match;
+
+      // 3. Try first name match (O(1))
+      const searchFirstName = cleanSearchName.split(" ")[0];
+      return indices.firstNameMap.get(searchFirstName) || null;
+    };
+
     // Process each mapped lead to assign Lead Persons and Sales Persons
     for (let leadData of mappedLeads) {
       // Assign Lead Person if specified in CSV
       if (leadData.leadPersonName) {
         console.log(`\nLooking for Lead Person: "${leadData.leadPersonName}"`);
 
-        // Try to find a matching Lead Person by name
-        const matchingLeadPerson = allUsers.find((user) => {
-          if (user.role !== "Lead Person") return false;
-
-          const userName = user.fullName.toLowerCase();
-          const searchName = leadData.leadPersonName.toLowerCase();
-
-          // Try exact match first
-          if (userName === searchName) return true;
-
-          // Try partial match (contains)
-          if (userName.includes(searchName) || searchName.includes(userName))
-            return true;
-
-          // Try first name match
-          const userFirstName = userName.split(" ")[0];
-          const searchFirstName = searchName.split(" ")[0];
-          if (userFirstName === searchFirstName) return true;
-
-          return false;
-        });
+        const matchingLeadPerson = resolveUserByName(leadData.leadPersonName, leadPersonIndices);
 
         if (matchingLeadPerson) {
           leadData.leadPerson = matchingLeadPerson._id;
@@ -1475,10 +1497,7 @@ exports.importLeads = async (req, res) => {
           );
           console.log(
             "Available Lead Persons:",
-            allUsers
-              .filter((u) => u.role === "Lead Person")
-              .map((u) => u.fullName)
-              .join(", "),
+            leadPersons.map((u) => u.fullName).join(", "),
           );
 
           // Fallback to importing user if they are a Lead Person
@@ -1499,28 +1518,7 @@ exports.importLeads = async (req, res) => {
       if (leadData.assignedToName) {
         console.log(`\nLooking for Sales Person: "${leadData.assignedToName}"`);
 
-        // Try to find a matching user by name (Sales Person, Admin, or Manager)
-        const matchingSalesPerson = allUsers.find((user) => {
-          if (!["Sales Person", "Admin", "Manager"].includes(user.role))
-            return false;
-
-          const userName = user.fullName.toLowerCase();
-          const searchName = leadData.assignedToName.toLowerCase();
-
-          // Try exact match first
-          if (userName === searchName) return true;
-
-          // Try partial match (contains)
-          if (userName.includes(searchName) || searchName.includes(userName))
-            return true;
-
-          // Try first name match
-          const userFirstName = userName.split(" ")[0];
-          const searchFirstName = searchName.split(" ")[0];
-          if (userFirstName === searchFirstName) return true;
-
-          return false;
-        });
+        const matchingSalesPerson = resolveUserByName(leadData.assignedToName, salesTeamIndices);
 
         if (matchingSalesPerson) {
           leadData.assignedTo = matchingSalesPerson._id;
@@ -1533,12 +1531,7 @@ exports.importLeads = async (req, res) => {
           );
           console.log(
             "Available Sales Persons:",
-            allUsers
-              .filter((u) =>
-                ["Sales Person", "Admin", "Manager"].includes(u.role),
-              )
-              .map((u) => u.fullName)
-              .join(", "),
+            salesTeam.map((u) => u.fullName).join(", "),
           );
 
           // Keep existing assignment (Lead Person or importing user)
@@ -1973,11 +1966,11 @@ exports.bulkUpdateLeads = async (req, res) => {
       if (sanitizedData.assignedTo) uniqueUserIds.add(sanitizedData.assignedTo);
       if (sanitizedData.leadPerson) uniqueUserIds.add(sanitizedData.leadPerson);
 
-      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
       const today = new Date();
       
       uniqueUserIds.forEach(userId => {
-        PerformanceCalculationService.calculateEmployeePerformance(userId, today)
+        queuePerformanceCalculation(userId, today)
           .catch(err => console.error(`Bulk perf update error for ${userId}:`, err.message));
       });
     }

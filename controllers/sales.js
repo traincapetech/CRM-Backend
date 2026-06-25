@@ -321,7 +321,7 @@ exports.createSale = async (req, res) => {
     // REAL-TIME PERFORMANCE UPDATE
     // Calculate performance for salesPerson and leadPerson immediately
     try {
-      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
       const today = new Date();
 
       // Update for sales person
@@ -329,7 +329,7 @@ exports.createSale = async (req, res) => {
         console.log(
           `⚡️ Triggering real-time performance update for salesPerson (sale created): ${sale.salesPerson}`,
         );
-        PerformanceCalculationService.calculateEmployeePerformance(
+        queuePerformanceCalculation(
           sale.salesPerson,
           today,
         ).catch((err) =>
@@ -345,7 +345,7 @@ exports.createSale = async (req, res) => {
         console.log(
           `⚡️ Triggering real-time performance update for leadPerson (sale created): ${sale.leadPerson}`,
         );
-        PerformanceCalculationService.calculateEmployeePerformance(
+        queuePerformanceCalculation(
           sale.leadPerson,
           today,
         ).catch((err) =>
@@ -546,7 +546,7 @@ exports.updateSale = async (req, res) => {
     // REAL-TIME PERFORMANCE UPDATE
     // Calculate performance for salesPerson and leadPerson immediately
     try {
-      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
       const today = new Date();
 
       // Update for sales person
@@ -555,7 +555,7 @@ exports.updateSale = async (req, res) => {
         console.log(
           `⚡️ Triggering real-time performance update for salesPerson (sale updated): ${salesPersonId}`,
         );
-        PerformanceCalculationService.calculateEmployeePerformance(
+        queuePerformanceCalculation(
           salesPersonId,
           today,
         ).catch((err) =>
@@ -572,7 +572,7 @@ exports.updateSale = async (req, res) => {
         console.log(
           `⚡️ Triggering real-time performance update for leadPerson (sale updated): ${leadPersonId}`,
         );
-        PerformanceCalculationService.calculateEmployeePerformance(
+        queuePerformanceCalculation(
           leadPersonId,
           today,
         ).catch((err) =>

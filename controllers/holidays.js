@@ -1,6 +1,6 @@
 const Holiday = require("../models/Holiday");
 const User = require("../models/User");
-const PerformanceCalculationService = require("../services/performanceCalculation");
+const { queuePerformanceCalculation } = require("../services/performanceQueue");
 
 // Helper to recalculate performance for all active employees
 const recalculatePerformanceForToday = async () => {
@@ -9,7 +9,7 @@ const recalculatePerformanceForToday = async () => {
     const today = new Date();
     console.log(`[Holiday Event] Recalculating performance for ${activeEmployees.length} employees...`);
     for (const emp of activeEmployees) {
-      await PerformanceCalculationService.calculateEmployeePerformance(emp._id, today).catch(err => {
+      await queuePerformanceCalculation(emp._id, today).catch(err => {
         console.error(`Failed to recalculate for ${emp._id}:`, err.message);
       });
     }

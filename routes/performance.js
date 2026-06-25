@@ -12,7 +12,6 @@ const {
   getEmployeePerformance,
   getEmployeeDailyPerformance,
   getTeamPerformance,
-  calculateEmployeePerformanceToday,
   getKPIAssignments,
   unassignKPIFromEmployee,
 } = require("../controllers/performance");

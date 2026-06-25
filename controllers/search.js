@@ -98,42 +98,38 @@ exports.globalSearch = async (req, res) => {
     ]);
 
     // 3. Format Lead Results (with Sale lookup)
-    const leadResults = await Promise.all(
-      leads.map(async (lead) => {
-        let link = `/lead/${lead._id}`;
-        let type = "LEAD";
-        let subtitle = lead.company || "Lead";
+    const convertedLeadNames = leads.filter(l => l.status === "Converted").map(l => l.name);
+    const salesMap = new Map();
+    if (convertedLeadNames.length > 0) {
+      const sales = await Sale.find({
+        customerName: { $in: convertedLeadNames }
+      }).select("_id customerName").lean();
+      
+      sales.forEach(sale => {
+        salesMap.set(sale.customerName, sale._id);
+      });
+    }
 
-        // If converted, try to find the linked sale
-        // Matching strictly by Name or Email/Phone if available (though encrypted)
-        // Since we don't hold a direct reference, we rely on the name match for now as a heuristic
-        // Ideally, Lead should store saleId after conversion.
-        if (lead.status === "Converted") {
-          const sale = await Sale.findOne({
-            customerName: lead.name,
-            // optional: add more criteria if possible
-          })
-            .select("_id")
-            .lean();
+    const leadResults = leads.map((lead) => {
+      let link = `/lead/${lead._id}`;
+      let subtitle = lead.company || "Lead";
 
-          if (sale) {
-            link = `/sale/${sale._id}`;
-            type = "SALE"; // Or keep as LEAD but with sale link? Let's use SALE to be clear or maybe not confuse UI icons.
-            // Keeping type as LEAD for icon consistency, but link changes.
-            // Or change subtitle to indicate it's a sale.
-            subtitle = "Converted to Sale";
-          }
+      if (lead.status === "Converted") {
+        const saleId = salesMap.get(lead.name);
+        if (saleId) {
+          link = `/sale/${saleId}`;
+          subtitle = "Converted to Sale";
         }
+      }
 
-        return {
-          type: "LEAD", // Keep icon as Lead
-          title: lead.name,
-          subtitle: subtitle,
-          link: link,
-          id: lead._id,
-        };
-      }),
-    );
+      return {
+        type: "LEAD", // Keep icon as Lead
+        title: lead.name,
+        subtitle: subtitle,
+        link: link,
+        id: lead._id,
+      };
+    });
     results.push(...leadResults);
 
     // 4. Format Employee Results

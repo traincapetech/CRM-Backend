@@ -68,6 +68,7 @@ const attendanceSchema = new mongoose.Schema({
 
 // Create compound index for employee and date
 attendanceSchema.index({ employeeId: 1, date: 1 }, { unique: true });
+attendanceSchema.index({ date: 1 });
 
 // Virtual for formatted date
 attendanceSchema.virtual('formattedDate').get(function () {

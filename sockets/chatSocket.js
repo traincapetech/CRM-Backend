@@ -221,11 +221,12 @@ module.exports = (io, socket) => {
               status: "OFFLINE", 
               lastSeen: new Date() 
             });
-            disconnectTimeouts.delete(userId);
             console.log(`🔴 [SOCKET] User ${userId} officially MARKED OFFLINE after grace period.`);
           }
         } catch (err) {
           console.error("Error updating status on disconnect grace period:", err);
+        } finally {
+          disconnectTimeouts.delete(userId);
         }
       }, 5000); // 5 second grace period
 

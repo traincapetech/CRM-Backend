@@ -58,6 +58,19 @@ try {
   console.log("📧 Emails will be sent synchronously (fallback mode)");
 }
 
+// Initialize Performance Queue (if Redis is available)
+const { initPerformanceQueue } = require("./services/performanceQueue");
+try {
+  initPerformanceQueue();
+} catch (error) {
+  console.warn(
+    "⚠️ Performance queue not initialized (Redis may not be available):",
+    error.message,
+  );
+  console.log("📊 Performance calculations will be run synchronously (fallback mode)");
+}
+
+
 // Initialize Performance Management Cron Jobs
 const PerformanceCronJobs = require("./services/performanceCronJobs");
 try {

@@ -552,15 +552,21 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
       return `${y}-${m}-${d}`;
     };
 
+    // Pre-index attendance records in a Map by their date key for O(1) lookups
+    const attendanceMap = new Map();
+    attendanceRecords.forEach(record => {
+      if (record && record.date) {
+        attendanceMap.set(toLocaleISOString(record.date), record);
+      }
+    });
+
     // Loop through each day of the month
     for (let d = 1; d <= daysInMonth; d++) {
       const currentDay = new Date(year, month - 1, d);
       const dateKey = toLocaleISOString(currentDay);
       const dayOfWeek = currentDay.getDay(); // 0 is Sunday, 6 is Saturday
       
-      const record = attendanceRecords.find(r => 
-        toLocaleISOString(r.date) === dateKey
-      );
+      const record = attendanceMap.get(dateKey);
 
       // Rule Analysis:
       // 1. Is it a holiday?
@@ -662,52 +668,82 @@ exports.bulkMarkAttendance = async (req, res) => {
     const results = [];
     const errors = [];
 
-    // Process each employee
-    for (const employeeId of employeeIds) {
-      try {
-        const endOfDay = new Date(startOfDay);
-        endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
+    const endOfDay = new Date(startOfDay);
+    endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
 
-        let attendance = await Attendance.findOne({
-          employeeId,
-          date: {
-            $gte: startOfDay,
-            $lt: endOfDay
+    // 1. Fetch all existing attendance records for the target employees on the target date
+    const existingAttendance = await Attendance.find({
+      employeeId: { $in: employeeIds },
+      date: { $gte: startOfDay, $lt: endOfDay }
+    });
+
+    const existingMap = new Map(existingAttendance.map(att => [att.employeeId.toString(), att]));
+
+    // 2. Identify missing employee IDs and fetch their user IDs
+    const missingEmpIds = employeeIds.filter(empId => !existingMap.has(empId.toString()));
+    let employeeMap = new Map();
+    if (missingEmpIds.length > 0) {
+      const employees = await Employee.find({ _id: { $in: missingEmpIds } }).select('_id userId');
+      employeeMap = new Map(employees.map(emp => [emp._id.toString(), emp]));
+    }
+
+    // 3. Prepare bulk operations
+    const bulkOps = [];
+    const processedEmployeeIds = [];
+
+    for (const employeeId of employeeIds) {
+      const empIdStr = employeeId.toString();
+      const existing = existingMap.get(empIdStr);
+
+      if (existing) {
+        processedEmployeeIds.push(employeeId);
+        bulkOps.push({
+          updateOne: {
+            filter: { _id: existing._id },
+            update: {
+              $set: {
+                status,
+                notes: notes !== undefined ? notes : existing.notes,
+                approvedBy: req.user.id,
+                source: 'MANUAL'
+              }
+            }
           }
         });
-
-        if (attendance) {
-          // Update existing
-          attendance.status = status;
-          if (notes !== undefined) attendance.notes = notes;
-          attendance.approvedBy = req.user.id;
-          attendance.source = 'MANUAL';
-          await attendance.save();
-          results.push(attendance);
-        } else {
-          // Create new
-          const employee = await Employee.findById(employeeId);
-          if (!employee) {
-            errors.push({ employeeId, message: 'Employee not found' });
-            continue;
-          }
-
-          attendance = await Attendance.create({
-            employeeId,
-            userId: employee.userId || null,
-            date: startOfDay,
-            status,
-            notes: notes || '',
-            approvedBy: req.user.id,
-            isAdminCreated: true,
-            source: 'MANUAL'
-          });
-          results.push(attendance);
+      } else {
+        const employee = employeeMap.get(empIdStr);
+        if (!employee) {
+          errors.push({ employeeId, message: 'Employee not found' });
+          continue;
         }
-      } catch (err) {
-        console.error(`Error processing bulk attendance for employee ${employeeId}:`, err);
-        errors.push({ employeeId, message: err.message });
+        processedEmployeeIds.push(employeeId);
+        bulkOps.push({
+          insertOne: {
+            document: {
+              employeeId,
+              userId: employee.userId || null,
+              date: startOfDay,
+              status,
+              notes: notes || '',
+              approvedBy: req.user.id,
+              isAdminCreated: true,
+              source: 'MANUAL'
+            }
+          }
+        });
       }
+    }
+
+    // 4. Execute bulkWrite if there are operations to run
+    if (bulkOps.length > 0) {
+      await Attendance.bulkWrite(bulkOps);
+
+      // 5. Fetch updated/inserted records to return in response to maintain API contract compatibility
+      const updatedRecords = await Attendance.find({
+        employeeId: { $in: processedEmployeeIds },
+        date: { $gte: startOfDay, $lt: endOfDay }
+      });
+      results.push(...updatedRecords);
     }
 
     res.status(200).json({

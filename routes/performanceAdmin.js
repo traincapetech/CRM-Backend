@@ -241,9 +241,10 @@ router.get(
         }).select("_id fullName role");
 
         const today = new Date();
+        const { queuePerformanceCalculation } = require("../services/performanceQueue");
         for (const emp of eligibleEmployees) {
           try {
-            await PerformanceCalculationService.calculateEmployeePerformance(
+            await queuePerformanceCalculation(
               emp._id,
               today,
             );
@@ -278,26 +279,23 @@ router.get(
         const curMonth = liveNow.getMonth() + 1;
         const curYear = liveNow.getFullYear();
 
-        const enrichedData = await Promise.all(activeSummaries.map(async (s) => {
-          const empId = s.employeeId._id;
-          
-          // Get the same live averages used in the modal
-          const [l7, l30, l90, rolling] = await Promise.all([
-            KPIService._calculateRollingAverage(empId, 7),
-            KPIService._calculateRollingAverage(empId, 30),
-            KPIService._calculateRollingAverage(empId, 90),
-            PerformanceCalculationService.getRollingAverages(empId)
-          ]);
-
+        const enrichedData = activeSummaries.map((s) => {
           const data = s.toObject();
-          data.averages = {
-            last7Days: l7,
-            last30Days: l30,
-            last90Days: l90,
-            thisMonth: rolling.thisMonth || 0
-          };
+          // Use pre-calculated averages from the database summary document
+          if (!data.averages) {
+            data.averages = {
+              last7Days: 0,
+              last30Days: 0,
+              last90Days: 0,
+              thisMonth: s.currentRating || 0,
+              previousMonth: 0
+            };
+          } else {
+            // Ensure thisMonth is aligned with currentRating
+            data.averages.thisMonth = s.currentRating || 0;
+          }
           return data;
-        }));
+        });
 
         return res.status(200).json({
           success: true,
@@ -339,19 +337,27 @@ router.get(
       const curMonth = liveNow.getMonth() + 1;
       const curYear = liveNow.getFullYear();
 
+      // Batch fetch users and summaries to resolve N+1 queries
+      const employeeIds = historicalData.map((h) => h._id);
+      const [users, summaries] = await Promise.all([
+        User.find({ _id: { $in: employeeIds }, active: true }).select("fullName email role active"),
+        PerformanceSummary.find({ employeeId: { $in: employeeIds } })
+      ]);
+
+      const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+      const summaryMap = new Map(summaries.map((s) => [s.employeeId.toString(), s]));
+
       for (const item of historicalData) {
-        const user = await User.findOne({ _id: item._id, active: true }).select(
-          "fullName email role active",
-        );
+        const user = userMap.get(item._id.toString());
         if (user) {
-          const empId = user._id;
-          // Even for historical views, rolling averages should be 'live' as per requirements
-          const [l7, l30, l90, rolling] = await Promise.all([
-            KPIService._calculateRollingAverage(empId, 7),
-            KPIService._calculateRollingAverage(empId, 30),
-            KPIService._calculateRollingAverage(empId, 90),
-            PerformanceCalculationService.getRollingAverages(empId)
-          ]);
+          const summary = summaryMap.get(item._id.toString());
+          const averages = summary?.averages || {
+            last7Days: 0,
+            last30Days: 0,
+            last90Days: 0,
+            thisMonth: summary?.currentRating || 0,
+            previousMonth: 0
+          };
 
           results.push({
             employeeId: user,
@@ -362,10 +368,10 @@ router.get(
             month: targetMonth,
             year: targetYear,
             averages: {
-              last7Days: l7,
-              last30Days: l30,
-              last90Days: l90,
-              thisMonth: rolling.thisMonth || 0
+              last7Days: averages.last7Days || 0,
+              last30Days: averages.last30Days || 0,
+              last90Days: averages.last90Days || 0,
+              thisMonth: averages.thisMonth || 0
             },
           });
         }

@@ -225,5 +225,6 @@ LeadSchema.index({ leadPerson: 1, createdAt: -1 });
 LeadSchema.index({ createdBy: 1, createdAt: -1 });
 LeadSchema.index({ createdAt: -1 });
 LeadSchema.index({ status: 1, createdAt: -1 });
+LeadSchema.index({ name: "text", company: "text" });
 
 module.exports = mongoose.model("Lead", LeadSchema);

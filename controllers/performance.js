@@ -131,9 +131,10 @@ const updateKPITemplate = async (req, res) => {
 
     if (uniqueEmployeeIds.length > 0) {
       console.log(`🔄 Triggering performance recalculation for ${uniqueEmployeeIds.length} employees...`);
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
       for (const empId of uniqueEmployeeIds) {
         try {
-          await PerformanceCalculationService.calculateEmployeePerformance(empId, now);
+          await queuePerformanceCalculation(empId, now);
         } catch (calcErr) {
           console.error(`Error recalculating for ${empId}:`, calcErr.message);
         }
@@ -288,12 +289,11 @@ const assignKPIToEmployees = async (req, res) => {
       assignedTargets.push(target);
     }
 
-    // Trigger immediate recalculation for assigned employees
-    const PerformanceCalculationService = require("../services/performanceCalculation");
+    const { queuePerformanceCalculation } = require("../services/performanceQueue");
     const today = new Date();
     for (const employeeId of employeeIds) {
       try {
-        await PerformanceCalculationService.calculateEmployeePerformance(
+        await queuePerformanceCalculation(
           employeeId,
           today,
         );
@@ -469,7 +469,8 @@ const getEmployeePerformance = async (req, res) => {
         `No summary for ${employeeId}, triggering initial calculation...`,
       );
       const today = new Date();
-      await PerformanceCalculationService.calculateEmployeePerformance(
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
+      await queuePerformanceCalculation(
         employeeId,
         today,
       );
@@ -773,8 +774,8 @@ const unassignKPIFromEmployee = async (req, res) => {
       await EmployeeTarget.deleteMany({ kpiId, employeeId: bodyEmployeeId });
       
       // Trigger recalculation
-      const PerformanceCalculationService = require("../services/performanceCalculation");
-      await PerformanceCalculationService.calculateEmployeePerformance(bodyEmployeeId, new Date());
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
+      await queuePerformanceCalculation(bodyEmployeeId, new Date());
 
       return res.status(200).json({
         success: true,
@@ -794,8 +795,8 @@ const unassignKPIFromEmployee = async (req, res) => {
     await EmployeeTarget.findByIdAndDelete(targetId);
 
     // Trigger recalculation
-    const PerformanceCalculationService = require("../services/performanceCalculation");
-    await PerformanceCalculationService.calculateEmployeePerformance(employeeId, new Date());
+    const { queuePerformanceCalculation } = require("../services/performanceQueue");
+    await queuePerformanceCalculation(employeeId, new Date());
 
     res.status(200).json({
       success: true,

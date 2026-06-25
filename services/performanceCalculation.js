@@ -737,7 +737,7 @@ class PerformanceCalculationService {
         }
       }
 
-      // 5. Update summary (OMIT 'averages' field as per user request)
+      // 5. Update summary (Save averages to database for fast listing)
       await PerformanceSummary.findOneAndUpdate(
         { employeeId },
         {
@@ -748,6 +748,13 @@ class PerformanceCalculationService {
           streak,
           isPIP,
           pipDetails,
+          averages: {
+            last7Days: averages.last7Days || 0,
+            last30Days: averages.last30Days || 0,
+            last90Days: averages.last90Days || 0,
+            thisMonth: averages.thisMonth || 0,
+            previousMonth: averages.previousMonth || 0,
+          },
           lastCalculated: new Date(),
         },
         {

@@ -134,4 +134,9 @@ const SaleSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Performance indexes
+SaleSchema.index({ salesPerson: 1, date: -1 });
+SaleSchema.index({ date: -1 });
+SaleSchema.index({ isReference: 1 });
+
 module.exports = mongoose.model('Sale', SaleSchema); 

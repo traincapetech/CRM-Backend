@@ -76,88 +76,107 @@ exports.getTasks = async (req, res) => {
 
     const tasks = await query;
 
-    // Ensure assignedTo is properly populated - if not, fetch user data
-    const tasksWithUsers = await Promise.all(
-      tasks.map(async (task) => {
-        const taskObj = task.toObject();
+    // Ensure assignedTo, assignedBy, and customer are properly populated in batches (Resolving N+1 queries)
+    const missingUserIds = new Set();
+    const missingSaleIds = new Set();
 
-        // Handle assignedTo - check if it needs to be populated
-        if (taskObj.assignedTo) {
-          // If it's an ObjectId string or doesn't have fullName property, fetch the user
-          if (
-            typeof taskObj.assignedTo === "string" ||
-            !taskObj.assignedTo.fullName
-          ) {
-            const userId =
-              typeof taskObj.assignedTo === "object"
-                ? taskObj.assignedTo._id || taskObj.assignedTo.toString()
-                : taskObj.assignedTo;
-            const user = await User.findById(userId).select("fullName");
-            if (user) {
-              taskObj.assignedTo = {
-                _id: user._id.toString(),
-                fullName: user.fullName,
-              };
-            } else {
-              taskObj.assignedTo = null;
-            }
-          } else {
-            // Ensure _id is a string for consistency
-            if (taskObj.assignedTo._id) {
-              taskObj.assignedTo._id = taskObj.assignedTo._id.toString();
-            }
+    tasks.forEach(task => {
+      if (task.assignedTo && (typeof task.assignedTo === 'string' || !task.assignedTo.fullName)) {
+        const id = typeof task.assignedTo === 'object' ? (task.assignedTo._id || task.assignedTo) : task.assignedTo;
+        missingUserIds.add(id.toString());
+      }
+      if (task.assignedBy && (typeof task.assignedBy === 'string' || !task.assignedBy.fullName)) {
+        const id = typeof task.assignedBy === 'object' ? (task.assignedBy._id || task.assignedBy) : task.assignedBy;
+        missingUserIds.add(id.toString());
+      }
+      if (task.customer) {
+        const customerId = typeof task.customer === 'object' ? task.customer._id : task.customer;
+        if (typeof task.customer === 'string' || (!task.customer.name && !task.customer.NAME && !task.customer.fullName)) {
+          if (customerId) {
+            missingSaleIds.add(customerId.toString());
           }
         }
+      }
+    });
 
-        // Same for assignedBy
-        if (taskObj.assignedBy) {
-          if (
-            typeof taskObj.assignedBy === "string" ||
-            !taskObj.assignedBy.fullName
-          ) {
-            const userId =
-              typeof taskObj.assignedBy === "object"
-                ? taskObj.assignedBy._id || taskObj.assignedBy.toString()
-                : taskObj.assignedBy;
-            const user = await User.findById(userId).select("fullName");
-            if (user) {
-              taskObj.assignedBy = {
-                _id: user._id.toString(),
-                fullName: user.fullName,
-              };
-            } else {
-              taskObj.assignedBy = null;
-            }
-          } else {
-            // Ensure _id is a string for consistency
-            if (taskObj.assignedBy._id) {
-              taskObj.assignedBy._id = taskObj.assignedBy._id.toString();
-            }
+    const usersMap = new Map();
+    const salesMap = new Map();
+
+    const fetchPromises = [];
+    if (missingUserIds.size > 0) {
+      fetchPromises.push(
+        User.find({ _id: { $in: Array.from(missingUserIds) } })
+          .select("fullName")
+          .lean()
+          .then(users => {
+            users.forEach(u => usersMap.set(u._id.toString(), u));
+          })
+      );
+    }
+    if (missingSaleIds.size > 0) {
+      fetchPromises.push(
+        Sale.find({ _id: { $in: Array.from(missingSaleIds) } })
+          .lean()
+          .then(sales => {
+            sales.forEach(s => salesMap.set(s._id.toString(), s));
+          })
+      );
+    }
+
+    if (fetchPromises.length > 0) {
+      await Promise.all(fetchPromises);
+    }
+
+    const tasksWithUsers = tasks.map((task) => {
+      const taskObj = task.toObject();
+
+      // Handle assignedTo
+      if (taskObj.assignedTo) {
+        if (typeof taskObj.assignedTo === "string" || !taskObj.assignedTo.fullName) {
+          const userId = (typeof taskObj.assignedTo === "object" ? (taskObj.assignedTo._id || taskObj.assignedTo) : taskObj.assignedTo).toString();
+          const user = usersMap.get(userId);
+          taskObj.assignedTo = user ? {
+            _id: user._id.toString(),
+            fullName: user.fullName,
+          } : null;
+        } else if (taskObj.assignedTo._id) {
+          taskObj.assignedTo._id = taskObj.assignedTo._id.toString();
+        }
+      }
+
+      // Handle assignedBy
+      if (taskObj.assignedBy) {
+        if (typeof taskObj.assignedBy === "string" || !taskObj.assignedBy.fullName) {
+          const userId = (typeof taskObj.assignedBy === "object" ? (taskObj.assignedBy._id || taskObj.assignedBy) : taskObj.assignedBy).toString();
+          const user = usersMap.get(userId);
+          taskObj.assignedBy = user ? {
+            _id: user._id.toString(),
+            fullName: user.fullName,
+          } : null;
+        } else if (taskObj.assignedBy._id) {
+          taskObj.assignedBy._id = taskObj.assignedBy._id.toString();
+        }
+      }
+
+      // Handle customer population - if Lead populate failed, try Sale
+      if (taskObj.customer) {
+        const customerId = (typeof taskObj.customer === "object" ? taskObj.customer._id : taskObj.customer).toString();
+        if (typeof taskObj.customer === "string" || (!taskObj.customer.name && !taskObj.customer.NAME && !taskObj.customer.fullName)) {
+          const sale = salesMap.get(customerId);
+          if (sale) {
+            taskObj.customer = {
+              _id: sale._id,
+              name: sale.customerName,
+              email: sale.email,
+              phone: sale.contactNumber,
+              isReferenceSale: true
+            };
           }
         }
+      }
 
-        // Handle customer population - if Lead populate failed, try Sale
-        if (taskObj.customer) {
-          const customerId = typeof taskObj.customer === "object" ? taskObj.customer._id : taskObj.customer;
-          
-          // If customer object is empty or only has _id (meaning Lead population failed)
-          if (typeof taskObj.customer === "string" || (!taskObj.customer.name && !taskObj.customer.NAME && !taskObj.customer.fullName)) {
-            const sale = await Sale.findById(customerId);
-            if (sale) {
-              taskObj.customer = {
-                _id: sale._id,
-                name: sale.customerName,
-                email: sale.email,
-                phone: sale.contactNumber,
-                isReferenceSale: true
-              };
-            }
-          }
-        }
-
-        return taskObj;
-      }),
-    );
+      return taskObj;
+    });
 
     res.status(200).json({
       success: true,

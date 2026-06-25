@@ -47,15 +47,21 @@ const calculateAttendanceForMonth = async (employeeId, month, year) => {
       return `${y}-${m}-${d}`;
     };
 
+    // Pre-index attendance records in a Map by their date key for O(1) lookups
+    const attendanceMap = new Map();
+    attendanceRecords.forEach(record => {
+      if (record && record.date) {
+        attendanceMap.set(toLocaleISOString(record.date), record);
+      }
+    });
+
     // Loop through each day of the month
     for (let d = 1; d <= daysInMonth; d++) {
       const currentDay = new Date(year, month - 1, d);
       const dateKey = toLocaleISOString(currentDay);
       const dayOfWeek = currentDay.getDay(); // 0 is Sunday, 6 is Saturday
       
-      const record = attendanceRecords.find(r => 
-        toLocaleISOString(r.date) === dateKey
-      );
+      const record = attendanceMap.get(dateKey);
 
       // Rule Analysis:
       // 1. Is it a holiday?
@@ -310,24 +316,26 @@ exports.generatePayroll = async (req, res) => {
       console.log("🔗 Linked expenses to payroll");
     }
 
-    // Update advance records after payroll creation
+    // Update advance records after payroll creation in parallel
     if (advanceUpdates.length > 0) {
-      for (const { advance, deductionAmount } of advanceUpdates) {
-        advance.remainingAmount -= deductionAmount;
-        if (advance.remainingAmount <= 0) {
-          advance.remainingAmount = 0;
-          advance.status = "completed";
-        }
-        advance.deductionHistory.push({
-          month: parseInt(month),
-          year: parseInt(year),
-          deductedAmount: deductionAmount,
-          deductedBy: req.user.id,
-          payrollId: payroll._id,
-          deductedAt: new Date(),
-        });
-        await advance.save();
-      }
+      await Promise.all(
+        advanceUpdates.map(async ({ advance, deductionAmount }) => {
+          advance.remainingAmount -= deductionAmount;
+          if (advance.remainingAmount <= 0) {
+            advance.remainingAmount = 0;
+            advance.status = "completed";
+          }
+          advance.deductionHistory.push({
+            month: parseInt(month),
+            year: parseInt(year),
+            deductedAmount: deductionAmount,
+            deductedBy: req.user.id,
+            payrollId: payroll._id,
+            deductedAt: new Date(),
+          });
+          return advance.save();
+        })
+      );
       console.log(`🏦 Updated ${advanceUpdates.length} advance record(s)`);
     }
 
