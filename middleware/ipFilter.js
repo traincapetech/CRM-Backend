@@ -31,7 +31,27 @@ const ipToNumber = (ip) => {
 };
 
 /**
- * Checks if a given IP address matches a specific network or range.
+ * Expands a simplified IPv6 address string to its full 39-character format.
+ */
+const expandIPv6 = (ip) => {
+  if (!ip || ip.includes(".")) return "";
+  let fullIP = ip.toLowerCase();
+  if (fullIP.includes("::")) {
+    const parts = fullIP.split("::");
+    const leftParts = parts[0] ? parts[0].split(":") : [];
+    const rightParts = parts[1] ? parts[1].split(":") : [];
+    const missingCount = 8 - (leftParts.length + rightParts.length);
+    const middleParts = Array(missingCount).fill("0000");
+    fullIP = [...leftParts, ...middleParts, ...rightParts].join(":");
+  }
+  return fullIP
+    .split(":")
+    .map((group) => group.padStart(4, "0"))
+    .join(":");
+};
+
+/**
+ * Checks if a given IP address matches a specific network or range (IPv4 or IPv6).
  */
 const isIPInRange = (ip, network) => {
   const normalizedIP = normalizeIP(ip);
@@ -43,22 +63,55 @@ const isIPInRange = (ip, network) => {
     return loopbacks.includes(normalizedIP);
   }
 
+  // Handle case where network is not a range (no CIDR slash)
   if (!normalizedNetwork.includes("/")) {
+    if (normalizedIP.includes(":") && normalizedNetwork.includes(":")) {
+      return expandIPv6(normalizedIP) === expandIPv6(normalizedNetwork);
+    }
     return normalizedIP === normalizedNetwork;
   }
 
-  const [rangeIP, prefixLength] = normalizedNetwork.split("/");
-  const prefix = parseInt(prefixLength, 10);
+  const [rangeIP, prefixLengthStr] = normalizedNetwork.split("/");
+  const prefixLength = parseInt(prefixLengthStr, 10);
 
-  if (!normalizedIP.includes(".") || !rangeIP.includes(".")) {
-    return normalizedIP === rangeIP;
+  // IPv4 Range Matching
+  if (normalizedIP.includes(".") && rangeIP.includes(".")) {
+    if (isNaN(prefixLength) || prefixLength < 0 || prefixLength > 32) return false;
+    const mask = prefixLength === 0 ? 0 : (~0 << (32 - prefixLength)) >>> 0;
+    const networkNum = ipToNumber(rangeIP);
+    const ipNum = ipToNumber(normalizedIP);
+    return (ipNum & mask) === (networkNum & mask);
   }
 
-  const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
-  const networkNum = ipToNumber(rangeIP);
-  const ipNum = ipToNumber(normalizedIP);
+  // IPv6 Range Matching
+  if (normalizedIP.includes(":") && rangeIP.includes(":")) {
+    if (isNaN(prefixLength) || prefixLength < 0 || prefixLength > 128) return false;
+    const fullIP = expandIPv6(normalizedIP);
+    const fullRange = expandIPv6(rangeIP);
+    if (!fullIP || !fullRange) return false;
 
-  return (ipNum & mask) === (networkNum & mask);
+    const ipHex = fullIP.replace(/:/g, "");
+    const rangeHex = fullRange.replace(/:/g, "");
+
+    const fullHexChars = Math.floor(prefixLength / 4);
+    const remainingBits = prefixLength % 4;
+
+    if (ipHex.slice(0, fullHexChars) !== rangeHex.slice(0, fullHexChars)) {
+      return false;
+    }
+
+    if (remainingBits > 0) {
+      const ipCharVal = parseInt(ipHex[fullHexChars], 16);
+      const rangeCharVal = parseInt(rangeHex[fullHexChars], 16);
+      const mask = (0xf << (4 - remainingBits)) & 0xf;
+      if ((ipCharVal & mask) !== (rangeCharVal & mask)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  return false;
 };
 
 /**
@@ -202,3 +255,4 @@ module.exports = ipFilter;
 module.exports.refreshCache = refreshCache;
 module.exports.isIPAllowed = isIPAllowed;
 module.exports.normalizeIP = normalizeIP;
+module.exports.isIPInRange = isIPInRange;
