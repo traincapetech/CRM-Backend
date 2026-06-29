@@ -592,6 +592,7 @@ app.use("/api/questionnaires", questionnaireRoutes); // Mount Questionnaire Rout
 app.use("/api/holidays", holidayRoutes);
 app.use("/api/courses", courseRoutes);
 app.use("/api/public", require("./routes/public"));
+app.use("/api/project-requests", require("./routes/projectRequirements"));
 app.use("/api/quarterly-incentives", quarterlyIncentivesRoutes); // Mount Quarterly Incentives Routes
 app.use("/api/verda-enquiries", verdaEnquiryRoutes);
 app.use("/api/meetings", meetingRoutes);

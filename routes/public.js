@@ -50,4 +50,11 @@ router.get("/stats", async (req, res) => {
   }
 });
 
+// @desc    Submit project requirement from website
+// @route   POST /api/public/project-request
+// @access  Public
+const { uploadMiddleware } = require("../services/fileStorageService");
+const { createPublicRequirement } = require("../controllers/projectRequirements");
+router.post("/project-request", uploadMiddleware.array("files", 5), createPublicRequirement);
+
 module.exports = router;
