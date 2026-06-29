@@ -1066,6 +1066,7 @@ exports.getAssignedLeads = async (req, res) => {
       try {
         if (lead.email) lead.email = decrypt(lead.email);
         if (lead.phone) lead.phone = decrypt(lead.phone);
+        if (lead.telegramId) lead.telegramId = decrypt(lead.telegramId);
       } catch (error) {
         console.error(`Failed to decrypt lead ${lead._id}:`, error.message);
         // Keep original encrypted value if decryption fails
