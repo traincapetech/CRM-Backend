@@ -1121,20 +1121,20 @@ const generatePDFContent = (doc, payroll) => {
 
   // Company Details (Right Aligned)
   doc.fontSize(10).font("Helvetica-Bold").fillColor(SECONDARY_COLOR);
-  doc.text("Traincape Technology", MARGIN_RIGHT - 200, 45, {
+  doc.text("Traincape Technology, Khandolia Plaza, ", MARGIN_RIGHT - 200, 45, {
     align: "right",
     width: 200,
   });
   doc.font("Helvetica").fontSize(9);
-  doc.text("Khandolia Plaza, 118C", MARGIN_RIGHT - 200, 58, {
+  doc.text("118/C, Dabri - Palam Rd, Vaishali, Vaishali Colony, ", MARGIN_RIGHT - 200, 58, {
     align: "right",
     width: 200,
   });
-  doc.text("Dabri - Palam Rd", MARGIN_RIGHT - 200, 70, {
+  doc.text("Dashrath Puri, New Delhi, ", MARGIN_RIGHT - 200, 70, {
     align: "right",
     width: 200,
   });
-  doc.text("Delhi 110045, India", MARGIN_RIGHT - 200, 82, {
+  doc.text("Delhi, 110045, India", MARGIN_RIGHT - 200, 82, {
     align: "right",
     width: 200,
   });
@@ -1397,20 +1397,37 @@ const generatePDFContent = (doc, payroll) => {
   );
 
   // --- Net Salary Highlight ---
-  doc.moveDown(4);
+  doc.moveDown(2);
   const netY = doc.y;
 
+  const performanceBonus = payroll.performanceBonus || 0;
+  const projectBonus = payroll.projectBonus || 0;
+  const incentives = performanceBonus + projectBonus;
+  const netSalaryExceptIncentives = payroll.netSalaryExceptIncentives !== undefined 
+    ? payroll.netSalaryExceptIncentives 
+    : (payroll.netSalary - incentives);
+
+  doc.fontSize(9).font("Helvetica").fillColor(SECONDARY_COLOR);
+  doc.text("Net Salary (Excl. Incentives):", MARGIN_RIGHT - 250, netY);
+  doc.font("Helvetica-Bold").fillColor("#0f172a").text(`INR ${netSalaryExceptIncentives.toFixed(2)}`, MARGIN_RIGHT - 110, netY, { align: "right", width: 100 });
+
+  doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Total Incentives:", MARGIN_RIGHT - 250, netY + 15);
+  doc.font("Helvetica-Bold").fillColor("#0f172a").text(`INR ${incentives.toFixed(2)}`, MARGIN_RIGHT - 110, netY + 15, { align: "right", width: 100 });
+
+  doc.moveDown(2);
+  const finalNetY = doc.y;
+
   doc
-    .rect(MARGIN_RIGHT - 250, netY, 250, 45)
+    .rect(MARGIN_RIGHT - 250, finalNetY, 250, 45)
     .fillAndStroke(PRIMARY_COLOR, PRIMARY_COLOR);
   doc.fillColor("#ffffff").font("Helvetica").fontSize(11);
-  doc.text("NET SALARY", MARGIN_RIGHT - 235, netY + 16);
+  doc.text("TOTAL NET PAYABLE", MARGIN_RIGHT - 235, finalNetY + 16);
 
   doc.font("Helvetica-Bold").fontSize(16);
   doc.text(
     `INR ${payroll.netSalary.toFixed(2)}`,
     MARGIN_RIGHT - 165,
-    netY + 14,
+    finalNetY + 14,
     { width: 140, align: "right" },
   );
 
@@ -1463,7 +1480,7 @@ exports.exportPayrollReport = async (req, res) => {
           { path: "role", select: "name" },
         ],
       })
-      .sort({ "employeeId.fullName": 1 });
+      .sort({ netSalary: -1 });
 
     if (payrolls.length === 0) {
       return res.status(404).json({
@@ -1505,37 +1522,45 @@ exports.exportPayrollReport = async (req, res) => {
     // Pipe the PDF directly to the response
     doc.pipe(res);
 
-    // Company Logo
+    // --- Styling Constants ---
+    const PRIMARY_COLOR = "#1e3a8a"; // Deep Blue
+    const SECONDARY_COLOR = "#475569"; // Slate 600
+    const BORDER_COLOR = "#e2e8f0"; // Slate 200
+    const ACCENT_BG = "#f8fafc"; // Slate 50
+    const TEXT_DARK = "#0f172a"; // Slate 900
+
+    // Company Logo & Address (Left Aligned)
     const logoPath = path.join(
       __dirname,
       "../assets/images/traincape-logo.jpg",
     );
     if (fs.existsSync(logoPath)) {
-      doc.image(logoPath, 30, 30, { width: 60 });
+      doc.image(logoPath, 30, 30, { width: 50 });
+      doc.fontSize(8).font("Helvetica").fillColor(SECONDARY_COLOR);
+      doc.text("Traincape Technology, Khandolia Plaza 118/C", 95, 33);
+      doc.text("Dabri - Palam Rd, Vaishali, Vaishali Colony ", 95, 45);
+      doc.text("Dashrath Puri, New Delhi, Delhi, 110045", 95, 57);
+    } else {
+      doc.fontSize(16).font("Helvetica-Bold").fillColor(PRIMARY_COLOR).text("Traincape", 30, 30);
+      doc.fontSize(8).font("Helvetica").fillColor(SECONDARY_COLOR);
+      doc.text("Traincape Technology, Khandolia Plaza 118/C", 30, 48);
+      doc.text("Dabri - Palam Rd, Vaishali, Vaishali Colony ", 30, 58);
+      doc.text("Dashrath Puri, New Delhi, Delhi, 110045", 30, 68);
     }
 
-    // Header
-    doc
-      .fontSize(20)
-      .text("PAYROLL SUMMARY REPORT", 100, 40, { align: "center" });
-    doc.fontSize(12).text("Traincape Technology", { align: "center" });
-    doc
-      .fontSize(10)
-      .text("Khandolia Plaza, 118C, Dabri - Palam Rd, Delhi 110045", {
-        align: "center",
-      });
-    doc.moveDown();
-    doc.fontSize(14).text(`${monthName} ${year}`, { align: "center" });
-    doc.moveDown();
+    // Title & Month (Right Aligned)
+    doc.fontSize(16).font("Helvetica-Bold").fillColor(PRIMARY_COLOR).text("PAYROLL SUMMARY REPORT", 400, 30, { align: "right" });
+    doc.fontSize(10).font("Helvetica-Bold").fillColor(SECONDARY_COLOR).text(`${monthName} ${year}`, 400, 48, { align: "right" });
 
-    // Draw line
+    // Solid Separator
     doc
-      .strokeColor("#333333")
+      .moveTo(30, 80)
+      .lineTo(doc.page.width - 30, 80)
       .lineWidth(1)
-      .moveTo(30, doc.y)
-      .lineTo(doc.page.width - 30, doc.y)
+      .strokeColor(BORDER_COLOR)
       .stroke();
-    doc.moveDown();
+
+    doc.y = 90;
 
     // Summary Statistics
     const totalBaseSalary = payrolls.reduce(
@@ -1543,73 +1568,107 @@ exports.exportPayrollReport = async (req, res) => {
       0,
     );
     const totalNet = payrolls.reduce((sum, p) => sum + (p.netSalary || 0), 0);
+    const totalIncentives = payrolls.reduce(
+      (sum, p) => sum + (p.performanceBonus || 0) + (p.projectBonus || 0),
+      0,
+    );
+    const totalNetExceptIncentives = payrolls.reduce(
+      (sum, p) => sum + (p.netSalaryExceptIncentives || (p.netSalary - ((p.performanceBonus || 0) + (p.projectBonus || 0)))),
+      0,
+    );
+    const totalEarnedSalary = payrolls.reduce(
+      (sum, p) => sum + (p.calculatedSalary || ((p.baseSalary || 0) / (p.workingDays || 30)) * (p.daysPresent || 0)),
+      0,
+    );
+    const totalAttBonus = payrolls.reduce(
+      (sum, p) => sum + (p.attendanceBonus || 0),
+      0,
+    );
+    const totalReimbursements = payrolls.reduce(
+      (sum, p) => sum + (p.reimbursements || 0),
+      0,
+    );
+    const totalDeductionsSum = payrolls.reduce(
+      (sum, p) => sum + (
+        (p.pf || 0) +
+        (p.esi || 0) +
+        (p.tax || 0) +
+        (p.loan || 0) +
+        (p.advanceDeduction || 0) +
+        (p.other || 0)
+      ),
+      0,
+    );
     const draftCount = payrolls.filter((p) => p.status === "DRAFT").length;
     const approvedCount = payrolls.filter(
       (p) => p.status === "APPROVED",
     ).length;
     const paidCount = payrolls.filter((p) => p.status === "PAID").length;
 
-    doc.fontSize(11);
-    doc.text(`Total Employees: ${payrolls.length}`, 30);
-    doc.text(
-      `Status - Draft: ${draftCount} | Approved: ${approvedCount} | Paid: ${paidCount}`,
-      250,
-      doc.y - 13,
-    );
-    doc.moveDown(0.5);
-    doc.text(
-      `Total Base Salary: ₹${totalBaseSalary.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
-      30,
-    );
-    doc.text(
-      `Total Net Salary: ₹${totalNet.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
-      300,
-      doc.y - 13,
-    );
-    doc.moveDown();
-
-    // Draw line
+    // Draw Stats Box
+    const statsBoxY = doc.y;
+    const statsBoxHeight = 45;
     doc
-      .strokeColor("#333333")
-      .lineWidth(1)
-      .moveTo(30, doc.y)
-      .lineTo(doc.page.width - 30, doc.y)
-      .stroke();
-    doc.moveDown(0.5);
+      .rect(30, statsBoxY, doc.page.width - 60, statsBoxHeight)
+      .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+
+    doc.fillColor(SECONDARY_COLOR).fontSize(8).font("Helvetica");
+    // Row 1 of stats box
+    doc.text("Total Employees:", 45, statsBoxY + 10);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(payrolls.length.toString(), 125, statsBoxY + 10);
+
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Status Breakdown:", 230, statsBoxY + 10);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(`Draft: ${draftCount} | Approved: ${approvedCount} | Paid: ${paidCount}`, 320, statsBoxY + 10);
+
+    // Row 2 of stats box
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Total Base Salary:", 45, statsBoxY + 25);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(`Rs. ${totalBaseSalary.toLocaleString("en-IN")}`, 125, statsBoxY + 25);
+
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Total Net (Excl. Inc.):", 230, statsBoxY + 25);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(`Rs. ${totalNetExceptIncentives.toLocaleString("en-IN")}`, 320, statsBoxY + 25);
+
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Total Incentives:", 470, statsBoxY + 25);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(`Rs. ${totalIncentives.toLocaleString("en-IN")}`, 550, statsBoxY + 25);
+
+    doc.font("Helvetica").fillColor(PRIMARY_COLOR).text("Total Net Salary:", 670, statsBoxY + 25);
+    doc.font("Helvetica-Bold").fillColor(PRIMARY_COLOR).text(`Rs. ${totalNet.toLocaleString("en-IN")}`, 740, statsBoxY + 25);
+
+    doc.y = statsBoxY + statsBoxHeight + 15;
 
     // Table Header
     const tableTop = doc.y;
-    const colWidths = [130, 70, 80, 50, 80, 80, 70, 80, 90];
+    const colWidths = [25, 110, 45, 60, 35, 60, 50, 50, 60, 80, 80, 85];
     const headers = [
+      "S.No.",
       "Employee Name",
       "Status",
-      "Base (₹)",
+      "Base (Rs.)",
       "Days",
-      "Earned (₹)",
-      "Bonuses",
+      "Earned (Rs.)",
+      "Att. Bonus",
       "Reimb.",
       "Deductions",
-      "Net Salary (₹)",
+      "Net Excl. Inc (Rs.)",
+      "Incentives (Rs.)",
+      "Net Salary (Rs.)",
     ];
 
-    doc.fontSize(9).font("Helvetica-Bold");
+    // Solid Table Header Background
+    doc
+      .rect(30, tableTop - 4, doc.page.width - 60, 18)
+      .fillAndStroke(PRIMARY_COLOR, PRIMARY_COLOR);
+
+    doc.fontSize(8).font("Helvetica-Bold").fillColor("#ffffff");
     let xPos = 30;
     headers.forEach((header, i) => {
       doc.text(header, xPos, tableTop, {
         width: colWidths[i],
-        align: i === 0 ? "left" : (i === 1 ? "left" : "right"),
+        align: i <= 2 ? "left" : "right",
       });
       xPos += colWidths[i];
     });
 
-    doc.moveDown(0.3);
-    doc
-      .strokeColor("#aaaaaa")
-      .lineWidth(0.5)
-      .moveTo(30, doc.y)
-      .lineTo(doc.page.width - 30, doc.y)
-      .stroke();
-    doc.moveDown(0.3);
+    doc.y = tableTop + 18;
 
     // Table Rows
     doc.font("Helvetica").fontSize(8);
@@ -1622,93 +1681,124 @@ exports.exportPayrollReport = async (req, res) => {
         rowY = 50;
       }
 
+      // Draw zebra striping
+      if (index % 2 === 1) {
+        doc
+          .rect(30, rowY - 4, doc.page.width - 60, 16)
+          .fill(ACCENT_BG);
+      }
+
       const earnedSalary = payroll.calculatedSalary || ((payroll.baseSalary || 0) / (payroll.workingDays || 30)) * (payroll.daysPresent || 0);
 
-      const bonuses =
-        (payroll.performanceBonus || 0) +
-        (payroll.projectBonus || 0) +
-        (payroll.attendanceBonus || 0) +
-        (payroll.festivalBonus || 0);
+      const attBonusVal = payroll.attendanceBonus || 0;
+      const incentives = (payroll.performanceBonus || 0) + (payroll.projectBonus || 0);
 
       const deductions =
         (payroll.pf || 0) +
         (payroll.esi || 0) +
         (payroll.tax || 0) +
         (payroll.loan || 0) +
+        (payroll.advanceDeduction || 0) +
         (payroll.other || 0);
         
       const reimbursements = payroll.reimbursements || 0;
       const baseSalary = payroll.baseSalary || 0;
+      const netSalaryExceptIncentives = payroll.netSalaryExceptIncentives || (payroll.netSalary - incentives);
       const netSalary = payroll.netSalary || 0;
 
       const statusColors = {
-        DRAFT: "#666666",
-        APPROVED: "#22c55e",
-        PAID: "#3b82f6",
-        CANCELLED: "#ef4444",
+        DRAFT: "#64748b",
+        APPROVED: "#16a34a",
+        PAID: "#2563eb",
+        CANCELLED: "#dc2626",
       };
 
       xPos = 30;
-      
-      // Employee
-      doc.fillColor("#333333");
-      doc.text(payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "N/A"), xPos, rowY, {
-        width: colWidths[0] - 5,
+
+      // 1. S.No.
+      doc.fillColor(TEXT_DARK);
+      doc.text((index + 1).toString(), xPos, rowY, {
+        width: colWidths[0],
         align: "left"
       });
       xPos += colWidths[0];
-
-      // Status
-      doc.fillColor(statusColors[payroll.status] || "#666666");
-      doc.text(payroll.status || "DRAFT", xPos, rowY, { width: colWidths[1], align: "left" });
+      
+      // 2. Employee
+      doc.text(payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "N/A"), xPos, rowY, {
+        width: colWidths[1] - 5,
+        align: "left"
+      });
       xPos += colWidths[1];
 
-      // Base Salary
-      doc.fillColor("#333333");
-      doc.text(baseSalary.toLocaleString("en-IN"), xPos, rowY, {
-        width: colWidths[2], align: "right"
-      });
+      // 3. Status
+      doc.fillColor(statusColors[payroll.status] || "#64748b").font("Helvetica-Bold");
+      doc.text(payroll.status || "DRAFT", xPos, rowY, { width: colWidths[2], align: "left" });
+      doc.font("Helvetica");
       xPos += colWidths[2];
 
-      // Days
+      // 4. Base Salary
+      doc.fillColor(TEXT_DARK);
+      doc.text(baseSalary.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[3], align: "right"
+      });
+      xPos += colWidths[3];
+
+      // 5. Days
       doc.text(
         `${payroll.daysPresent || 0}/${payroll.workingDays || 30}`,
         xPos,
         rowY,
-        { width: colWidths[3], align: "right" },
+        { width: colWidths[4], align: "right" },
       );
-      xPos += colWidths[3];
-
-      // Earned Salary
-      doc.fillColor("#333333");
-      doc.text(earnedSalary.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), xPos, rowY, {
-        width: colWidths[4], align: "right"
-      });
       xPos += colWidths[4];
 
-      // Bonuses
-      doc.text("+" + bonuses.toLocaleString("en-IN"), xPos, rowY, {
+      // 6. Earned Salary
+      doc.text(earnedSalary.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), xPos, rowY, {
         width: colWidths[5], align: "right"
       });
       xPos += colWidths[5];
-      
-      // Reimb.
-      doc.fillColor("#3b82f6");
-      doc.text(reimbursements.toLocaleString("en-IN"), xPos, rowY, {
+
+      // 7. Attendance Bonus
+      doc.fillColor("#16a34a");
+      doc.text("+" + attBonusVal.toLocaleString("en-IN"), xPos, rowY, {
         width: colWidths[6], align: "right"
       });
       xPos += colWidths[6];
-
-      // Deductions
-      doc.fillColor("#ef4444");
-      doc.text("-" + deductions.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[7], align: "right" });
+      
+      // 8. Reimb.
+      doc.fillColor("#2563eb");
+      doc.text(reimbursements.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[7], align: "right"
+      });
       xPos += colWidths[7];
 
-      // Net Salary
-      doc.fillColor("#333333");
+      // 9. Deductions
+      doc.fillColor("#dc2626");
+      doc.text("-" + deductions.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[8], align: "right" });
+      xPos += colWidths[8];
+
+      // 10. Net Salary Excl Incentives
+      doc.fillColor(TEXT_DARK);
+      doc.font("Helvetica-Bold");
+      doc.text(netSalaryExceptIncentives.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[9], align: "right"
+      });
+      doc.font("Helvetica");
+      xPos += colWidths[9];
+
+      // 11. Incentives
+      doc.fillColor("#d97706").font("Helvetica-Bold");
+      doc.text("+" + incentives.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[10], align: "right"
+      });
+      doc.font("Helvetica");
+      xPos += colWidths[10];
+
+      // 12. Net Salary
+      doc.fillColor(TEXT_DARK);
       doc.font("Helvetica-Bold");
       doc.text(netSalary.toLocaleString("en-IN"), xPos, rowY, {
-        width: colWidths[8], align: "right"
+        width: colWidths[11], align: "right"
       });
       doc.font("Helvetica");
 
@@ -1717,7 +1807,7 @@ exports.exportPayrollReport = async (req, res) => {
       // Light separator line every row
       if (index < payrolls.length - 1) {
         doc
-          .strokeColor("#eeeeee")
+          .strokeColor(BORDER_COLOR)
           .lineWidth(0.3)
           .moveTo(30, rowY - 3)
           .lineTo(doc.page.width - 30, rowY - 3)
@@ -1725,23 +1815,95 @@ exports.exportPayrollReport = async (req, res) => {
       }
     });
 
-    // Footer
-    doc.y = rowY + 10;
+    // Check if we need a new page for Totals row
+    if (rowY > doc.page.height - 60) {
+      doc.addPage({ layout: "landscape" });
+      rowY = 50;
+    }
+
+    // Draw Totals row background
     doc
-      .strokeColor("#333333")
+      .rect(30, rowY - 4, doc.page.width - 60, 16)
+      .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+
+    // Print TOTALS row
+    doc.fontSize(8).font("Helvetica-Bold").fillColor(TEXT_DARK);
+    
+    xPos = 30;
+    // 1. S.No
+    doc.text("-", xPos, rowY, { width: colWidths[0], align: "left" });
+    xPos += colWidths[0];
+
+    // 2. Employee Name
+    doc.text("TOTAL SUMMARY", xPos, rowY, { width: colWidths[1] - 5, align: "left" });
+    xPos += colWidths[1];
+    
+    // 3. Status
+    doc.text("-", xPos, rowY, { width: colWidths[2], align: "left" });
+    xPos += colWidths[2];
+
+    // 4. Base Salary
+    doc.text(totalBaseSalary.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[3], align: "right" });
+    xPos += colWidths[3];
+
+    // 5. Days
+    doc.text("-", xPos, rowY, { width: colWidths[4], align: "right" });
+    xPos += colWidths[4];
+
+    // 6. Earned Salary
+    doc.text(totalEarnedSalary.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), xPos, rowY, { width: colWidths[5], align: "right" });
+    xPos += colWidths[5];
+
+    // 7. Attendance Bonus
+    doc.fillColor("#16a34a");
+    doc.text("+" + totalAttBonus.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[6], align: "right" });
+    xPos += colWidths[6];
+
+    // 8. Reimb.
+    doc.fillColor("#2563eb");
+    doc.text(totalReimbursements.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[7], align: "right" });
+    xPos += colWidths[7];
+
+    // 9. Deductions
+    doc.fillColor("#dc2626");
+    doc.text("-" + totalDeductionsSum.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[8], align: "right" });
+    xPos += colWidths[8];
+
+    // 10. Net Salary Excl Incentives
+    doc.fillColor(TEXT_DARK);
+    doc.text(totalNetExceptIncentives.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[9], align: "right" });
+    xPos += colWidths[9];
+
+    // 11. Incentives
+    doc.fillColor("#d97706");
+    doc.text("+" + totalIncentives.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[10], align: "right" });
+    xPos += colWidths[10];
+
+    // 12. Net Salary
+    doc.fillColor(TEXT_DARK);
+    doc.text(totalNet.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[11], align: "right" });
+    
+    doc.font("Helvetica"); // Reset to regular font
+    rowY += 15;
+
+    // Footer
+    doc.y = rowY + 15;
+    doc
+      .strokeColor(BORDER_COLOR)
       .lineWidth(1)
       .moveTo(30, doc.y)
       .lineTo(doc.page.width - 30, doc.y)
       .stroke();
-    doc.moveDown();
 
-    doc.fontSize(8).font("Helvetica");
-    doc.fillColor("#666666");
+    doc.moveDown(0.5);
+    doc.fontSize(7).font("Helvetica").fillColor(SECONDARY_COLOR);
     doc.text(`Report generated on: ${new Date().toLocaleString("en-IN")}`, 30);
-    doc.text(`Generated by: ${req.user.fullName || req.user.email}`, 30);
-    doc.moveDown();
+    doc.text(`Generated by: ${req.user.fullName || req.user.email}`, 30, doc.y - 8, { align: "right", width: doc.page.width - 60 });
+    
+    doc.moveDown(0.5);
     doc.text("This is a computer-generated report. No signature is required.", {
       align: "center",
+      width: doc.page.width - 60
     });
 
     // Finalize PDF

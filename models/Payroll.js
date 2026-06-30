@@ -154,6 +154,10 @@ const payrollSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    netSalaryExceptIncentives: {
+      type: Number,
+      default: 0,
+    },
     netSalary: {
       type: Number,
       default: 0,
@@ -334,12 +338,17 @@ payrollSchema.methods.calculateSalary = function () {
     totalDeductions: this.totalDeductions,
   });
 
-  // 4. Calculate net salary = gross - total deductions
+  // 4. Calculate net salary except incentives (performanceBonus and projectBonus)
+  const incentives = (this.performanceBonus || 0) + (this.projectBonus || 0);
+  this.netSalaryExceptIncentives = this.grossSalary - this.totalDeductions - incentives;
+
+  // 5. Calculate net salary = gross - total deductions
   this.netSalary = this.grossSalary - this.totalDeductions;
 
   console.log("🎯 Final manual calculation:", {
     grossSalary: this.grossSalary,
     totalDeductions: this.totalDeductions,
+    netSalaryExceptIncentives: this.netSalaryExceptIncentives,
     netSalary: this.netSalary,
   });
 
