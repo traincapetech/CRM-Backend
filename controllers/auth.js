@@ -177,13 +177,14 @@ exports.login = async (req, res) => {
       });
     }
 
+    // Retrieve associated employee record to verify status
+    const Employee = require("../models/Employee");
+    const employee = await Employee.findOne({ userId: user._id });
+
     // --- Internship Extension Pre-Check ---
     // Run this BEFORE the user.active check so a deactivated intern with a
     // valid extension can be re-activated before being blocked.
     if (user.role === "IT Intern") {
-      const Employee = require("../models/Employee");
-      const employee = await Employee.findOne({ userId: user._id });
-
       if (employee && employee.internshipEndDate) {
         const today = new Date();
         const endDate = new Date(employee.internshipEndDate);
@@ -245,6 +246,27 @@ exports.login = async (req, res) => {
             });
           }
         }
+      }
+    }
+
+    // --- General Employee Status Check ---
+    if (employee) {
+      const isDeactivatedStatus = ["TERMINATED", "COMPLETED", "INACTIVE"].includes(employee.status);
+      if (isDeactivatedStatus) {
+        if (user.active !== false) {
+          user.active = false;
+          await user.save();
+        }
+        await recordLoginHistory(
+          req,
+          user._id,
+          "FAILED",
+          `Employee Status: ${employee.status}`
+        );
+        return res.status(403).json({
+          success: false,
+          message: `Your account has been deactivated because your employment status is ${employee.status.toLowerCase()}. Please contact your administrator.`,
+        });
       }
     }
 

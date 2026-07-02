@@ -771,6 +771,14 @@ exports.updateEmployee = async (req, res) => {
 
     console.log("Employee updated successfully");
 
+    // Sync status change to user account active state
+    if (employeeData.status && employeeData.status !== oldEmployee.status && employee.userId) {
+      const isDeactivatedStatus = ["TERMINATED", "COMPLETED", "INACTIVE"].includes(employeeData.status);
+      const User = require("../models/User");
+      await User.findByIdAndUpdate(employee.userId, { active: !isDeactivatedStatus });
+      console.log(`Synced user ${employee.userId} active state to ${!isDeactivatedStatus} because employee status became ${employee.status}`);
+    }
+
     // Detailed Admin Notification
     const fieldLabels = {
       fullName: "Full Name",
