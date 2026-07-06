@@ -230,7 +230,13 @@ const payrollSchema = new mongoose.Schema(
 );
 
 // Create compound index for employee, month, and year
-payrollSchema.index({ employeeId: 1, month: 1, year: 1 }, { unique: true });
+payrollSchema.index(
+  { employeeId: 1, month: 1, year: 1 },
+  { 
+    unique: true,
+    partialFilterExpression: { employeeId: { $exists: true } }
+  }
+);
 
 // Virtual for month name
 payrollSchema.virtual("monthName").get(function () {
