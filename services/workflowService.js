@@ -235,7 +235,34 @@ class WorkflowService {
         return { success: false, message: 'No assignee specified' };
       }
 
-      await Lead.findByIdAndUpdate(leadId, { assignedTo: assignTo });
+      const lead = await Lead.findById(leadId);
+      if (lead) {
+        if (lead.assignedTo && lead.assignedTo.toString() !== assignTo.toString()) {
+          if (!lead.originalAssignedTo) {
+            lead.originalAssignedTo = lead.assignedTo;
+          }
+          
+          if (!lead.assignmentHistory) {
+            lead.assignmentHistory = [];
+          }
+          
+          if (lead.assignmentHistory.length > 0) {
+            const lastIndex = lead.assignmentHistory.length - 1;
+            if (!lead.assignmentHistory[lastIndex].unassignedAt) {
+              lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
+            }
+          }
+          
+          lead.assignmentHistory.push({
+            assignedTo: assignTo,
+            assignedBy: data.createdBy || lead.assignedTo,
+            assignedAt: Date.now()
+          });
+        }
+        
+        lead.assignedTo = assignTo;
+        await lead.save();
+      }
 
       return { success: true, message: `Lead assigned to user ${assignTo}` };
     } catch (error) {

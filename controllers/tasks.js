@@ -715,7 +715,12 @@ exports.getEmployeeImpact = async (req, res) => {
     // Queries to run in parallel
     const [tasks, leadsAssigned, leadPersonLeads, salesAsSalesPerson, leadPersonSales, performance] = await Promise.all([
       Task.find({ assignedTo: userId }),
-      Lead.find({ assignedTo: userId }),
+      Lead.find({
+        $or: [
+          { assignedTo: userId },
+          { originalAssignedTo: userId }
+        ]
+      }),
       Lead.find({ leadPerson: userId }),
       Sale.find({ salesPerson: userId }),
       Sale.find({ leadPerson: userId }),

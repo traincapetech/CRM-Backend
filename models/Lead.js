@@ -96,6 +96,29 @@ const LeadSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
   },
+  originalAssignedTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+  },
+  assignmentHistory: [
+    {
+      assignedTo: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      assignedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      assignedAt: {
+        type: Date,
+        default: Date.now,
+      },
+      unassignedAt: {
+        type: Date,
+      },
+    },
+  ],
   leadPerson: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
@@ -221,6 +244,7 @@ LeadSchema.statics.findByTelegramId = function (telegramId) {
 // PERFORMANCE OPTIMIZATION: Add indexes for faster queries
 LeadSchema.index({ name: 1 });
 LeadSchema.index({ assignedTo: 1, createdAt: -1 });
+LeadSchema.index({ originalAssignedTo: 1, createdAt: -1 });
 LeadSchema.index({ leadPerson: 1, createdAt: -1 });
 LeadSchema.index({ createdBy: 1, createdAt: -1 });
 LeadSchema.index({ createdAt: -1 });

@@ -436,6 +436,14 @@ exports.createLead = async (req, res) => {
       // ObjectId is handled properly by Mongoose, no need to convert
     }
 
+    // Set originalAssignedTo and initialize assignmentHistory
+    leadData.originalAssignedTo = leadData.assignedTo;
+    leadData.assignmentHistory = [{
+      assignedTo: leadData.assignedTo,
+      assignedBy: req.user._id,
+      assignedAt: Date.now()
+    }];
+
     // Check if this is a repeat customer by phone number or email
     let previousLeads = [];
     let isRepeatCustomer = false;
@@ -796,6 +804,33 @@ exports.updateLead = async (req, res) => {
       }
     }
 
+    // Track assignment history if assignedTo changes
+    if (finalUpdateData.assignedTo !== undefined && finalUpdateData.assignedTo !== null && finalUpdateData.assignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")) {
+      // Set originalAssignedTo if not set
+      if (!lead.originalAssignedTo && lead.assignedTo) {
+        lead.originalAssignedTo = lead.assignedTo;
+      }
+      
+      // Initialize or update unassignedAt for previous active assignment
+      if (!lead.assignmentHistory) {
+        lead.assignmentHistory = [];
+      }
+      
+      if (lead.assignmentHistory.length > 0) {
+        const lastIndex = lead.assignmentHistory.length - 1;
+        if (!lead.assignmentHistory[lastIndex].unassignedAt) {
+          lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
+        }
+      }
+      
+      // Push new assignment
+      lead.assignmentHistory.push({
+        assignedTo: finalUpdateData.assignedTo,
+        assignedBy: req.user._id,
+        assignedAt: Date.now()
+      });
+    }
+
     // Apply updates directly to the Mongoose document instance
     Object.assign(lead, finalUpdateData);
 
@@ -1000,7 +1035,10 @@ exports.getAssignedLeads = async (req, res) => {
     const { month, year, startDate, endDate } = req.query;
 
     let query = Lead.find({
-      assignedTo: req.user._id,
+      $or: [
+        { assignedTo: req.user._id },
+        { "assignmentHistory.assignedTo": req.user._id }
+      ]
     });
 
     // Add date filtering if provided
@@ -1542,6 +1580,14 @@ exports.importLeads = async (req, res) => {
         // Remove the temporary name field
         delete leadData.assignedToName;
       }
+
+      // Initialize originalAssignedTo and assignmentHistory for imported leads
+      leadData.originalAssignedTo = leadData.assignedTo || req.user._id;
+      leadData.assignmentHistory = [{
+        assignedTo: leadData.assignedTo || req.user._id,
+        assignedBy: req.user._id,
+        assignedAt: Date.now()
+      }];
     }
 
     // Validate the mapped data - make validation more flexible
@@ -1955,18 +2001,67 @@ exports.bulkUpdateLeads = async (req, res) => {
 
     sanitizedData.updatedAt = Date.now();
 
-    const result = await Lead.updateMany(
-      { _id: { $in: leadIds } },
-      { $set: sanitizedData }
-    );
+    const leads = await Lead.find({ _id: { $in: leadIds } });
+    let modifiedCount = 0;
+    const uniqueUserIds = new Set();
+
+    if (sanitizedData.assignedTo) uniqueUserIds.add(sanitizedData.assignedTo.toString());
+    if (sanitizedData.leadPerson) uniqueUserIds.add(sanitizedData.leadPerson.toString());
+
+    for (const lead of leads) {
+      let changed = false;
+      
+      if (sanitizedData.status !== undefined && lead.status !== sanitizedData.status) {
+        lead.status = sanitizedData.status;
+        changed = true;
+      }
+      
+      if (sanitizedData.assignedTo !== undefined && sanitizedData.assignedTo !== null && sanitizedData.assignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")) {
+        // Collect old assignee for performance recalculation
+        if (lead.assignedTo) {
+          uniqueUserIds.add(lead.assignedTo.toString());
+        }
+
+        // Track history
+        if (!lead.originalAssignedTo && lead.assignedTo) {
+          lead.originalAssignedTo = lead.assignedTo;
+        }
+        
+        if (!lead.assignmentHistory) {
+          lead.assignmentHistory = [];
+        }
+
+        if (lead.assignmentHistory.length > 0) {
+          const lastIndex = lead.assignmentHistory.length - 1;
+          if (!lead.assignmentHistory[lastIndex].unassignedAt) {
+            lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
+          }
+        }
+        
+        lead.assignmentHistory.push({
+          assignedTo: sanitizedData.assignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now()
+        });
+        
+        lead.assignedTo = sanitizedData.assignedTo;
+        changed = true;
+      }
+      
+      if (sanitizedData.leadPerson !== undefined && sanitizedData.leadPerson !== null && sanitizedData.leadPerson.toString() !== (lead.leadPerson ? lead.leadPerson.toString() : "")) {
+        lead.leadPerson = sanitizedData.leadPerson;
+        changed = true;
+      }
+      
+      if (changed) {
+        lead.updatedAt = Date.now();
+        await lead.save();
+        modifiedCount++;
+      }
+    }
 
     // Trigger performance updates for affected users
-    // (In a real system, we might want to do this more efficiently if there are many)
-    if (sanitizedData.assignedTo || sanitizedData.leadPerson) {
-      const uniqueUserIds = new Set();
-      if (sanitizedData.assignedTo) uniqueUserIds.add(sanitizedData.assignedTo);
-      if (sanitizedData.leadPerson) uniqueUserIds.add(sanitizedData.leadPerson);
-
+    if (uniqueUserIds.size > 0) {
       const { queuePerformanceCalculation } = require("../services/performanceQueue");
       const today = new Date();
       
@@ -1984,12 +2079,12 @@ exports.bulkUpdateLeads = async (req, res) => {
           const assignedToId = sanitizedData.assignedTo.toString();
           io.to(`user-${assignedToId}`).emit("leadAssigned", {
             leadId: "bulk",
-            leadName: `${result.modifiedCount} Leads`,
+            leadName: `${modifiedCount} Leads`,
             course: "Multiple Courses",
             assignedBy: req.user.fullName,
             assignedById: req.user._id,
             assignmentType: "bulk",
-            count: result.modifiedCount
+            count: modifiedCount
           });
           console.log(`📡 Emitted leadAssigned (bulk transfer) event to user-${assignedToId}`);
         }
@@ -2000,12 +2095,85 @@ exports.bulkUpdateLeads = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Successfully updated ${result.modifiedCount} leads`,
-      count: result.modifiedCount,
+      message: `Successfully updated ${modifiedCount} leads`,
+      count: modifiedCount,
     });
   } catch (err) {
     console.error("Error in bulkUpdateLeads:", err);
     res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Restore leads to original assigned sales person
+// @route   PUT /api/leads/restore
+// @access  Private (Admin, Manager)
+exports.restoreLeads = async (req, res) => {
+  try {
+    const { leadIds } = req.body;
+    if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide leadIds to restore",
+      });
+    }
+
+    const leads = await Lead.find({ _id: { $in: leadIds } });
+    let restoredCount = 0;
+    const uniqueUserIds = new Set();
+    
+    for (const lead of leads) {
+      if (lead.originalAssignedTo && lead.originalAssignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")) {
+        const oldAssignedTo = lead.assignedTo;
+        lead.assignedTo = lead.originalAssignedTo;
+        
+        // Track history
+        if (lead.assignmentHistory && lead.assignmentHistory.length > 0) {
+          const lastIndex = lead.assignmentHistory.length - 1;
+          if (!lead.assignmentHistory[lastIndex].unassignedAt) {
+            lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
+          }
+        }
+        
+        if (!lead.assignmentHistory) {
+          lead.assignmentHistory = [];
+        }
+
+        lead.assignmentHistory.push({
+          assignedTo: lead.originalAssignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now()
+        });
+        
+        await lead.save();
+        restoredCount++;
+
+        if (oldAssignedTo) {
+          uniqueUserIds.add(oldAssignedTo.toString());
+        }
+        uniqueUserIds.add(lead.originalAssignedTo.toString());
+      }
+    }
+
+    // Trigger performance updates for affected users
+    if (uniqueUserIds.size > 0) {
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
+      const today = new Date();
+      uniqueUserIds.forEach(userId => {
+        queuePerformanceCalculation(userId, today).catch(() => {});
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully restored ${restoredCount} leads to their original sales persons`,
+      count: restoredCount,
+    });
+  } catch (err) {
+    console.error("Error in restoreLeads:", err);
+    res.status(500).json({
       success: false,
       message: err.message,
     });

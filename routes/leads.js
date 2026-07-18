@@ -12,7 +12,8 @@ const {
   getAllCustomers,
   getRepeatCustomers,
   getLeadStats,
-  bulkUpdateLeads
+  bulkUpdateLeads,
+  restoreLeads
 } = require('../controllers/leads');
 
 const { protect, authorize } = require('../middleware/auth');
@@ -23,6 +24,7 @@ router.use(protect);
 
 // Bulk update route
 router.put('/bulk-update', authorize('Admin', 'Manager', 'Lead Person'), bulkUpdateLeads);
+router.put('/restore', authorize('Admin', 'Manager'), restoreLeads);
 
 // Routes specific to roles
 router.route('/')
