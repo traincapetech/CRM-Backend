@@ -835,7 +835,7 @@ exports.updateLead = async (req, res) => {
     Object.assign(lead, finalUpdateData);
 
     // Save lead (triggers pre-save hooks for encryption and search hashes)
-    await lead.save();
+    await lead.save({ validateModifiedOnly: true });
 
     // Re-retrieve to populate assignedTo, leadPerson, createdBy fields
     lead = await Lead.findById(lead._id).populate("assignedTo leadPerson createdBy", "fullName email");
@@ -1987,7 +1987,7 @@ exports.bulkUpdateLeads = async (req, res) => {
     const allowedFields = ["status", "assignedTo", "leadPerson"];
     const sanitizedData = {};
     allowedFields.forEach((field) => {
-      if (updateData[field] !== undefined) {
+      if (updateData[field] !== undefined && updateData[field] !== null && updateData[field] !== "") {
         sanitizedData[field] = updateData[field];
       }
     });
@@ -2055,7 +2055,7 @@ exports.bulkUpdateLeads = async (req, res) => {
       
       if (changed) {
         lead.updatedAt = Date.now();
-        await lead.save();
+        await lead.save({ validateModifiedOnly: true });
         modifiedCount++;
       }
     }
@@ -2147,7 +2147,7 @@ exports.restoreLeads = async (req, res) => {
           assignedAt: Date.now()
         });
         
-        await lead.save();
+        await lead.save({ validateModifiedOnly: true });
         restoredCount++;
 
         if (oldAssignedTo) {
