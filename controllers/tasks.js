@@ -44,14 +44,16 @@ exports.getTasks = async (req, res) => {
       query = Task.find(filter)
         .populate("assignedTo", "fullName")
         .populate("assignedBy", "fullName")
-        .populate("customer", "name NAME fullName customerName email EMAIL");
+        .populate("customer", "name NAME fullName customerName email EMAIL")
+        .lean();
     } else if (req.user.role === "IT Manager") {
       // IT Manager sees all tasks in the IT department, applying filters
       filter.department = "IT";
       query = Task.find(filter)
         .populate("assignedTo", "fullName")
         .populate("assignedBy", "fullName")
-        .populate("customer", "name NAME fullName customerName email EMAIL");
+        .populate("customer", "name NAME fullName customerName email EMAIL")
+        .lean();
     } else if (["IT Intern", "IT Permanent"].includes(req.user.role)) {
       // IT Intern/Permanent see only their assigned IT tasks, applying filters
       filter.assignedTo = req.user.id;
@@ -59,7 +61,8 @@ exports.getTasks = async (req, res) => {
       query = Task.find(filter)
         .populate("assignedTo", "fullName")
         .populate("assignedBy", "fullName")
-        .populate("customer", "name NAME fullName customerName email EMAIL");
+        .populate("customer", "name NAME fullName customerName email EMAIL")
+        .lean();
     } else {
       // Other employees (like Sales Person) see tasks assigned to them or where they are the salesPerson
       // Using $or to allow seeing tasks they assigned or are responsible for
@@ -71,7 +74,8 @@ exports.getTasks = async (req, res) => {
       })
         .populate("assignedTo", "fullName")
         .populate("assignedBy", "fullName")
-        .populate("customer", "name NAME fullName customerName email EMAIL");
+        .populate("customer", "name NAME fullName customerName email EMAIL")
+        .lean();
     }
 
     const tasks = await query;
@@ -128,7 +132,7 @@ exports.getTasks = async (req, res) => {
     }
 
     const tasksWithUsers = tasks.map((task) => {
-      const taskObj = task.toObject();
+      const taskObj = task;
 
       // Handle assignedTo
       if (taskObj.assignedTo) {

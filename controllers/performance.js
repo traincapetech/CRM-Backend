@@ -463,34 +463,25 @@ const getEmployeePerformance = async (req, res) => {
       "fullName email role",
     );
 
-    // If no summary exists, calculate performance for today to generate one
+    // If no summary exists, calculate performance for today to generate one in background
     if (!summary) {
       console.log(
-        `No summary for ${employeeId}, triggering initial calculation...`,
+        `No summary for ${employeeId}, triggering initial calculation in background...`,
       );
       const today = new Date();
       const { queuePerformanceCalculation } = require("../services/performanceQueue");
-      await queuePerformanceCalculation(
+      queuePerformanceCalculation(employeeId, today).catch(err => {
+        console.error("Async performance calculation error:", err);
+      });
+
+      // Create fallback summary immediately so the page doesn't block
+      summary = await PerformanceSummary.create({
         employeeId,
-        today,
-      );
-
-      // Fetch again after calculation
-      summary = await PerformanceSummary.findOne({ employeeId }).populate(
-        "employeeId",
-        "fullName email role",
-      );
-
-      // If still no summary (e.g. no KPIs), create empty one with 0 stars
-      if (!summary) {
-        summary = await PerformanceSummary.create({
-          employeeId,
-          currentRating: 0,
-          ratingTier: "N/A",
-          stars: 0,
-        });
-        summary = await summary.populate("employeeId", "fullName email role");
-      }
+        currentRating: 0,
+        ratingTier: "N/A",
+        stars: 0,
+      });
+      summary = await summary.populate("employeeId", "fullName email role");
     }
 
     // Get current active targets
@@ -534,7 +525,13 @@ const getEmployeePerformance = async (req, res) => {
       });
     }
 
-    const enrichedTargets = await Promise.all(targets.map(async (t) => {
+    let salesRes = null;
+    if (summary && summary.employeeId && summary.employeeId.role === "Sales Person") {
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      salesRes = await PerformanceCalculationService.calculateSales(employeeId, startOfMonth, "custom", now);
+    }
+
+    const enrichedTargets = targets.map((t) => {
       const tObj = t.toObject();
       const kpiId = t.kpiId._id.toString();
       const kpiName = t.kpiId.kpiName;
@@ -545,10 +542,7 @@ const getEmployeePerformance = async (req, res) => {
       if (score) {
         if (summary.employeeId.role === "Sales Person") {
           // For Sales Persons, show collective monthly actuals as per user request
-          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-          const salesRes = await PerformanceCalculationService.calculateSales(employeeId, startOfMonth, "custom", now);
-          
-          tObj.actual = salesRes.count;
+          tObj.actual = salesRes ? salesRes.count : 0;
           tObj.baseTarget = t.monthlySalesTarget || t.targets?.target || 0;
           tObj.score = tObj.baseTarget > 0 ? (tObj.actual / tObj.baseTarget) * 100 : 0;
           tObj.status = PerformanceCalculationService.getRatingTier(tObj.score);
@@ -567,7 +561,7 @@ const getEmployeePerformance = async (req, res) => {
       tObj.monthlySalesTarget = t.monthlySalesTarget;
 
       return tObj;
-    }));
+    });
 
     // Calculate rolling averages on the fly as per user request
     const averages = await PerformanceCalculationService.getRollingAverages(employeeId);

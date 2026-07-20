@@ -23,8 +23,8 @@ const { cacheMiddleware, invalidateCache } = require('../middleware/cache');
 router.use(protect);
 
 // Bulk update route
-router.put('/bulk-update', authorize('Admin', 'Manager', 'Lead Person'), bulkUpdateLeads);
-router.put('/restore', authorize('Admin', 'Manager'), restoreLeads);
+router.put('/bulk-update', authorize('Admin', 'Manager', 'Lead Person'), invalidateCache(['cache:/api/leads*']), bulkUpdateLeads);
+router.put('/restore', authorize('Admin', 'Manager'), invalidateCache(['cache:/api/leads*']), restoreLeads);
 
 // Routes specific to roles
 router.route('/')
@@ -216,9 +216,9 @@ router.delete('/remove-rajesh-duplicates', authorize('Admin', 'Manager'), async 
 
 router.route('/:id')
   .get(authorize('Lead Person','Sales Person', 'Manager', 'Admin'), getLead)
-  .put(authorize('Lead Person', 'Manager', 'Admin', 'Sales Person'), updateLead)
-  .delete(authorize('Manager', 'Admin'), deleteLead);
+  .put(authorize('Lead Person', 'Manager', 'Admin', 'Sales Person'), invalidateCache(['cache:/api/leads*']), updateLead)
+  .delete(authorize('Manager', 'Admin'), invalidateCache(['cache:/api/leads*']), deleteLead);
 
-router.put('/:id/feedback', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), updateFeedback);
+router.put('/:id/feedback', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/leads*']), updateFeedback);
 
 module.exports = router; 

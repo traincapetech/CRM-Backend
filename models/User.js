@@ -165,4 +165,7 @@ UserSchema.methods.matchPassword = async function (enteredPassword) {
   }
 };
 
+UserSchema.index({ role: 1 });
+UserSchema.index({ employeeId: 1 });
+
 module.exports = mongoose.model("User", UserSchema);

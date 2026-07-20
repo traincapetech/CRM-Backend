@@ -23,7 +23,7 @@ router.route('/')
   .post(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/sales*']), createSale);
 
 // Sales data route for dashboard
-router.get('/data', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), async (req, res) => {
+router.get('/data', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), cacheMiddleware(60), async (req, res) => {
   try {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -126,8 +126,8 @@ router.get('/count', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'
 
 router.route('/:id')
   .get(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSale)
-  .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), updateSale)
-  .delete(authorize('Sales Person', 'Manager', 'Admin'), deleteSale);
+  .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/sales*']), updateSale)
+  .delete(authorize('Sales Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/sales*']), deleteSale);
 
 // Reports routes
 router.get('/reports/course-analysis', protect, authorize('Admin', 'Manager'), async (req, res) => {

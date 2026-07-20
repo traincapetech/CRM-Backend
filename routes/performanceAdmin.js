@@ -234,34 +234,30 @@ router.get(
 
       if (!isHistorical) {
         // --- CURRENT MONTH LOGIC (Default) ---
-        // Ensure all active employees with KPI-eligible roles have fresh calculations
+        // Ensure all active employees with KPI-eligible roles have at least a summary record
         const eligibleEmployees = await User.find({
           active: true,
           role: { $in: ["Lead Person", "Sales Person", "Manager"] },
-        }).select("_id fullName role");
+        }).select("_id");
 
-        const today = new Date();
-        const { queuePerformanceCalculation } = require("../services/performanceQueue");
-        for (const emp of eligibleEmployees) {
-          try {
-            await queuePerformanceCalculation(
-              emp._id,
-              today,
-            );
-          } catch (calcErr) {
-            // If calculation fails, ensure at least a summary exists
-            const existingSummary = await PerformanceSummary.findOne({
+        const eligibleIds = eligibleEmployees.map(emp => emp._id);
+        const existingSummaries = await PerformanceSummary.find({
+          employeeId: { $in: eligibleIds }
+        }).select("employeeId");
+
+        const existingIdsSet = new Set(existingSummaries.map(s => s.employeeId.toString()));
+        const missingEmployees = eligibleEmployees.filter(emp => !existingIdsSet.has(emp._id.toString()));
+
+        if (missingEmployees.length > 0) {
+          const createPromises = missingEmployees.map(emp => 
+            PerformanceSummary.create({
               employeeId: emp._id,
-            });
-            if (!existingSummary) {
-              await PerformanceSummary.create({
-                employeeId: emp._id,
-                currentRating: 0,
-                ratingTier: "poor",
-                stars: 1,
-              });
-            }
-          }
+              currentRating: 0,
+              ratingTier: "poor",
+              stars: 1,
+            }).catch(() => null) // Ignore duplicate key errors if race condition occurs
+          );
+          await Promise.all(createPromises);
         }
 
         const summaries = await PerformanceSummary.find({})

@@ -250,5 +250,8 @@ LeadSchema.index({ createdBy: 1, createdAt: -1 });
 LeadSchema.index({ createdAt: -1 });
 LeadSchema.index({ status: 1, createdAt: -1 });
 LeadSchema.index({ name: "text", company: "text" });
+LeadSchema.index({ emailHash: 1 });
+LeadSchema.index({ phoneHash: 1 });
+LeadSchema.index({ telegramIdHash: 1 });
 
 module.exports = mongoose.model("Lead", LeadSchema);
