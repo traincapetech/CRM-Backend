@@ -593,18 +593,18 @@ exports.getAllUsers = async (req, res) => {
     const filter = includeInactive ? {} : { active: true };
     if (roleParam) {
       if (Array.isArray(roleParam)) {
-        // ?role=A&role=B
         filter.role = { $in: roleParam.filter(Boolean) };
       } else if (typeof roleParam === "string" && roleParam.includes(",")) {
-        // ?role=A,B
         filter.role = {
           $in: roleParam
             .split(",")
             .map((r) => r.trim())
             .filter(Boolean),
         };
+      } else if (roleParam === "Sales Person") {
+        // Include Sales Persons, Sales Team Leaders, Team Leaders, and Managers for sales assignments
+        filter.role = { $in: ["Sales Person", "Sales Team Leader", "Team Leader", "Manager"] };
       } else {
-        // single role string
         filter.role = roleParam;
       }
     }

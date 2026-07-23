@@ -678,9 +678,9 @@ exports.updateLead = async (req, res) => {
       });
     }
 
-    // For Sales Persons, allow updating status, feedback, remarks, and client remarks
-    if (req.user.role === "Sales Person") {
-      console.log("Sales Person is updating lead:", req.body);
+    // For Sales Persons / Team Leaders, allow updating status, feedback, remarks, and client remarks
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+      console.log("Sales Person/TL is updating lead:", req.body);
 
       const updateData = {
         updatedAt: Date.now(),

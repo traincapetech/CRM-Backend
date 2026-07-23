@@ -57,7 +57,20 @@ const employeeSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["ACTIVE", "INACTIVE", "TERMINATED", "COMPLETED", "EXTENDED"],
+      enum: [
+        "INVITED",
+        "ONBOARDING",
+        "ACTIVE",
+        "PROBATION",
+        "ON_LEAVE",
+        "PIP",
+        "NOTICE_PERIOD",
+        "EXITED",
+        "TERMINATED",
+        "INACTIVE",
+        "COMPLETED",
+        "EXTENDED",
+      ],
       default: "ACTIVE",
     },
     employmentType: {
@@ -74,6 +87,11 @@ const employeeSchema = new mongoose.Schema(
       type: mongoose.Schema.ObjectId,
       ref: "EmployeeRole",
       required: [true, "Please assign a role"],
+    },
+    reportingManager: {
+      type: mongoose.Schema.ObjectId,
+      ref: "User",
+      default: null,
     },
     hrId: {
       type: mongoose.Schema.ObjectId,
@@ -332,7 +350,7 @@ employeeSchema.methods.getDecryptedBankAccount = function () {
   }
 };
 
-// Populate department and role on find
+// Populate department, role, reportingManager, and hrId on find
 employeeSchema.pre(/^find/, function (next) {
   this.populate({
     path: "department",
@@ -341,6 +359,10 @@ employeeSchema.pre(/^find/, function (next) {
     .populate({
       path: "role",
       select: "name description",
+    })
+    .populate({
+      path: "reportingManager",
+      select: "fullName email role profilePicture",
     })
     .populate({
       path: "hrId",

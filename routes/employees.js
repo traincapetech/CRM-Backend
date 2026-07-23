@@ -21,7 +21,11 @@ const {
   getDocument,
   deleteDocument,
   updatePaymentDetails,
-  verifyPayment
+  verifyPayment,
+  getEmploymentHistory,
+  getEmployeeTimeline,
+  getEmployeeAuditLogs,
+  get360Profile
 } = require('../controllers/employees');
 const { fixITInterns } = require('../controllers/fixEmployees');
 
@@ -65,6 +69,12 @@ router.route('/fix-it-interns')
 // Team directory - sanitized, accessible to all authenticated users (no PII)
 router.route('/team-directory')
   .get(protect, getTeamDirectory);
+
+// Employee history, timeline, audit logs, and 360 profile routes
+router.get('/:id/employment-history', protect, getEmploymentHistory);
+router.get('/:id/timeline', protect, getEmployeeTimeline);
+router.get('/:id/audit-logs', protect, getEmployeeAuditLogs);
+router.get('/:id/360', protect, get360Profile);
 
 // Employee routes - accessible to all authenticated users
 router.route('/')

@@ -39,23 +39,47 @@ const getUserPermissions = async (user) => {
   const roleNames = getUserRoleNames(user);
   const permissionsSet = await getPermissionsForRoles(roleNames);
 
-  // Add default permissions for certain roles
-  roleNames.forEach(role => {
-    // Everyone except Customer should be able to take tests
-    if (role !== 'Customer') {
-      permissionsSet.add('test.take');
+  // Industry Standard Role-Based Default Assessment Permissions:
+  roleNames.forEach((role) => {
+    // 1. Everyone except Customer can take assigned tests & view own attempt results
+    if (role !== "Customer") {
+      permissionsSet.add("test.take");
     }
 
-    // Admins, Managers, and IT Managers should be able to evaluate tests
-    if (['Admin', 'Manager', 'Lead Person', 'IT Manager'].includes(role)) {
-      permissionsSet.add('test.evaluate');
-      permissionsSet.add('test.report');
+    // 2. Admin & HR have full enterprise testing authority
+    if (["Admin", "HR"].includes(role)) {
+      permissionsSet.add("test.create");
+      permissionsSet.add("test.assign");
+      permissionsSet.add("test.evaluate");
+      permissionsSet.add("test.report");
+      permissionsSet.add("test.manage_roles");
+      permissionsSet.add("test.manage_groups");
+    }
+
+    // 3. Department Managers & IT Managers can create, assign, evaluate, and view reports
+    if (["Manager", "IT Manager"].includes(role)) {
+      permissionsSet.add("test.create");
+      permissionsSet.add("test.assign");
+      permissionsSet.add("test.evaluate");
+      permissionsSet.add("test.report");
     }
   });
 
+  // Security Gate: Non-managerial operational staff (Sales, Lead Persons, Employees, Interns)
+  // must NOT have test management or creation permissions.
+  const isSuperUser = roleNames.some((r) => ["Admin", "HR", "Manager", "IT Manager"].includes(r));
+  if (!isSuperUser) {
+    permissionsSet.delete("test.create");
+    permissionsSet.delete("test.assign");
+    permissionsSet.delete("test.evaluate");
+    permissionsSet.delete("test.report");
+    permissionsSet.delete("test.manage_roles");
+    permissionsSet.delete("test.manage_groups");
+  }
+
   return {
     roleNames,
-    permissions: Array.from(permissionsSet)
+    permissions: Array.from(permissionsSet),
   };
 };
 

@@ -2,6 +2,9 @@ const Employee = require("../models/Employee");
 const Department = require("../models/Department");
 const Role = require("../models/EmployeeRole");
 const User = require("../models/User");
+const EmploymentHistory = require("../models/EmploymentHistory");
+const EmployeeTimeline = require("../models/EmployeeTimeline");
+const Log = require("../models/Log");
 const fs = require("fs");
 const path = require("path");
 const fileStorage = require("../services/fileStorageService");
@@ -9,6 +12,14 @@ const { decrypt } = require("../utils/encryption");
 const { notifyAdmins } = require("../services/notificationService");
 const trackChanges = require("../utils/changeTracker");
 const { sendWelcomeEmail } = require("../services/emailService");
+const Attendance = require("../models/Attendance");
+const PerformanceReview = require("../models/PerformanceReview");
+const PromotionRequest = require("../models/PromotionRequest");
+const SalaryHistory = require("../models/SalaryHistory");
+const MonthlyPerformanceRecord = require("../models/MonthlyPerformanceRecord");
+const Asset = require("../models/Asset");
+const AssetAssignment = require("../models/AssetAssignment");
+const ExitRequest = require("../models/ExitRequest");
 
 // Export multer upload middleware
 exports.uploadEmployeeFiles = fileStorage.uploadMiddleware.fields([
@@ -631,6 +642,69 @@ exports.createEmployee = async (req, res) => {
       console.error("⚠️ Could not load JourneyService:", journeyErr.message);
     }
 
+    // 🚀 HRMS V2 Foundation: Initial Employment History Entry
+    try {
+      await EmploymentHistory.create({
+        employeeId: employee._id,
+        changeType: "INITIAL_HIRE",
+        fieldName: "all",
+        newValue: {
+          department: employee.department,
+          role: employee.role,
+          reportingManager: employee.reportingManager,
+          employmentType: employee.employmentType,
+          status: employee.status,
+        },
+        newValueText: `Hired as ${employee.employmentType || "PERMANENT"} (Status: ${employee.status || "ACTIVE"})`,
+        changedBy: req.user.id || req.user._id,
+        reason: req.body.reason || "Initial profile creation",
+      });
+    } catch (histErr) {
+      console.error("Error creating initial EmploymentHistory record:", histErr);
+    }
+
+    // 🚀 HRMS V2 Foundation: Initial Employee Timeline Event
+    try {
+      await EmployeeTimeline.logEvent({
+        employeeId: employee._id,
+        eventType: "EMPLOYEE_CREATED",
+        title: "Employee Profile Created",
+        description: `Employee profile for ${employee.fullName} created by ${req.user.fullName || "Admin"}`,
+        category: "EMPLOYMENT",
+        metadata: {
+          department: employee.department,
+          role: employee.role,
+          status: employee.status,
+          employmentType: employee.employmentType,
+          reportingManager: employee.reportingManager,
+        },
+        performedBy: req.user.id || req.user._id,
+      });
+    } catch (timeErr) {
+      console.error("Error creating initial EmployeeTimeline event:", timeErr);
+    }
+
+    // 🚀 HRMS V2 Foundation: Audit Log Entry
+    try {
+      await Log.create({
+        action: "EMPLOYEE_CREATED",
+        performedBy: req.user.id || req.user._id,
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+        affectedResource: "Employee",
+        resourceId: employee._id,
+        newState: employee.toObject(),
+        details: {
+          message: `Employee ${employee.fullName} created by ${req.user.fullName}`,
+          reason: req.body.reason || "",
+          isAdminOverride: req.user.role === "Admin",
+        },
+        status: "SUCCESS",
+      });
+    } catch (auditErr) {
+      console.error("Error creating audit log entry:", auditErr);
+    }
+
     res.status(201).json({
       success: true,
       data: employee,
@@ -834,6 +908,86 @@ exports.updateEmployee = async (req, res) => {
         }. Changes: ${changes.join(", ")}`,
         employeeId: employee._id,
       });
+
+      // 🚀 HRMS V2 Foundation: Track Employment History & Timeline Events
+      try {
+        const updateReason = req.body.reason || req.body.employee?.reason || "";
+        const trackedFields = [
+          { key: "department", changeType: "DEPARTMENT", title: "Department Changed" },
+          { key: "role", changeType: "DESIGNATION", title: "Designation/Role Changed" },
+          { key: "reportingManager", changeType: "REPORTING_MANAGER", title: "Reporting Manager Changed" },
+          { key: "employmentType", changeType: "EMPLOYMENT_TYPE", title: "Employment Type Changed" },
+          { key: "status", changeType: "STATUS", title: "Status Changed" },
+        ];
+
+        for (const item of trackedFields) {
+          const fieldKey = item.key;
+          const oldValObj = oldEmployee[fieldKey];
+          const newValObj = employee[fieldKey];
+
+          const oldId = (oldValObj?._id || oldValObj)?.toString();
+          const newId = (newValObj?._id || newValObj)?.toString();
+
+          if (oldId !== newId) {
+            const oldText = oldValObj?.name || oldValObj?.fullName || (oldId ? oldId : "None");
+            const newText = newValObj?.name || newValObj?.fullName || (newId ? newId : "None");
+
+            // 1. Create EmploymentHistory record
+            await EmploymentHistory.create({
+              employeeId: employee._id,
+              changeType: item.changeType,
+              fieldName: fieldKey,
+              previousValue: oldValObj,
+              newValue: newValObj,
+              previousValueText: oldText,
+              newValueText: newText,
+              effectiveDate: new Date(),
+              changedBy: req.user.id || req.user._id,
+              reason: updateReason,
+            });
+
+            // 2. Publish EmployeeTimeline event
+            await EmployeeTimeline.logEvent({
+              employeeId: employee._id,
+              eventType: `${item.changeType}_CHANGED`,
+              title: `${item.title}: ${newText}`,
+              description: `${item.title} updated from "${oldText}" to "${newText}" by ${req.user.fullName}`,
+              category: "EMPLOYMENT",
+              metadata: {
+                fieldName: fieldKey,
+                previousValue: oldText,
+                newValue: newText,
+                reason: updateReason,
+              },
+              performedBy: req.user.id || req.user._id,
+            });
+          }
+        }
+      } catch (histErr) {
+        console.error("Error logging EmploymentHistory/Timeline during update:", histErr);
+      }
+
+      // 🚀 HRMS V2 Foundation: Create Audit Log Entry
+      try {
+        await Log.create({
+          action: "EMPLOYEE_UPDATED",
+          performedBy: req.user.id || req.user._id,
+          ipAddress: req.ip,
+          userAgent: req.headers["user-agent"],
+          affectedResource: "Employee",
+          resourceId: employee._id,
+          previousState: oldEmployee,
+          newState: employee.toObject(),
+          details: {
+            changes: changes,
+            reason: req.body.reason || req.body.employee?.reason || "",
+            isAdminOverride: req.user.role === "Admin",
+          },
+          status: "SUCCESS",
+        });
+      } catch (auditErr) {
+        console.error("Error creating Log entry for update:", auditErr);
+      }
     }
 
     res.status(200).json({
@@ -1001,26 +1155,28 @@ exports.createDepartment = async (req, res) => {
 // @access  Private
 exports.getRoles = async (req, res) => {
   try {
-    const roles = await Role.find().populate("employeeCount");
+    let roles = await Role.find().populate("employeeCount");
 
-    // If no roles exist, create default ones
-    if (roles.length === 0) {
-      const defaultRoles = await Role.insertMany([
-        { name: "Employee", description: "Regular employee" },
-        { name: "Manager", description: "Department manager" },
-        { name: "HR", description: "Human resources" },
-        { name: "Sales Person", description: "Sales team member" },
-        { name: "Lead Person", description: "Lead generation team member" },
-      ]);
-      
-      // Need to re-fetch to get populated fields for the new roles if needed, 
-      // but virtuals are usually calculated on the fly if populated
-      const populatedRoles = await Role.find().populate("employeeCount");
-      return res.json({
-        success: true,
-        data: populatedRoles,
-      });
+    // Ensure standard roles exist (upsert missing)
+    const requiredRoles = [
+      { name: "Employee", description: "Regular employee" },
+      { name: "Manager", description: "Department manager" },
+      { name: "HR", description: "Human resources" },
+      { name: "Sales Person", description: "Sales team member" },
+      { name: "Lead Person", description: "Lead generation team member" },
+      { name: "Team Leader", description: "Team Leader" },
+      { name: "Sales Team Leader", description: "Sales Team Leader" },
+      { name: "Senior Sales Executive", description: "Senior Sales Executive" },
+    ];
+
+    for (const r of requiredRoles) {
+      const exists = roles.some((role) => role.name === r.name);
+      if (!exists) {
+        await Role.create(r);
+      }
     }
+
+    roles = await Role.find().populate("employeeCount");
 
     res.json({
       success: true,
@@ -1756,5 +1912,289 @@ exports.verifyPayment = async (req, res) => {
       message: errorMessage,
       error: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
+  }
+};
+
+// @desc    Get employment history for an employee
+// @route   GET /api/employees/:id/employment-history
+// @access  Private
+exports.getEmploymentHistory = async (req, res) => {
+  try {
+    const history = await EmploymentHistory.find({ employeeId: req.params.id })
+      .populate("changedBy", "fullName email role")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: history.length,
+      data: history,
+    });
+  } catch (err) {
+    console.error("Error fetching employment history:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Get employee timeline events
+// @route   GET /api/employees/:id/timeline
+// @access  Private
+exports.getEmployeeTimeline = async (req, res) => {
+  try {
+    const timeline = await EmployeeTimeline.find({ employeeId: req.params.id })
+      .populate("performedBy", "fullName email role")
+      .sort({ timestamp: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: timeline.length,
+      data: timeline,
+    });
+  } catch (err) {
+    console.error("Error fetching employee timeline:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Get employee audit logs
+// @route   GET /api/employees/:id/audit-logs
+// @access  Private (Admin/HR/Manager)
+exports.getEmployeeAuditLogs = async (req, res) => {
+  try {
+    const logs = await Log.find({
+      affectedResource: "Employee",
+      resourceId: req.params.id,
+    })
+      .populate("performedBy", "fullName email role")
+      .sort({ timestamp: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: logs.length,
+      data: logs,
+    });
+  } catch (err) {
+    console.error("Error fetching employee audit logs:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Get full Employee 360 aggregated workspace data
+// @route   GET /api/employees/:id/360
+// @access  Private (Admin/HR: any employee, Manager: direct reports only, Employee: own only)
+exports.get360Profile = async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+
+    // 1. Fetch the employee record first to authorize the request
+    const employee = await Employee.findById(employeeId)
+      .populate("department", "name description")
+      .populate("role", "name description")
+      .populate("reportingManager", "fullName email role profilePicture")
+      .populate("hrId", "fullName email");
+
+    if (!employee) {
+      return res.status(404).json({ success: false, message: "Employee not found" });
+    }
+
+    const requestingRole = req.user.role;
+    const isAdminOrHR = ["Admin", "HR"].includes(requestingRole);
+    const isOwnProfile = employee.userId?.toString() === req.user.id;
+    const isDirectManager =
+      requestingRole === "Manager" &&
+      employee.reportingManager?._id?.toString() === req.user.id;
+
+    // Authorization gate
+    if (!isAdminOrHR && !isOwnProfile && !isDirectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only view your own profile or direct reports.",
+      });
+    }
+
+    // 2. Build employee object and decrypt PII for authorized viewers
+    const empObj = employee.toObject();
+    if (isAdminOrHR || isOwnProfile) {
+      try {
+        const decrypted = employee.getDecryptedPII();
+        Object.assign(empObj, decrypted);
+      } catch (e) {
+        console.error("PII decryption error:", e);
+      }
+    }
+
+    // 3. Parallel aggregation — all collections fetched in one round-trip
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [
+      employmentHistory,
+      timeline,
+      attendance,
+      reviews,
+      promotions,
+      salaryHistory,
+      latestPerf,
+      assignedAssets,
+      assetAssignments,
+      exitRequests,
+    ] = await Promise.all([
+      EmploymentHistory.find({ employeeId })
+        .populate("changedBy", "fullName email role")
+        .sort({ createdAt: -1 })
+        .lean(),
+      EmployeeTimeline.find({ employeeId })
+        .populate("performedBy", "fullName email role")
+        .sort({ timestamp: -1 })
+        .limit(60)
+        .lean(),
+      Attendance.find({ employeeId, date: { $gte: thirtyDaysAgo } })
+        .sort({ date: -1 })
+        .lean(),
+      PerformanceReview.find({ employeeId })
+        .populate("reviewCycleId", "name cycleType startDate endDate")
+        .sort({ createdAt: -1 })
+        .lean(),
+      PromotionRequest.find({ employeeId })
+        .populate("proposedRole", "name")
+        .populate("proposedDepartment", "name")
+        .populate("currentRole", "name")
+        .populate("currentDepartment", "name")
+        .sort({ createdAt: -1 })
+        .lean(),
+      // Salary history: only for Admin/HR or own profile (not manager)
+      (isAdminOrHR || isOwnProfile)
+        ? SalaryHistory.find({ employeeId })
+            .populate("approvedBy", "fullName email")
+            .sort({ effectiveDate: -1 })
+            .lean()
+        : Promise.resolve([]),
+      MonthlyPerformanceRecord.findOne({ employeeId })
+        .sort({ createdAt: -1 })
+        .lean(),
+      Asset.find({ currentAssignee: employeeId, status: "ASSIGNED" })
+        .populate("category", "name code icon")
+        .sort({ currentAssignmentDate: -1 })
+        .lean(),
+      AssetAssignment.find({ employeeId })
+        .populate("assetId", "name assetId category brand model serialNumber")
+        .populate("assignedBy", "fullName")
+        .populate("returnedBy", "fullName")
+        .sort({ createdAt: -1 })
+        .lean(),
+      ExitRequest.find({ employeeId })
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
+
+    // 4. Compute attendance summary
+    const totalDays = attendance.length;
+    const presentDays = attendance.filter((a) => a.status === "PRESENT").length;
+    const absentDays = attendance.filter((a) => a.status === "ABSENT").length;
+    const lateDays = attendance.filter((a) => a.status === "LATE").length;
+    const halfDays = attendance.filter((a) => a.status === "HALF_DAY").length;
+    const leaveDays = attendance.filter((a) => a.status === "ON_LEAVE").length;
+    const attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
+
+    // 5. Compute health indicators
+    const lastReview = reviews.find((r) => r.status === "FINALIZED") || reviews[0] || null;
+    const lastPromotion = promotions.find((p) => p.status === "APPROVED") || null;
+    const lastIncrement = salaryHistory[0] || null;
+
+    // Attendance trend: compare first half vs second half of last 30 days
+    const mid = Math.floor(attendance.length / 2);
+    const firstHalf = attendance.slice(mid);
+    const secondHalf = attendance.slice(0, mid);
+    const firstPresent = firstHalf.filter((a) => a.status === "PRESENT").length;
+    const secondPresent = secondHalf.filter((a) => a.status === "PRESENT").length;
+    let attendanceTrend = "STABLE";
+    if (secondPresent > firstPresent + 1) attendanceTrend = "UP";
+    else if (firstPresent > secondPresent + 1) attendanceTrend = "DOWN";
+
+    // Performance trend
+    const finalizedReviews = reviews.filter((r) => r.status === "FINALIZED");
+    let performanceTrend = "STABLE";
+    if (finalizedReviews.length >= 2) {
+      const latest = finalizedReviews[0]?.finalRecommendation?.finalRating || 0;
+      const prev = finalizedReviews[1]?.finalRecommendation?.finalRating || 0;
+      if (latest > prev) performanceTrend = "UP";
+      else if (latest < prev) performanceTrend = "DOWN";
+    }
+
+    // 6. Documents (normalized to standard shape)
+    const documents = {
+      photograph: empObj.photograph || null,
+      tenthMarksheet: empObj.tenthMarksheet || null,
+      twelfthMarksheet: empObj.twelfthMarksheet || null,
+      bachelorDegree: empObj.bachelorDegree || null,
+      postgraduateDegree: empObj.postgraduateDegree || null,
+      aadharCard: (isAdminOrHR || isOwnProfile) ? (empObj.aadharCard || null) : null,
+      panCard: (isAdminOrHR || isOwnProfile) ? (empObj.panCard || null) : null,
+      pcc: empObj.pcc || null,
+      resume: empObj.resume || null,
+      offerLetter: empObj.offerLetter || null,
+      signature: empObj.signature || null,
+    };
+
+    // 7. Build unified response
+    res.status(200).json({
+      success: true,
+      data: {
+        employee: empObj,
+        employmentHistory,
+        timeline,
+        attendance: {
+          summary: {
+            totalDays,
+            presentDays,
+            absentDays,
+            lateDays,
+            halfDays,
+            leaveDays,
+            attendancePercentage,
+          },
+          records: attendance,
+        },
+        performance: {
+          latestMonthly: latestPerf || null,
+        },
+        reviews,
+        promotions,
+        compensation: {
+          currentSalary: (isAdminOrHR || isOwnProfile) ? (empObj.salary || 0) : null,
+          history: salaryHistory,
+        },
+        documents,
+        assets: {
+          currentAssets: assignedAssets || [],
+          assignmentHistory: assetAssignments || [],
+        },
+        exits: exitRequests || [],
+        healthIndicators: {
+          attendanceTrend,
+          attendancePercentage,
+          performanceTrend,
+          reviewCompletion: !!lastReview,
+          lastReviewDate: lastReview?.finalRecommendation?.finalizedAt || null,
+          lastReviewRating: lastReview?.finalRecommendation?.ratingCategory || null,
+          lastIncrementDate: lastIncrement?.effectiveDate || null,
+          lastIncrementPercentage: lastIncrement?.incrementPercentage || null,
+          promotionCount: promotions.filter((p) => p.status === "APPROVED").length,
+          assignedAssetCount: (assignedAssets || []).length,
+          isPIPActive: employee.status === "PIP",
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Error fetching Employee 360 profile:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };

@@ -53,8 +53,8 @@ exports.getSales = async (req, res) => {
 
     const parsedQuery = JSON.parse(queryStr);
 
-    // If user is a sales person, only show their sales
-    if (req.user.role === "Sales Person") {
+    // If user is a sales person / team leader, only show their own sales
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
       query = Sale.find({
         salesPerson: req.user.id,
         ...parsedQuery,
@@ -161,7 +161,7 @@ exports.getSales = async (req, res) => {
       // Apply the same role-based filtering for full results, but ignore all query parameters
       let fullQuery;
 
-      if (req.user.role === "Sales Person") {
+      if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
         fullQuery = Sale.find({
           salesPerson: req.user.id,
         });
@@ -240,7 +240,7 @@ exports.getSale = async (req, res) => {
     }
 
     // Check if user can access this sale
-    if (req.user.role === "Sales Person") {
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
       const salesPersonId =
         sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
       const userId = req.user._id?.toString() || req.user.id?.toString();
@@ -416,7 +416,7 @@ exports.updateSale = async (req, res) => {
     const originalTotalCost = sale.totalCost;
 
     // Check permissions
-    if (req.user.role === "Sales Person") {
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
       // Sales person can only update their own sales
       const salesPersonId =
         sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
@@ -724,7 +724,7 @@ exports.deleteSale = async (req, res) => {
     }
 
     // Check permissions - only sales person who created it, manager, or admin can delete
-    if (req.user.role === "Sales Person") {
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
       const salesPersonId =
         sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
       const userId = req.user._id?.toString() || req.user.id?.toString();
@@ -776,8 +776,8 @@ exports.getSalesCount = async (req, res) => {
   try {
     let count;
 
-    // If user is a sales person, only count their sales
-    if (req.user.role === "Sales Person") {
+    // If user is a sales person / team leader, only count their sales
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
       count = await Sale.countDocuments({
         salesPerson: req.user.id,
         isLeadPersonSale: { $ne: true }, // Exclude lead person sales

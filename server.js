@@ -120,6 +120,10 @@ const payoutRoutes = require("./routes/payouts");
 const paytmRoutes = require("./routes/paytm");
 const biometricRoutes = require("./routes/biometric");
 const performanceRoutes = require("./routes/performance");
+const reviewRoutes = require("./routes/reviews");
+const promotionRoutes = require("./routes/promotions");
+const incrementRoutes = require("./routes/increments");
+const assetRoutes = require("./routes/assets");
 const expenseRoutes = require("./routes/expenses");
 const advanceRoutes = require("./routes/advances");
 const testRolesRoutes = require("./routes/testRoles");
@@ -144,6 +148,7 @@ const verdaEnquiryRoutes = require("./routes/verdaEnquiry");
 const meetingRoutes = require("./routes/meetings");
 const officeNetworkRoutes = require("./routes/officeNetwork");
 const onboardingRoutes = require("./routes/onboarding");
+const exitRoutes = require("./routes/exits");
 
 const app = express();
 const server = http.createServer(app);
@@ -579,6 +584,11 @@ app.use("/api/test-reports", testReportsRoutes);
 app.use("/api/biometric", biometricRoutes);
 app.use("/api/performance/kpi-breakdown", kpiBreakdownRoutes);
 app.use("/api/performance", performanceRoutes); // Performance Management ERP
+app.use("/api/reviews", reviewRoutes); // Enterprise Performance Review Engine HRMS V2
+app.use("/api/promotions", promotionRoutes); // Promotion & Career Progression Engine HRMS V2
+app.use("/api/increments", incrementRoutes); // Enterprise Salary Increment & Compensation Engine HRMS V2
+app.use("/api/assets", assetRoutes); // Enterprise Asset Management HRMS V2
+app.use("/api/exits", exitRoutes); // Enterprise Exit Management & FnF Settlement HRMS V2
 app.use("/api/expenses", expenseRoutes); // Expense Reimbursement
 app.use("/api/advances", advanceRoutes); // Employee Salary Advances
 app.use("/api/feed", feedRoutes); // Mount Feed Routes
