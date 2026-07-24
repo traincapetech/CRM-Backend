@@ -133,11 +133,11 @@ UserSchema.methods.getSignedJwtToken = function () {
     throw new Error("CRITICAL: JWT_SECRET not set.");
   }
 
-  // Issuing short-lived access token (15 minutes)
+  // Issuing access token (8 hours)
   return jwt.sign(
     { id: this._id, role: this.role },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRE || "15m" }
+    { expiresIn: process.env.JWT_EXPIRE || "8h" }
   );
 };
 
