@@ -13,13 +13,7 @@ const CACHE_TTL = 60 * 1000; // 60 seconds
  */
 const normalizeIP = (ip) => {
   if (!ip) return "";
-  let cleanIP = String(ip).trim();
-  if (cleanIP.startsWith("[")) {
-    cleanIP = cleanIP.replace(/^\[/, "").replace(/\](?::\d+)?$/, "");
-  }
-  if (cleanIP.includes(":") && !cleanIP.includes("::") && cleanIP.split(":").length === 2 && cleanIP.includes(".")) {
-    cleanIP = cleanIP.split(":")[0];
-  }
+  let cleanIP = ip.trim();
   if (cleanIP.startsWith("::ffff:")) cleanIP = cleanIP.split(":").pop();
   if (cleanIP === "::1") return "127.0.0.1";
   return cleanIP;
@@ -133,7 +127,7 @@ const refreshCache = async () => {
       console.log(`📡 IP Filter: Cache refreshed. ${cachedNetworks.length} offices loaded.`);
     }
   } catch (error) {
-    console.error("❌ IP Filter Cache Refresh Error:", error.message);
+    console.error("❌ IP Filter Cache Refresh Error:", error);
   }
 };
 
@@ -160,12 +154,12 @@ const seedFromEnv = async () => {
       }
     }
   } catch (error) {
-    console.error("❌ IP Filter Seeding Error:", error.message);
+    console.error("❌ IP Filter Seeding Error:", error);
   }
 };
 
-// Initial cache load attempt
-refreshCache().then(() => seedFromEnv()).catch(() => {});
+// Initial cache load
+refreshCache().then(() => seedFromEnv());
 
 /**
  * Reusable IP matching function for HTTP middleware and WebSockets
@@ -173,8 +167,8 @@ refreshCache().then(() => seedFromEnv()).catch(() => {});
 const isIPAllowed = async (ip) => {
   const clientIP = normalizeIP(ip);
 
-  // Refresh cache if expired or empty
-  if (Date.now() - lastCacheUpdate > CACHE_TTL || cachedNetworks.length === 0) {
+  // Refresh cache if expired
+  if (Date.now() - lastCacheUpdate > CACHE_TTL) {
     await refreshCache();
   }
 
@@ -189,7 +183,7 @@ const isIPAllowed = async (ip) => {
   let allowedOffice = null;
   for (const office of allNetworksToEvaluate) {
     const combined = [...(office.privateRanges || []), ...(office.publicIPs || [])];
-    const isMatched = combined.some(range => range && isIPInRange(clientIP, range));
+    const isMatched = combined.some(range => isIPInRange(clientIP, range));
     if (isMatched) {
       allowedOffice = office.officeName;
       break;
@@ -225,19 +219,17 @@ const ipFilter = async (req, res, next) => {
     return next();
   }
 
-  // Prioritize primary client IP from X-Forwarded-For header over req.ip/proxy address
-  const xForwardedFor = req.headers["x-forwarded-for"];
-  const rawIP = xForwardedFor ? xForwardedFor.split(",")[0].trim() : (req.ip || req.socket?.remoteAddress);
+  const rawIP = req.ip;
   const clientIP = normalizeIP(rawIP);
   const logCtx = `| Path: ${req.originalUrl || req.path} | Method: ${req.method}`;
 
-  // Detailed debugging logs for root-cause analysis
+  // Detailed debugging logs for root-cause analysis (Check 4)
   if (process.env.DEBUG_IP === "true" || process.env.NODE_ENV === "development") {
     console.log("------- IP FILTER DEBUG START -------");
     console.log("x-forwarded-for:", req.headers["x-forwarded-for"]);
     console.log("req.ip:", req.ip);
-    console.log("remoteAddress:", req.socket?.remoteAddress);
-    console.log("Detected Client IP:", clientIP);
+    console.log("remoteAddress:", req.socket.remoteAddress);
+    console.log("Detected IP:", clientIP);
     console.log("-------------------------------------");
   }
 
@@ -255,8 +247,7 @@ const ipFilter = async (req, res, next) => {
   return res.status(403).json({
     success: false,
     error: "IP_NOT_ALLOWED",
-    clientIP,
-    message: `Access denied. Office network only. (Detected IP: ${clientIP})`
+    message: "Access denied. Office network only."
   });
 };
 

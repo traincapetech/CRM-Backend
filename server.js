@@ -496,15 +496,12 @@ app.options("/api/*", handleOptions);
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // higher limit per IP window to accommodate multi-user office NAT networks
+  windowMs: 0.5 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
   message: "Too many requests from this IP, please try again later",
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => {
-    const xff = req.headers["x-forwarded-for"];
-    return xff ? xff.split(",")[0].trim() : req.ip;
-  },
+  keyGenerator: (req) => req.ip,
   // Skip rate limiting for logs endpoint (critical for debugging and monitoring)
   skip: (req) => {
     return (
@@ -547,18 +544,6 @@ if (
 
 // Serve static files from uploads directory with CORS enabled
 app.use("/uploads", cors(), express.static("uploads"));
-
-// Health check & Client IP detection route
-app.get(["/health", "/api/health", "/api/my-ip"], (req, res) => {
-  const { normalizeIP } = require("./middleware/ipFilter");
-  const xff = req.headers["x-forwarded-for"];
-  const clientIP = normalizeIP(xff ? xff.split(",")[0].trim() : (req.ip || req.socket?.remoteAddress));
-  res.status(200).json({
-    status: "ok",
-    clientIP,
-    timestamp: new Date().toISOString()
-  });
-});
 
 // Mount routers
 app.use("/api/auth", authRoutes);
