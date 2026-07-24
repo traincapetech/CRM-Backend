@@ -255,7 +255,8 @@ const ipFilter = async (req, res, next) => {
   return res.status(403).json({
     success: false,
     error: "IP_NOT_ALLOWED",
-    message: "Access denied. Office network only."
+    clientIP,
+    message: `Access denied. Office network only. (Detected IP: ${clientIP})`
   });
 };
 
