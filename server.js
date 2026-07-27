@@ -149,6 +149,8 @@ const meetingRoutes = require("./routes/meetings");
 const officeNetworkRoutes = require("./routes/officeNetwork");
 const onboardingRoutes = require("./routes/onboarding");
 const exitRoutes = require("./routes/exits");
+const branchRoutes = require("./routes/branches");
+const branchAnalyticsRoutes = require("./routes/branchAnalytics");
 
 const app = express();
 const server = http.createServer(app);
@@ -558,6 +560,8 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/prospects", prospectRoutes);
 app.use("/api/activity", activityRoutes);
 app.use("/api/employees", employeeRoutes);
+app.use("/api/branches", branchRoutes);
+app.use("/api/branch-analytics", branchAnalyticsRoutes);
 app.use("/api/leaves", leaveRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/payroll", payrollRoutes);

@@ -43,6 +43,11 @@ const SaleSchema = new mongoose.Schema({
     ref: 'User',
     required: [true, 'Please assign a sales person']
   },
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
+    default: null
+  },
   leadPerson: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

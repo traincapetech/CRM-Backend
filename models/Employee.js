@@ -83,6 +83,11 @@ const employeeSchema = new mongoose.Schema(
       ref: "Department",
       required: [true, "Please assign a department"],
     },
+    branchId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "Branch",
+      default: null,
+    },
     role: {
       type: mongoose.Schema.ObjectId,
       ref: "EmployeeRole",
@@ -367,6 +372,10 @@ employeeSchema.pre(/^find/, function (next) {
     .populate({
       path: "hrId",
       select: "fullName email",
+    })
+    .populate({
+      path: "branchId",
+      select: "name code city state status",
     });
   next();
 });

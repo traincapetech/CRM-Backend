@@ -302,7 +302,22 @@ exports.createSale = async (req, res) => {
       req.body.pending = false;
     }
 
-    // Removed: Overwriting leadPerson for reference sales prevented them from appearing on lead person's sheet
+    // SECURITY: Always derive branch from salesperson's Employee.branchId (ignore client-sent branchId)
+    delete req.body.branchId;
+    const Employee = require("../models/Employee");
+    const salesPersonId = req.body.salesPerson;
+    if (salesPersonId) {
+      const emp = await Employee.findOne({
+        $or: [{ userId: salesPersonId }, { _id: salesPersonId }]
+      }).select("branchId");
+      if (emp && emp.branchId) {
+        req.body.branchId = emp.branchId;
+      } else {
+        req.body.branchId = null;
+      }
+    } else {
+      req.body.branchId = null;
+    }
 
     // Create sale
     const sale = await Sale.create(req.body);
@@ -447,6 +462,23 @@ exports.updateSale = async (req, res) => {
     if (finalStatus === "Completed") {
       req.body.tokenAmount = req.body.totalCost !== undefined ? parseFloat(req.body.totalCost) : sale.totalCost;
       req.body.pending = false;
+    }
+
+    // SECURITY: Ignore any branchId sent from client
+    delete req.body.branchId;
+
+    // If sale doesn't have a branchId snapshot yet, derive from salesperson's employee record
+    if (!sale.branchId) {
+      const targetSalesPerson = req.body.salesPerson || sale.salesPerson?._id || sale.salesPerson;
+      if (targetSalesPerson) {
+        const Employee = require("../models/Employee");
+        const emp = await Employee.findOne({
+          $or: [{ userId: targetSalesPerson }, { _id: targetSalesPerson }]
+        }).select("branchId");
+        if (emp && emp.branchId) {
+          req.body.branchId = emp.branchId;
+        }
+      }
     }
 
     // Add updatedBy field and timestamp

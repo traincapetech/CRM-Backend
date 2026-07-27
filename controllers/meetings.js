@@ -31,7 +31,40 @@ exports.createMeeting = async (req, res) => {
 
     const roomSlug = slugify(title || "CRM Meeting");
     const roomId = `${roomSlug}-${timestamp}`;
-    const meetingUrl = `https://meet.jit.si/${roomId}`;
+    const dailyDomain = process.env.DAILY_DOMAIN || "second-police";
+    let meetingUrl = `https://${dailyDomain}.daily.co/${roomId}`;
+
+    // Dynamically create room via Daily.co REST API
+    if (process.env.DAILY_API_KEY) {
+      try {
+        const dailyRes = await fetch("https://api.daily.co/v1/rooms", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.DAILY_API_KEY}`,
+          },
+          body: JSON.stringify({
+            name: roomId,
+            properties: {
+              enable_chat: true,
+              enable_screenshare: true,
+              enable_breakout_rooms: true,
+              start_video_off: false,
+              start_audio_off: false,
+            },
+          }),
+        });
+        const dailyData = await dailyRes.json();
+        if (dailyData && dailyData.url) {
+          meetingUrl = dailyData.url;
+          console.log("✅ Daily.co room created successfully:", dailyData.url);
+        } else if (dailyData && dailyData.name) {
+          meetingUrl = `https://${dailyDomain}.daily.co/${dailyData.name}`;
+        }
+      } catch (dailyErr) {
+        console.error("⚠️ Daily.co API error (falling back to direct Daily URL):", dailyErr.message);
+      }
+    }
 
     const validParticipants = invitedParticipants.filter(id => id && mongoose.Types.ObjectId.isValid(id));
     if (validParticipants.length !== invitedParticipants.length) {
@@ -69,6 +102,7 @@ exports.createMeeting = async (req, res) => {
       notificationService.sendCallAlert(validParticipants, {
         meetingId: meeting._id,
         roomId: roomId,
+        meetingUrl: meeting.meetingUrl,
         title: title || "Internal Huddle",
         description: description || "",
         creatorId: req.user.id,

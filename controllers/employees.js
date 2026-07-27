@@ -73,10 +73,11 @@ exports.getEmployees = async (req, res) => {
       query = Employee.find(JSON.parse(queryStr));
     }
 
-    // Populate role and department for all queries
+    // Populate role, department, and branch for all queries
     query = query
       .populate("role", "name description")
-      .populate("department", "name description");
+      .populate("department", "name description")
+      .populate("branchId", "name code status city state");
 
     // Select Fields
     if (req.query.select) {
@@ -215,6 +216,7 @@ exports.getEmployee = async (req, res) => {
     const employee = await Employee.findById(req.params.id)
       .populate("department", "name description")
       .populate("role", "name description")
+      .populate("branchId", "name code status city state")
       .populate("hrId", "fullName email");
 
     if (!employee) {
@@ -311,6 +313,7 @@ exports.getEmployeeByUserId = async (req, res) => {
     const employee = await Employee.findOne({ userId: req.params.userId })
       .populate("department", "name description")
       .populate("role", "name description")
+      .populate("branchId", "name code status city state")
       .populate("hrId", "fullName email");
 
     if (!employee) {
@@ -404,6 +407,7 @@ exports.getTeamDirectory = async (req, res) => {
     const employees = await Employee.find({})
       .populate('department', 'name')
       .populate('role', 'name description')
+      .populate('branchId', 'name code status')
       .populate('hrId', 'fullName email')
       .lean();
 
@@ -447,6 +451,7 @@ exports.getTeamDirectory = async (req, res) => {
         email: emp.email,
         role: emp.role,
         department: emp.department,
+        branchId: emp.branchId || null,
         status: emp.status,
         employmentType: emp.employmentType,
         joiningDate: emp.joiningDate,
