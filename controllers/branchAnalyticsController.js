@@ -173,7 +173,48 @@ exports.getBranchSalesSummary = asyncHandler(async (req, res, next) => {
     },
   ]);
 
-  // 5. Return raw sales data + branches + lead metrics + staff counts
+  // 5. Operational Expenses per branch (Approved / Paid)
+  const Expense = require("../models/Expense");
+  const Payroll = require("../models/Payroll");
+
+  const expenseMatch = { status: { $in: ["APPROVED", "PAID"] } };
+  if (dateFilter) expenseMatch.date = dateFilter;
+
+  const expenseAggregation = await Expense.aggregate([
+    { $match: expenseMatch },
+    {
+      $lookup: {
+        from: "employees", localField: "employeeId", foreignField: "_id", as: "employee",
+      },
+    },
+    { $unwind: { path: "$employee", preserveNullAndEmptyArrays: true } },
+    {
+      $group: {
+        _id: { $ifNull: ["$branchId", { $ifNull: ["$employee.branchId", delhiHQ?._id || "UNASSIGNED"] }] },
+        totalExpenses: { $sum: "$amount" },
+        expenseCount: { $sum: 1 },
+      },
+    },
+  ]);
+
+  // 6. Payroll Expenses per branch
+  const payrollAggregation = await Payroll.aggregate([
+    {
+      $lookup: {
+        from: "employees", localField: "employeeId", foreignField: "_id", as: "employee",
+      },
+    },
+    { $unwind: { path: "$employee", preserveNullAndEmptyArrays: true } },
+    {
+      $group: {
+        _id: { $ifNull: ["$employee.branchId", delhiHQ?._id || "UNASSIGNED"] },
+        totalPayroll: { $sum: { $ifNull: ["$calculatedSalary", "$baseSalary"] } },
+        payrollCount: { $sum: 1 },
+      },
+    },
+  ]);
+
+  // 7. Return raw sales data + branches + lead metrics + staff counts + expenses + payroll
   res.status(200).json({
     success: true,
     data: {
@@ -188,6 +229,8 @@ exports.getBranchSalesSummary = asyncHandler(async (req, res, next) => {
       })),
       leadMetrics: leadAggregation,
       staffCounts: employeeCounts,
+      expenseMetrics: expenseAggregation,
+      payrollMetrics: payrollAggregation,
       activeBranchesCount: branches.filter((b) => b.status).length,
     },
   });

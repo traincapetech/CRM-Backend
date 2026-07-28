@@ -19,6 +19,7 @@ const {
   cloneCampaign,
   getRecipientEngagement,
   sendReminder,
+  sendTestEmail,
 } = require("../controllers/emailCampaigns");
 const { getQueueStatus, getQueueStats } = require("../services/emailQueue");
 
@@ -31,6 +32,13 @@ router.get("/track/click", trackClick);
 
 // All routes require authentication
 router.use(protect);
+
+// Send test preview email
+router.post(
+  "/send-test",
+  authorize("Admin", "Manager", "Lead Person"),
+  sendTestEmail,
+);
 
 // Get all campaigns (must be before /:id route)
 router.get(

@@ -44,10 +44,7 @@ const wrapTrackedLink = (url, campaignId, recipientEmail) => {
 const addClickTracking = (html, campaignId, recipientEmail) => {
   if (!html) return html;
   return html.replace(/href=["']([^"']+)["']/gi, (match, url) => {
-    if (!url || url.startsWith('mailto:') || url.startsWith('tel:')) {
-      return match;
-    }
-    if (url.includes('/api/email-campaigns/track/click')) {
+    if (!url || !url.startsWith('http') || url.includes('/api/email-campaigns/track')) {
       return match;
     }
     const tracked = wrapTrackedLink(url, campaignId, recipientEmail);

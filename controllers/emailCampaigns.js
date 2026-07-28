@@ -482,9 +482,12 @@ exports.sendCampaign = async (req, res) => {
       }
     }
 
-    // Update campaign status
+    // Update campaign status to 'sending'
     campaign.status = "sending";
     campaign.stats.totalRecipients = recipients.length;
+    campaign.stats.sent = 0;
+    campaign.stats.delivered = 0;
+    campaign.stats.bounced = 0;
 
     // Initialize recipient tracking for individual engagement monitoring
     campaign.recipientTracking = recipients.map((r) => ({
@@ -504,127 +507,18 @@ exports.sendCampaign = async (req, res) => {
       counselor_name: senderName,
     }));
 
-    // Send emails directly via Brevo/SMTP (synchronous sending)
-    console.log(
-      `📧 Sending campaign to ${preparedRecipients.length} recipients via Brevo/SMTP...`,
-    );
-    let sent = 0;
-    let delivered = 0;
-    let bounced = 0;
-    let errors = [];
+    // Trigger async background processing without blocking HTTP response
+    setImmediate(() => {
+      executeCampaignDispatch(campaign._id, preparedRecipients, senderName);
+    });
 
-    // Rate limiting: send in batches with delays
-    const batchSize = 10;
-    const delayBetweenBatches = 2000; // 2 seconds between batches
-
-    for (let i = 0; i < preparedRecipients.length; i += batchSize) {
-      const batch = preparedRecipients.slice(i, i + batchSize);
-
-      for (const recipient of batch) {
-        try {
-          // Replace template variables
-          const variables = buildTemplateVariables(recipient, {
-            fromName: req.user?.fullName,
-          });
-          const htmlContent = addEmailTracking(
-            replaceTemplateVariables(campaign.template, variables),
-            campaign._id.toString(),
-            recipient.email,
-          );
-          const subject = replaceTemplateVariables(campaign.subject, variables);
-
-          await sendEmail(
-            recipient.email,
-            subject,
-            htmlContent.replace(/<[^>]*>/g, ""), // Plain text version
-            htmlContent,
-          );
-
-          sent++;
-          delivered++;
-
-          // Update recipient tracking status
-          const trackingEntry = campaign.recipientTracking.find(
-            (r) => r.email === recipient.email,
-          );
-          if (trackingEntry) {
-            trackingEntry.status = "sent";
-            trackingEntry.sentAt = new Date();
-          }
-
-          console.log(
-            `✅ [${sent}/${preparedRecipients.length}] Email sent to ${recipient.email}`,
-          );
-        } catch (error) {
-          console.error(
-            `❌ Failed to send to ${recipient.email}:`,
-            error.message,
-          );
-          sent++;
-          bounced++;
-          errors.push({ email: recipient.email, error: error.message });
-
-          // Update recipient tracking status for bounced
-          const trackingEntry = campaign.recipientTracking.find(
-            (r) => r.email === recipient.email,
-          );
-          if (trackingEntry) {
-            trackingEntry.status = "bounced";
-          }
-        }
-      }
-
-      // Save progress after each batch (in case of server crash)
-      campaign.stats.sent = sent;
-      campaign.stats.delivered = delivered;
-      campaign.stats.bounced = bounced;
-      await campaign.save();
-
-      // Delay between batches (except for the last batch)
-      if (i + batchSize < preparedRecipients.length) {
-        console.log(
-          `⏳ Batch ${Math.floor(i / batchSize) + 1} complete. Waiting ${delayBetweenBatches}ms before next batch...`,
-        );
-        await new Promise((resolve) =>
-          setTimeout(resolve, delayBetweenBatches),
-        );
-      }
-    }
-
-    // Final update - mark campaign complete
-    campaign.status = delivered > 0 ? "sent" : "cancelled";
-    campaign.stats.sent = sent;
-    campaign.stats.delivered = delivered;
-    campaign.stats.bounced = bounced;
-    campaign.sentAt = new Date();
-    campaign.completedAt = new Date();
-    await campaign.save();
-
-    console.log(
-      `📊 Campaign "${campaign.name}" complete: ${delivered} delivered, ${bounced} bounced out of ${sent} total`,
-    );
-
-    if (delivered === 0 && sent > 0) {
-      // All emails failed
-      return res.status(500).json({
-        success: false,
-        message: `Campaign failed: all ${sent} emails bounced. Check email configuration (Brevo API key / SMTP credentials).`,
-        data: {
-          sent,
-          delivered,
-          bounced,
-          errors: errors.slice(0, 5), // Show first 5 errors
-        },
-      });
-    }
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: `Campaign sent successfully! ${delivered} delivered, ${bounced} bounced.`,
+      message: `Campaign dispatch started! Sending to ${recipients.length} recipients in background.`,
       data: {
-        sent,
-        delivered,
-        bounced,
+        campaignId: campaign._id,
+        status: "sending",
+        totalRecipients: recipients.length,
         totalMatchedLeads:
           campaign.recipientType === "leads" || campaign.recipientType === "all"
             ? totalMatchedLeads
@@ -670,7 +564,204 @@ exports.sendCampaign = async (req, res) => {
     console.error("❌ Campaign send error:", error.message);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: error.message || "Failed to send campaign",
+    });
+  }
+};
+
+const unescapeHtmlEntities = (str) => {
+  if (!str) return "";
+  return str
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'");
+};
+
+const formatHtmlEmailDocument = (bodyHtml, subject = "") => {
+  let cleanHtml = unescapeHtmlEntities(bodyHtml || "");
+
+  // Convert plain text line breaks to <p> tags if no HTML elements exist
+  if (!/<[a-z][\s\S]*>/i.test(cleanHtml)) {
+    cleanHtml = cleanHtml
+      .split("\n\n")
+      .map(
+        (paragraph) =>
+          `<p style="margin: 0 0 16px 0; line-height: 1.6; color: #334155; font-size: 15px;">${paragraph.replace(/\n/g, "<br/>")}</p>`,
+      )
+      .join("");
+  }
+
+  // If already a full HTML document, return decoded cleanHtml
+  if (cleanHtml.includes("<html") || cleanHtml.includes("<!DOCTYPE")) {
+    return cleanHtml;
+  }
+
+  // Wrap snippet inside a modern responsive HTML email document template
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>${subject || "Traincape CRM"}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f8fafc; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing:antialiased;">
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color:#f8fafc; padding: 30px 15px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:600px; background-color:#ffffff; border-radius:16px; border:1px solid #e2e8f0; overflow:hidden; box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+          <!-- Header Bar -->
+          <tr>
+            <td style="background-color:#0f172a; padding:24px 32px; text-align:left;">
+              <span style="color:#ffffff; font-size:18px; font-weight:800; letter-spacing:-0.5px;">TRAINCAPE TECHNOLOGY</span>
+            </td>
+          </tr>
+          <!-- Body Content -->
+          <tr>
+            <td style="padding:32px; color:#334155; font-size:15px; line-height:1.6;">
+              ${cleanHtml}
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f1f5f9; padding:20px 32px; border-top:1px solid #e2e8f0; text-align:center; color:#64748b; font-size:12px; line-height:1.5;">
+              <p style="margin:0 0 4px 0; font-weight:600; color:#475569;">Traincape Technology CRM</p>
+              <p style="margin:0;">If you have any questions, reply directly to this email or contact support.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+};
+
+// Async Background Queue Executor (Rate-limited, resilient)
+const executeCampaignDispatch = async (campaignId, preparedRecipients, senderName) => {
+  try {
+    const campaign = await EmailCampaign.findById(campaignId);
+    if (!campaign) return;
+
+    console.log(`🚀 [Background Queue] Starting campaign "${campaign.name}" (${preparedRecipients.length} recipients)...`);
+    let sent = campaign.stats.sent || 0;
+    let delivered = campaign.stats.delivered || 0;
+    let bounced = campaign.stats.bounced || 0;
+
+    const batchSize = 10;
+    const delayBetweenBatches = 1500; // 1.5s delay between batches to respect rate limits
+
+    for (let i = 0; i < preparedRecipients.length; i += batchSize) {
+      const batch = preparedRecipients.slice(i, i + batchSize);
+
+      for (const recipient of batch) {
+        try {
+          const variables = buildTemplateVariables(recipient, { fromName: senderName });
+          const subject = replaceTemplateVariables(campaign.subject, variables);
+          const rawTemplate = replaceTemplateVariables(campaign.template, variables);
+          const formattedHtml = formatHtmlEmailDocument(rawTemplate, subject);
+          const finalHtml = addEmailTracking(
+            formattedHtml,
+            campaign._id.toString(),
+            recipient.email
+          );
+
+          // Clean plain text fallback
+          const plainText = unescapeHtmlEntities(rawTemplate).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
+          const ok = await sendEmail(recipient.email, subject, plainText, finalHtml);
+
+          sent++;
+          if (ok !== false) {
+            delivered++;
+          } else {
+            bounced++;
+          }
+
+          const trackingEntry = campaign.recipientTracking.find((r) => r.email === recipient.email);
+          if (trackingEntry) {
+            trackingEntry.status = ok !== false ? "sent" : "bounced";
+            trackingEntry.sentAt = new Date();
+          }
+        } catch (err) {
+          console.error(`❌ Campaign email failed for ${recipient.email}:`, err.message);
+          sent++;
+          bounced++;
+          const trackingEntry = campaign.recipientTracking.find((r) => r.email === recipient.email);
+          if (trackingEntry) {
+            trackingEntry.status = "bounced";
+          }
+        }
+      }
+
+      campaign.stats.sent = sent;
+      campaign.stats.delivered = delivered;
+      campaign.stats.bounced = bounced;
+      await campaign.save();
+
+      if (i + batchSize < preparedRecipients.length) {
+        await new Promise((resolve) => setTimeout(resolve, delayBetweenBatches));
+      }
+    }
+
+    campaign.status = delivered > 0 ? "sent" : "cancelled";
+    campaign.sentAt = campaign.sentAt || new Date();
+    campaign.completedAt = new Date();
+    await campaign.save();
+
+    console.log(`✅ [Background Queue] Campaign "${campaign.name}" complete! ${delivered} delivered, ${bounced} bounced.`);
+  } catch (error) {
+    console.error("❌ [Background Queue Error]:", error);
+  }
+};
+
+// @desc    Send test preview email for a campaign
+// @route   POST /api/email-campaigns/send-test
+// @access  Private
+exports.sendTestEmail = async (req, res) => {
+  try {
+    const { email, subject, template } = req.body;
+    const recipientEmail = email || req.user?.email;
+
+    if (!recipientEmail || !isValidEmail(recipientEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid test recipient email address",
+      });
+    }
+
+    const testRecipient = {
+      email: recipientEmail,
+      name: req.user?.fullName || "Valued Lead",
+      course: "Full Stack Web Development",
+      country: "India",
+      company: "Traincape Tech",
+      counselor_name: req.user?.fullName || "Traincape Counselor",
+    };
+
+    const variables = buildTemplateVariables(testRecipient, {
+      fromName: req.user?.fullName,
+    });
+
+    const testSubject = replaceTemplateVariables(subject || "Test Campaign Preview", variables);
+    const rawHtml = replaceTemplateVariables(template || "<p>This is a test email preview.</p>", variables);
+    const formattedHtml = formatHtmlEmailDocument(rawHtml, testSubject);
+
+    const plainText = unescapeHtmlEntities(rawHtml).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
+    await sendEmail(recipientEmail, testSubject, plainText, formattedHtml);
+
+    res.status(200).json({
+      success: true,
+      message: `Test preview email sent successfully to ${recipientEmail}!`,
+    });
+  } catch (error) {
+    console.error("❌ Send test email error:", error);
+    res.status(500).json({
+      success: false,
+      message: `Failed to send test email: ${error.message}`,
     });
   }
 };

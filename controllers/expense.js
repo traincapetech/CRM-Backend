@@ -1,6 +1,7 @@
 const Expense = require("../models/Expense");
 const User = require("../models/User");
 const Employee = require("../models/Employee");
+const Branch = require("../models/Branch");
 const { uploadToR2 } = require("../services/r2Service"); // Assuming R2 service exists
 const trackChanges = require("../utils/changeTracker");
 const { notifyAdmins } = require("../services/notificationService");
@@ -12,7 +13,7 @@ const path = require("path");
 // @access  Private
 exports.getExpenses = async (req, res) => {
   try {
-    const { status, month, year, employeeId } = req.query;
+    const { status, month, year, employeeId, branchId } = req.query;
     let query = {};
 
     // Role-based filtering
@@ -28,12 +29,12 @@ exports.getExpenses = async (req, res) => {
       // Employees can only see their own expenses
       query.userId = req.user.id;
     } else if (req.user.role === "Manager" || req.user.role === "IT Manager") {
-      // Managers can see all for now, or we could filter by department later
-      // For now, let's allow them to see filtered by employeeId if provided, or all if not restricted
       if (employeeId) query.employeeId = employeeId;
+      if (branchId) query.branchId = branchId;
     } else {
       // Admin/HR can see all
       if (employeeId) query.employeeId = employeeId;
+      if (branchId) query.branchId = branchId;
     }
 
     // Filter by status
@@ -61,6 +62,7 @@ exports.getExpenses = async (req, res) => {
       .populate("employeeId", "firstName lastName email")
       .populate("userId", "fullName email")
       .populate("approvedBy", "fullName")
+      .populate("branchId", "name code city state")
       .sort({ date: -1 });
 
     res.status(200).json({
@@ -82,7 +84,7 @@ exports.getExpenses = async (req, res) => {
 // @access  Private
 exports.createExpense = async (req, res) => {
   try {
-    const { title, description, amount, date, category } = req.body;
+    const { title, description, amount, date, category, branchId: reqBranchId } = req.body;
 
     // Find employee record for the user
     const employee = await Employee.findOne({ userId: req.user.id });
@@ -91,6 +93,16 @@ exports.createExpense = async (req, res) => {
         success: false,
         message: "Employee profile not found. Please contact HR.",
       });
+    }
+
+    // Determine point-in-time branch snapshot
+    let finalBranchId = reqBranchId;
+    if (!finalBranchId) {
+      finalBranchId = employee.branchId || null;
+    }
+    if (!finalBranchId) {
+      const delhiBranch = await Branch.findOne({ code: "DEL" });
+      if (delhiBranch) finalBranchId = delhiBranch._id;
     }
 
     const { uploadFile } = require("../services/fileStorageService");
@@ -112,6 +124,7 @@ exports.createExpense = async (req, res) => {
     const expense = await Expense.create({
       employeeId: employee._id,
       userId: req.user.id,
+      branchId: finalBranchId,
       title,
       description,
       amount,

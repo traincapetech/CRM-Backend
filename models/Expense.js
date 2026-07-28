@@ -70,11 +70,19 @@ const expenseSchema = new mongoose.Schema(
       ref: "Payroll",
       default: null, // Links to the payroll run where this was reimbursed
     },
+    branchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Branch",
+      default: null,
+    },
   },
   {
     timestamps: true,
   },
 );
+
+expenseSchema.index({ branchId: 1, date: -1 });
+expenseSchema.index({ employeeId: 1, date: -1 });
 
 // Prevent editing expenses that are already paid
 expenseSchema.pre("save", function (next) {
