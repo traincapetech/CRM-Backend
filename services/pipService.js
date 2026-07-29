@@ -316,6 +316,20 @@ class PIPService {
         console.error("⚠️ Failed to send PIP notification email:", emailErr.message);
       }
 
+      // Dispatch in-app real-time notification
+      try {
+        const { createNotification } = require("./notificationService");
+        if (targetUserId) {
+          await createNotification({
+            recipient: targetUserId,
+            type: "PIP_NOTIFIED",
+            message: `⚠️ Action Required: You have been placed under a Performance Improvement Plan (PIP) effective until ${end.toLocaleDateString("en-GB")}. Check your email for details.`,
+          });
+        }
+      } catch (notifErr) {
+        console.error("⚠️ Failed to create in-app PIP notification:", notifErr.message);
+      }
+
       return pip;
     } catch (error) {
       console.error(`❌ Error issuing manual PIP for ${employeeId}:`, error);

@@ -105,6 +105,17 @@ const UserSchema = new mongoose.Schema(
     lockUntil: {
       type: Number,
     },
+    // Performance Improvement Plan (PIP) Status
+    isUnderPIP: {
+      type: Boolean,
+      default: false,
+    },
+    pipStartDate: {
+      type: Date,
+    },
+    pipEndDate: {
+      type: Date,
+    },
   },
   {
     // Use the existing collection

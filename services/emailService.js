@@ -364,18 +364,21 @@ const sendPIPNotification = async (employee, pip, manager) => {
       </div>
     `;
 
-    const mailOptions = {
-      from: `"HR Department - Traincape" <${senderEmail}>`,
+    const subject = `Formal Notice: Performance Improvement Plan (PIP) — ${employee.fullName || employee.name}`;
+    const sent = await sendEmail({
       to: employee.email,
       cc: manager?.email ? [manager.email] : [],
-      subject: `Formal Notice: Performance Improvement Plan (PIP) — ${employee.fullName || employee.name}`,
+      subject,
       html: emailHtml,
-    };
+    });
 
-    const result = await transporter.sendMail(mailOptions);
-    console.log("✅ Formal PIP notification email sent:", result.messageId);
-
-    return { success: true, messageId: result.messageId };
+    if (sent) {
+      console.log("✅ Formal PIP notification email dispatched successfully");
+      return { success: true };
+    } else {
+      console.error("❌ Failed to send PIP notification email via sendEmail provider");
+      return { success: false, message: "Email delivery failed" };
+    }
   } catch (error) {
     console.error("❌ Error sending PIP notification email:", error);
     return { success: false, error: error.message };
