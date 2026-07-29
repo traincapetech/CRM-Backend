@@ -38,6 +38,9 @@ router.post(
   },
 );
 
+const PIPService = require("../services/pipService");
+const PIP = require("../models/PIP");
+
 // @desc    Manually trigger PIP check
 // @route   POST /api/performance/admin/pip-check
 // @access  Private (Admin, HR)
@@ -59,6 +62,101 @@ router.post(
       res.status(500).json({
         success: false,
         message: "Error running PIP check",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Issue manual PIP to an employee
+// @route   POST /api/performance/admin/issue-pip
+// @access  Private (Admin, HR)
+router.post(
+  "/admin/issue-pip",
+  protect,
+  authorize("Admin", "HR"),
+  async (req, res) => {
+    try {
+      const { employeeId, triggerReason, startDate, endDate, expectations } = req.body;
+      if (!employeeId) {
+        return res.status(400).json({
+          success: false,
+          message: "Employee ID is required",
+        });
+      }
+
+      const pip = await PIPService.initiateManualPIP({
+        employeeId,
+        triggerReason,
+        startDate,
+        endDate,
+        expectations,
+        adminId: req.user._id,
+      });
+
+      res.status(201).json({
+        success: true,
+        message: "PIP issued successfully and notification email dispatched",
+        data: pip,
+      });
+    } catch (error) {
+      console.error("Error issuing PIP:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error issuing PIP",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Get PIP history for an employee
+// @route   GET /api/performance/admin/pip/:employeeId
+// @access  Private (Admin, HR, Manager)
+router.get(
+  "/admin/pip/:employeeId",
+  protect,
+  async (req, res) => {
+    try {
+      const { employeeId } = req.params;
+      const Employee = require("../models/Employee");
+      const User = require("../models/User");
+
+      let employeeDoc = await Employee.findById(employeeId);
+      let userDoc = null;
+      if (employeeDoc && employeeDoc.userId) {
+        userDoc = await User.findById(employeeDoc.userId);
+      } else if (!employeeDoc) {
+        userDoc = await User.findById(employeeId);
+        if (userDoc) {
+          employeeDoc = await Employee.findOne({
+            $or: [{ userId: userDoc._id }, { email: userDoc.email }],
+          });
+        }
+      }
+
+      const searchIds = [employeeId];
+      if (employeeDoc?._id) searchIds.push(employeeDoc._id);
+      if (userDoc?._id) searchIds.push(userDoc._id);
+
+      const pips = await PIP.find({ employeeId: { $in: searchIds } })
+        .populate("assignedManager", "fullName email avatar")
+        .sort({ createdAt: -1 });
+
+      const activePIP = pips.find((p) => p.status === "active") || null;
+
+      res.status(200).json({
+        success: true,
+        data: {
+          activePIP,
+          history: pips,
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching employee PIP details:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error fetching PIP details",
         error: error.message,
       });
     }

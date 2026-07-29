@@ -52,6 +52,9 @@ const PIPSchema = new mongoose.Schema(
       default: 30,
     },
 
+    // Performance expectations list
+    expectations: [String],
+
     // Performance improvement goals
     goals: [
       {

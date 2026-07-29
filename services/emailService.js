@@ -275,67 +275,105 @@ const sendPIPNotification = async (employee, pip, manager) => {
       return { success: false, message: "Employee email not available" };
     }
 
-    // Use manager's email as sender if available, otherwise use default
     const senderEmail =
       manager?.email ||
       process.env.HR_EMAIL ||
       process.env.ADMIN_EMAIL ||
       process.env.EMAIL_USER;
 
-    if (!senderEmail) {
-      console.warn(
-        "⚠️ No sender email configure for PIP notification. Using noreply.",
-      );
-    }
-
     const transporter = createTransporter(
       senderEmail || "noreply@traincapetech.in",
     );
 
-    const endDate = new Date(pip.endDate).toLocaleDateString();
+    const formatDate = (dateObj) => {
+      if (!dateObj) return "";
+      const d = new Date(dateObj);
+      return d.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    };
+
+    const startDateFormatted = formatDate(pip.startDate || new Date());
+    const endDateFormatted = formatDate(pip.endDate);
+
+    const expectationsList = Array.isArray(pip.expectations) && pip.expectations.length > 0
+      ? pip.expectations
+      : [
+          "Achieve the assigned monthly sales targets.",
+          "Improve lead follow-ups and customer engagement.",
+          "Maintain regular updates in the CRM.",
+          "Attend all scheduled review meetings with your reporting manager.",
+          "Demonstrate consistent effort, professionalism, and accountability in day-to-day activities.",
+        ];
 
     const emailHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
-        <h2 style="color: #dc2626; text-align: center;">Performance Improvement Plan Initiated</h2>
+      <div style="font-family: Arial, Helvetica, sans-serif; max-width: 650px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b; line-height: 1.6;">
+        <div style="text-align: center; border-bottom: 2px solid #ef4444; padding-bottom: 16px; margin-bottom: 24px;">
+          <h2 style="color: #dc2626; margin: 0; font-size: 20px; text-transform: uppercase; letter-spacing: 1px;">Official Notice: Performance Improvement Plan (PIP)</h2>
+          <p style="margin: 4px 0 0 0; color: #64748b; font-size: 13px;">Traincape Technology Pvt Ltd — Human Resources</p>
+        </div>
         
-        <p>Dear ${employee.fullName},</p>
+        <p style="font-size: 15px;">Dear <strong>${employee.fullName || employee.name}</strong>,</p>
         
-        <p>This email is to inform you that a <strong>Performance Improvement Plan (PIP)</strong> has been initiated for you, effective immediately.</p>
+        <p style="font-size: 14px;">I hope you are doing well.</p>
         
-        <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 15px; margin: 20px 0;">
-          <p style="margin: 0; color: #991b1b;"><strong>Reason:</strong> ${pip.triggerReason}</p>
-          <p style="margin: 10px 0 0 0; color: #991b1b;"><strong>Duration:</strong> ${pip.duration} days (Ends: ${endDate})</p>
+        <p style="font-size: 14px;">This email is to formally inform you that, after reviewing your sales performance over the recent evaluation period, we have observed performance metrics below the expected standards for your role.</p>
+        
+        <p style="font-size: 14px;">To help you improve and get back on track, you are being placed under a <strong>Performance Improvement Plan (PIP)</strong> effective from <strong>${startDateFormatted}</strong>.</p>
+        
+        <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 16px; margin: 20px 0; border-radius: 4px;">
+          <h4 style="margin: 0 0 8px 0; color: #991b1b; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Reason for PIP</h4>
+          <p style="margin: 0; color: #7f1d1d; font-size: 13.5px; font-weight: 500;">
+            ${pip.triggerReason || "Sales performance has been below expected targets. Improvement is required to meet the responsibilities and expectations associated with your position."}
+          </p>
         </div>
 
-        <p>This plan is designed to help you get back on track. Your manager will work with you to set specific goals and schedule weekly reviews.</p>
+        <div style="margin: 20px 0;">
+          <h4 style="margin: 0 0 10px 0; color: #1e293b; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Performance Expectations</h4>
+          <p style="font-size: 13.5px; margin-bottom: 8px;">During the PIP period, you are expected to:</p>
+          <ul style="margin: 0; padding-left: 20px; font-size: 13.5px; color: #334155;">
+            ${expectationsList.map(item => `<li style="margin-bottom: 6px;">${item}</li>`).join("")}
+          </ul>
+        </div>
         
-        <p><strong>Next Steps:</strong></p>
-        <ul>
-          <li>Review the PIP details in your dashboard.</li>
-          <li>Schedule a meeting with your manager (${manager?.fullName || "Manager"}) to discuss goals.</li>
-          <li>Commit to the weekly review process.</li>
-        </ul>
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 16px; margin: 20px 0; border-radius: 8px;">
+          <h4 style="margin: 0 0 6px 0; color: #0f172a; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">PIP Duration</h4>
+          <p style="margin: 0; color: #334155; font-size: 13.5px;">
+            The Performance Improvement Plan will remain in effect for <strong>${pip.duration || 30} days</strong> (from <strong>${startDateFormatted}</strong> to <strong>${endDateFormatted}</strong>). Your performance will be reviewed periodically during this period.
+          </p>
+        </div>
         
-        <p>We believe in your potential and want to see you succeed. Please treat this as an opportunity to focus on your professional growth.</p>
+        <p style="font-size: 13.5px; color: #475569;">
+          Please note that the purpose of this PIP is to provide you with an opportunity to improve your performance. However, failure to demonstrate satisfactory improvement during the PIP period may result in further disciplinary action, which could include reassignment of responsibilities or termination of employment, in accordance with company policies.
+        </p>
         
-        <hr style="margin: 20px 0;">
-        <p style="font-size: 12px; color: #666;">
-          This is an automated message from the Performance Management System.<br>
-          PIP ID: ${pip._id}
+        <p style="font-size: 13.5px; color: #475569;">
+          We believe in your potential and encourage you to take this opportunity seriously. Our management team will support you throughout this process to help you achieve the expected performance standards.
+        </p>
+        
+        <p style="font-size: 14px; font-weight: bold; color: #1e293b; margin-top: 24px;">Kindly acknowledge receipt of this email.</p>
+        
+        <p style="font-size: 13.5px; margin-top: 16px;">We wish you success and look forward to seeing significant improvement.</p>
+        
+        <hr style="margin: 28px 0 16px 0; border: none; border-top: 1px solid #e2e8f0;">
+        <p style="font-size: 12px; color: #94a3b8; margin: 0; text-align: center;">
+          Confidential Communication • Traincape Technology Pvt Ltd • PIP Reference ID: ${pip._id}
         </p>
       </div>
     `;
 
     const mailOptions = {
-      from: `"Performance Management" <${senderEmail}>`,
+      from: `"HR Department - Traincape" <${senderEmail}>`,
       to: employee.email,
-      cc: manager?.email, // CC the manager
-      subject: `Action Required: Performance Improvement Plan Initiated`,
+      cc: manager?.email ? [manager.email] : [],
+      subject: `Formal Notice: Performance Improvement Plan (PIP) — ${employee.fullName || employee.name}`,
       html: emailHtml,
     };
 
     const result = await transporter.sendMail(mailOptions);
-    console.log("✅ PIP notification email sent:", result.messageId);
+    console.log("✅ Formal PIP notification email sent:", result.messageId);
 
     return { success: true, messageId: result.messageId };
   } catch (error) {

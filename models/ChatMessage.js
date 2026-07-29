@@ -116,7 +116,9 @@ const chatMessageSchema = new mongoose.Schema(
 
 // Index for efficient querying
 chatMessageSchema.index({ chatId: 1, timestamp: 1 });
+chatMessageSchema.index({ chatId: 1, timestamp: -1 });
 chatMessageSchema.index({ groupId: 1, timestamp: 1 });
+chatMessageSchema.index({ groupId: 1, timestamp: -1 });
 chatMessageSchema.index({ senderId: 1, recipientId: 1 });
 
 module.exports = mongoose.model("ChatMessage", chatMessageSchema);

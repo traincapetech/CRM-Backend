@@ -2,6 +2,7 @@ const PIP = require("../models/PIP");
 const PerformanceSummary = require("../models/PerformanceSummary");
 const DailyPerformanceRecord = require("../models/DailyPerformanceRecord");
 const User = require("../models/User");
+const Employee = require("../models/Employee");
 
 /**
  * PIP (Performance Improvement Plan) Service
@@ -182,6 +183,142 @@ class PIPService {
       return pip;
     } catch (error) {
       console.error(`❌ Error triggering PIP for ${employeeId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Manually issue a PIP by Admin / HR
+   * @param {object} params - { employeeId, triggerReason, startDate, endDate, expectations, adminId }
+   */
+  static async initiateManualPIP({
+    employeeId,
+    triggerReason,
+    startDate,
+    endDate,
+    expectations,
+    adminId,
+  }) {
+    try {
+      // Find by Employee model or User model
+      let employeeDoc = await Employee.findById(employeeId);
+      let userDoc = null;
+
+      if (employeeDoc) {
+        if (employeeDoc.userId) {
+          userDoc = await User.findById(employeeDoc.userId);
+        }
+        if (!userDoc && employeeDoc.email) {
+          userDoc = await User.findOne({ email: employeeDoc.email });
+        }
+      } else {
+        userDoc = await User.findById(employeeId);
+        if (userDoc) {
+          employeeDoc = await Employee.findOne({
+            $or: [{ userId: userDoc._id }, { email: userDoc.email }],
+          });
+        }
+      }
+
+      if (!employeeDoc && !userDoc) {
+        throw new Error("Employee not found");
+      }
+
+      const targetEmail = employeeDoc?.email || userDoc?.email;
+      const targetName = employeeDoc?.fullName || userDoc?.fullName || userDoc?.name;
+      const targetUserId = userDoc?._id || employeeDoc?.userId || employeeDoc?._id;
+      const targetEmployeeId = employeeDoc?._id || targetUserId;
+
+      const start = startDate ? new Date(startDate) : new Date();
+      const end = endDate ? new Date(endDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+      // Calculate duration in days
+      const diffTime = Math.abs(end - start);
+      const duration = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 30;
+
+      // Close any active PIP for this employee
+      await PIP.updateMany(
+        { $or: [{ employeeId: targetEmployeeId }, { employeeId: targetUserId }], status: "active" },
+        { status: "cancelled", "outcome.finalNotes": "Replaced by new manual PIP" }
+      );
+
+      // Find manager
+      let managerId = employeeDoc?.reportingManager || userDoc?.managerId || adminId;
+      if (!managerId) {
+        const manager = await User.findOne({
+          role: { $in: ["Manager", "HR", "Admin"] },
+          active: true,
+        });
+        managerId = manager?._id;
+      }
+
+      // Create new PIP document
+      const pip = await PIP.create({
+        employeeId: targetEmployeeId,
+        status: "active",
+        triggerReason: triggerReason || "Sales performance has been below expected targets.",
+        isAutomatic: false,
+        startDate: start,
+        endDate: end,
+        duration,
+        expectations: Array.isArray(expectations) ? expectations : [],
+        assignedManager: managerId,
+        hrNotes: `Issued manually by Admin/HR (${adminId})`,
+      });
+
+      // Update Employee record
+      if (employeeDoc) {
+        await Employee.findByIdAndUpdate(employeeDoc._id, {
+          status: "PIP",
+          isUnderPIP: true,
+          pipStartDate: start,
+          pipEndDate: end,
+        });
+      }
+
+      // Update User record
+      if (userDoc) {
+        await User.findByIdAndUpdate(userDoc._id, {
+          isUnderPIP: true,
+          pipStartDate: start,
+          pipEndDate: end,
+        });
+      }
+
+      // Update PerformanceSummary
+      await PerformanceSummary.findOneAndUpdate(
+        { $or: [{ employeeId: targetEmployeeId }, { employeeId: targetUserId }] },
+        {
+          isPIP: true,
+          pipDetails: {
+            startDate: start,
+            endDate: end,
+            pipId: pip._id,
+            triggerReason: pip.triggerReason,
+          },
+        },
+        { upsert: true }
+      );
+
+      console.log(`🚨 MANUAL PIP ISSUED for ${targetName} (${duration} days)`);
+
+      // Dispatch formal notification email
+      const EmailService = require("./emailService");
+      try {
+        const managerUser = await User.findById(managerId);
+        const recipientObj = {
+          email: targetEmail,
+          fullName: targetName,
+          name: targetName,
+        };
+        await EmailService.sendPIPNotification(recipientObj, pip, managerUser);
+      } catch (emailErr) {
+        console.error("⚠️ Failed to send PIP notification email:", emailErr.message);
+      }
+
+      return pip;
+    } catch (error) {
+      console.error(`❌ Error issuing manual PIP for ${employeeId}:`, error);
       throw error;
     }
   }

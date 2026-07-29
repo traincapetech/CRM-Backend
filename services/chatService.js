@@ -116,7 +116,8 @@ class ChatService {
         })
         .sort({ timestamp: -1 }) // Get newest messages first
         .limit(limit * 1)
-        .skip((page - 1) * limit);
+        .skip((page - 1) * limit)
+        .lean();
 
       // Reverse to chronological order for the frontend
       const reversedMessages = messages.reverse();
