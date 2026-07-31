@@ -58,20 +58,29 @@ exports.createMeeting = async (req, res) => {
           }),
         });
         const dailyData = await dailyRes.json();
-        if (dailyData && dailyData.url) {
+        if (dailyRes.ok && dailyData && dailyData.url) {
           meetingUrl = dailyData.url;
           console.log("✅ Daily.co room created successfully via API:", dailyData.url);
-        } else if (dailyData && dailyData.name) {
+        } else if (dailyRes.ok && dailyData && dailyData.name) {
           meetingUrl = `https://${dailyDomain}.daily.co/${dailyData.name}`;
           console.log("✅ Daily.co room created successfully:", meetingUrl);
         } else {
-          console.error("⚠️ Daily.co API response error:", dailyData);
+          console.error(`⚠️ Daily.co API response error (status ${dailyRes.status}):`, dailyData);
+          if (process.env.DAILY_DEFAULT_ROOM_URL) {
+            meetingUrl = process.env.DAILY_DEFAULT_ROOM_URL;
+          }
         }
       } catch (dailyErr) {
         console.error("⚠️ Daily.co API fetch error:", dailyErr.message);
+        if (process.env.DAILY_DEFAULT_ROOM_URL) {
+          meetingUrl = process.env.DAILY_DEFAULT_ROOM_URL;
+        }
       }
     } else {
-      console.warn("⚠️ DAILY_API_KEY is not set in environment variables! Using unverified room URL fallback.");
+      console.warn("⚠️ DAILY_API_KEY is not set in environment variables!");
+      if (process.env.DAILY_DEFAULT_ROOM_URL) {
+        meetingUrl = process.env.DAILY_DEFAULT_ROOM_URL;
+      }
     }
 
     const validParticipants = invitedParticipants.filter(id => id && mongoose.Types.ObjectId.isValid(id));
