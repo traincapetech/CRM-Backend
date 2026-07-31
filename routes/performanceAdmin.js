@@ -110,6 +110,45 @@ router.post(
   },
 );
 
+// @desc    Get current logged in employee's active PIP
+// @route   GET /api/performance/my-pip
+// @access  Private
+router.get(
+  "/my-pip",
+  protect,
+  async (req, res) => {
+    try {
+      const Employee = require("../models/Employee");
+      const User = require("../models/User");
+
+      const searchIds = [req.user._id];
+      const employeeDoc = await Employee.findOne({
+        $or: [{ userId: req.user._id }, { email: req.user.email }],
+      });
+      if (employeeDoc?._id) searchIds.push(employeeDoc._id);
+
+      const activePIP = await PIP.findOne({
+        employeeId: { $in: searchIds },
+        status: "active",
+      })
+        .populate("assignedManager", "fullName email avatar")
+        .sort({ createdAt: -1 });
+
+      res.status(200).json({
+        success: true,
+        data: activePIP || null,
+      });
+    } catch (error) {
+      console.error("Error fetching my PIP details:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error fetching PIP details",
+        error: error.message,
+      });
+    }
+  },
+);
+
 // @desc    Get PIP history for an employee
 // @route   GET /api/performance/admin/pip/:employeeId
 // @access  Private (Admin, HR, Manager)

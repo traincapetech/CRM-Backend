@@ -32,38 +32,46 @@ exports.createMeeting = async (req, res) => {
     const roomSlug = slugify(title || "CRM Meeting");
     const roomId = `${roomSlug}-${timestamp}`;
     const dailyDomain = process.env.DAILY_DOMAIN || "second-police";
+    const apiKey = process.env.DAILY_API_KEY;
     let meetingUrl = `https://${dailyDomain}.daily.co/${roomId}`;
 
     // Dynamically create room via Daily.co REST API
-    if (process.env.DAILY_API_KEY) {
+    if (apiKey) {
       try {
+        console.log(`🚀 [CREATE MEETING] Requesting Daily.co room for: ${roomId}`);
         const dailyRes = await fetch("https://api.daily.co/v1/rooms", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.DAILY_API_KEY}`,
+            Authorization: `Bearer ${apiKey}`,
           },
           body: JSON.stringify({
             name: roomId,
             properties: {
               enable_chat: true,
               enable_screenshare: true,
-              enable_breakout_rooms: true,
               start_video_off: false,
               start_audio_off: false,
+              // Expire in 24 hours (86400 seconds)
+              exp: Math.floor(Date.now() / 1000) + 86400,
             },
           }),
         });
         const dailyData = await dailyRes.json();
         if (dailyData && dailyData.url) {
           meetingUrl = dailyData.url;
-          console.log("✅ Daily.co room created successfully:", dailyData.url);
+          console.log("✅ Daily.co room created successfully via API:", dailyData.url);
         } else if (dailyData && dailyData.name) {
           meetingUrl = `https://${dailyDomain}.daily.co/${dailyData.name}`;
+          console.log("✅ Daily.co room created successfully:", meetingUrl);
+        } else {
+          console.error("⚠️ Daily.co API response error:", dailyData);
         }
       } catch (dailyErr) {
-        console.error("⚠️ Daily.co API error (falling back to direct Daily URL):", dailyErr.message);
+        console.error("⚠️ Daily.co API fetch error:", dailyErr.message);
       }
+    } else {
+      console.warn("⚠️ DAILY_API_KEY is not set in environment variables! Using unverified room URL fallback.");
     }
 
     const validParticipants = invitedParticipants.filter(id => id && mongoose.Types.ObjectId.isValid(id));

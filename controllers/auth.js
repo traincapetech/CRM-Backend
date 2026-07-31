@@ -535,12 +535,21 @@ exports.getMe = async (req, res) => {
   const user = await User.findById(req.user.id);
   const permissionPayload = await getUserPermissions(user);
 
+  let activePIP = null;
+  try {
+    const PIP = require("../models/PIP");
+    activePIP = await PIP.findOne({ employeeId: user._id, status: "active" }).sort({ createdAt: -1 });
+  } catch (pipErr) {
+    console.error("Error fetching active PIP for getMe:", pipErr.message);
+  }
+
   res.status(200).json({
     success: true,
     data: {
       ...user.toObject(),
       roles: permissionPayload.roleNames,
       permissions: permissionPayload.permissions,
+      activePIP: activePIP || null,
     },
   });
 };
