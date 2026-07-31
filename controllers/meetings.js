@@ -27,7 +27,9 @@ exports.createMeeting = async (req, res) => {
       .trim()
       .replace(/\s+/g, '-')     // Replace spaces with -
       .replace(/[^\w\-]+/g, '') // Remove all non-word chars
-      .replace(/\-\-+/g, '-');  // Replace multiple - with single -
+      .replace(/\-\-+/g, '-')   // Replace multiple - with single -
+      .replace(/^-+|-+$/g, '')  // Remove leading and trailing hyphens
+      || "crm-meeting";
 
     const roomSlug = slugify(title || "CRM Meeting");
     const roomId = `${roomSlug}-${timestamp}`;
