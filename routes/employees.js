@@ -25,7 +25,8 @@ const {
   getEmploymentHistory,
   getEmployeeTimeline,
   getEmployeeAuditLogs,
-  get360Profile
+  get360Profile,
+  getNextOfficialId
 } = require('../controllers/employees');
 const { fixITInterns } = require('../controllers/fixEmployees');
 
@@ -75,6 +76,9 @@ router.get('/:id/employment-history', protect, getEmploymentHistory);
 router.get('/:id/timeline', protect, getEmployeeTimeline);
 router.get('/:id/audit-logs', protect, getEmployeeAuditLogs);
 router.get('/:id/360', protect, get360Profile);
+
+// Get next auto-incremented official ID
+router.get('/next-official-id', protect, getNextOfficialId);
 
 // Employee routes - accessible to all authenticated users
 router.route('/')

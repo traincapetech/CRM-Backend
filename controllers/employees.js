@@ -526,6 +526,13 @@ exports.createEmployee = async (req, res) => {
       delete employeeData.biometricCode;
     }
 
+    // Safety check for officialId - if empty, delete to respect sparse index
+    if (!employeeData.officialId || typeof employeeData.officialId !== "string" || employeeData.officialId.trim() === "") {
+      delete employeeData.officialId;
+    } else {
+      employeeData.officialId = employeeData.officialId.trim();
+    }
+
     // Ensure fullName and email are set from user if creating own profile (fallback)
     if (employeeData.userId === req.user.id) {
       employeeData.fullName = employeeData.fullName || req.user.fullName;
@@ -2201,5 +2208,18 @@ exports.get360Profile = async (req, res) => {
   } catch (err) {
     console.error("Error fetching Employee 360 profile:", err);
     res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+// @desc    Get next auto-incremented official employee ID
+// @route   GET /api/employees/next-official-id
+// @access  Private
+exports.getNextOfficialId = async (req, res) => {
+  try {
+    const nextId = await Employee.generateNextOfficialId();
+    return res.status(200).json({ success: true, officialId: nextId });
+  } catch (error) {
+    console.error("Error generating next officialId:", error);
+    return res.status(500).json({ success: false, message: "Error generating officialId" });
   }
 };

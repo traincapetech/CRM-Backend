@@ -195,6 +195,14 @@ const employeeSchema = new mongoose.Schema(
       ref: "User",
     },
 
+    // Official Employee ID (e.g. TC-001, auto-incremented)
+    officialId: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+
     // Biometric device mapping (empCode)
     biometricCode: {
       type: String,
@@ -380,7 +388,61 @@ employeeSchema.pre(/^find/, function (next) {
   next();
 });
 
-// Ensure biometric codes are unique when provided
+// Ensure biometric & official IDs are unique when provided
 employeeSchema.index({ biometricCode: 1 }, { unique: true, sparse: true });
+employeeSchema.index({ officialId: 1 }, { unique: true, sparse: true });
+
+// Auto-increment Official ID generator
+employeeSchema.statics.generateNextOfficialId = async function () {
+  const employees = await this.find({ officialId: { $exists: true, $ne: "" } }).select("officialId");
+
+  let maxNum = 0;
+  let prefix = "TC-";
+  let padLength = 3;
+
+  for (const emp of employees) {
+    if (!emp.officialId) continue;
+    const match = emp.officialId.trim().match(/^(.*?)(?:-(\d+)|\b(\d+))$/);
+    if (match) {
+      const pfx = match[1];
+      const numStr = match[2] || match[3];
+      const num = parseInt(numStr, 10);
+      if (!isNaN(num) && num > maxNum) {
+        maxNum = num;
+        if (pfx) prefix = pfx.endsWith("-") ? pfx : `${pfx}-`;
+        padLength = Math.max(padLength, numStr.length);
+      }
+    }
+  }
+
+  if (maxNum === 0) {
+    const totalCount = await this.countDocuments();
+    maxNum = totalCount;
+  }
+
+  const nextNum = maxNum + 1;
+  const formattedNum = String(nextNum).padStart(padLength, "0");
+  return `${prefix}${formattedNum}`;
+};
+
+// Self-healing startup migration to auto-assign Official IDs
+employeeSchema.statics.autoAssignMissingOfficialIds = async function () {
+  try {
+    const unassigned = await this.find({
+      $or: [{ officialId: { $exists: false } }, { officialId: "" }, { officialId: null }]
+    }).sort({ createdAt: 1 });
+
+    if (unassigned.length === 0) return;
+
+    console.log(`🆔 Auto-assigning Official IDs to ${unassigned.length} employee record(s)...`);
+    for (const emp of unassigned) {
+      const nextId = await this.generateNextOfficialId();
+      await this.updateOne({ _id: emp._id }, { $set: { officialId: nextId } });
+      console.log(`✅ Assigned Official ID ${nextId} to ${emp.fullName}`);
+    }
+  } catch (err) {
+    console.error("Error auto-assigning Official IDs:", err.message);
+  }
+};
 
 module.exports = mongoose.model("Employee", employeeSchema);
