@@ -5,6 +5,58 @@ const Prospect = require("../models/Prospect");
 const User = require("../models/User");
 const notificationService = require("../services/notificationService");
 
+const ensureDailyRoomExists = async (roomId) => {
+  const apiKey = process.env.DAILY_API_KEY;
+  const dailyDomain = process.env.DAILY_DOMAIN || "second-police";
+  if (!roomId) return `https://${dailyDomain}.daily.co/crm-meeting`;
+
+  if (!apiKey) {
+    console.warn("⚠️ [DAILY.CO] DAILY_API_KEY is missing in environment variables!");
+    return `https://${dailyDomain}.daily.co/${roomId}`;
+  }
+
+  try {
+    // 1. Check if room already exists on Daily.co cloud
+    const checkRes = await fetch(`https://api.daily.co/v1/rooms/${roomId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData && checkData.url) {
+        return checkData.url;
+      }
+    }
+
+    // 2. If room does not exist, provision it on Daily.co cloud
+    console.log(`🚀 [DAILY.CO] Provisioning room: ${roomId}`);
+    const createRes = await fetch("https://api.daily.co/v1/rooms", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        name: roomId,
+        properties: {
+          enable_chat: true,
+          exp: Math.floor(Date.now() / 1000) + 86400,
+        },
+      }),
+    });
+    const createData = await createRes.json();
+    if (createRes.ok && createData && createData.url) {
+      console.log(`✅ [DAILY.CO] Room provisioned successfully: ${createData.url}`);
+      return createData.url;
+    } else {
+      console.error(`⚠️ [DAILY.CO] Room provisioning response error:`, createData);
+    }
+  } catch (err) {
+    console.error(`⚠️ [DAILY.CO] Room provisioning fetch error:`, err.message);
+  }
+
+  return `https://${dailyDomain}.daily.co/${roomId}`;
+};
+
 // @desc    Create new meeting
 // @route   POST /api/meetings/create
 // @access  Private
@@ -33,57 +85,9 @@ exports.createMeeting = async (req, res) => {
 
     const roomSlug = slugify(title || "CRM Meeting");
     const roomId = `${roomSlug}-${timestamp}`;
-    const dailyDomain = process.env.DAILY_DOMAIN || "second-police";
-    const apiKey = process.env.DAILY_API_KEY;
-    let meetingUrl = `https://${dailyDomain}.daily.co/${roomId}`;
-
-    // Dynamically create room via Daily.co REST API
-    if (apiKey) {
-      try {
-        console.log(`🚀 [CREATE MEETING] Requesting Daily.co room for: ${roomId}`);
-        const dailyRes = await fetch("https://api.daily.co/v1/rooms", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            name: roomId,
-            properties: {
-              enable_chat: true,
-              enable_screenshare: true,
-              start_video_off: false,
-              start_audio_off: false,
-              // Expire in 24 hours (86400 seconds)
-              exp: Math.floor(Date.now() / 1000) + 86400,
-            },
-          }),
-        });
-        const dailyData = await dailyRes.json();
-        if (dailyRes.ok && dailyData && dailyData.url) {
-          meetingUrl = dailyData.url;
-          console.log("✅ Daily.co room created successfully via API:", dailyData.url);
-        } else if (dailyRes.ok && dailyData && dailyData.name) {
-          meetingUrl = `https://${dailyDomain}.daily.co/${dailyData.name}`;
-          console.log("✅ Daily.co room created successfully:", meetingUrl);
-        } else {
-          console.error(`⚠️ Daily.co API response error (status ${dailyRes.status}):`, dailyData);
-          if (process.env.DAILY_DEFAULT_ROOM_URL) {
-            meetingUrl = process.env.DAILY_DEFAULT_ROOM_URL;
-          }
-        }
-      } catch (dailyErr) {
-        console.error("⚠️ Daily.co API fetch error:", dailyErr.message);
-        if (process.env.DAILY_DEFAULT_ROOM_URL) {
-          meetingUrl = process.env.DAILY_DEFAULT_ROOM_URL;
-        }
-      }
-    } else {
-      console.warn("⚠️ DAILY_API_KEY is not set in environment variables!");
-      if (process.env.DAILY_DEFAULT_ROOM_URL) {
-        meetingUrl = process.env.DAILY_DEFAULT_ROOM_URL;
-      }
-    }
+    
+    // Auto-provision room on Daily.co
+    const meetingUrl = await ensureDailyRoomExists(roomId);
 
     const validParticipants = invitedParticipants.filter(id => id && mongoose.Types.ObjectId.isValid(id));
     if (validParticipants.length !== invitedParticipants.length) {
@@ -220,6 +224,15 @@ exports.getMeeting = async (req, res) => {
         success: false,
         message: "Meeting not found",
       });
+    }
+
+    // Auto-provision Daily.co room if it was created offline or missed
+    if (meeting.roomId) {
+      const liveUrl = await ensureDailyRoomExists(meeting.roomId);
+      if (meeting.meetingUrl !== liveUrl) {
+        meeting.meetingUrl = liveUrl;
+        await meeting.save();
+      }
     }
 
     res.status(200).json({
