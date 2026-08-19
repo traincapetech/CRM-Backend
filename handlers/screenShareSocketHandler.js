@@ -1,6 +1,7 @@
 /**
- * Screen Share Socket Handler for Real-Time Shift Screen Monitoring
- * Handles WebRTC P2P signaling between Employees (Publishers) and Supervisors (Subscribers)
+ * Screen Share Socket Handler - MediaRecorder + Socket.IO Relay
+ * No WebRTC P2P - video chunks are relayed through the server.
+ * This works across all networks without STUN/TURN servers.
  */
 
 // Active streams registry: { [userId]: { userId, userName, branchName, role, socketId, startedAt } }
@@ -8,7 +9,7 @@ const activeScreenStreams = new Map();
 
 module.exports = function screenShareSocketHandler(io, socket) {
   // 1. Supervisor joins the monitoring room
-  socket.on("join_screen_monitors", (data) => {
+  socket.on("join_screen_monitors", () => {
     socket.join("supervisors_room");
     console.log(`📺 [SCREEN MONITOR] Supervisor joined monitors room: ${socket.id}`);
 
@@ -17,7 +18,7 @@ module.exports = function screenShareSocketHandler(io, socket) {
     socket.emit("active_screen_streams_list", streamsList);
   });
 
-  // 2. Employee starts sharing their screen / updates registration
+  // 2. Employee registers as screen publisher
   socket.on("register_screen_publisher", (employeeInfo) => {
     if (!employeeInfo || !employeeInfo.userId) return;
 
@@ -35,29 +36,19 @@ module.exports = function screenShareSocketHandler(io, socket) {
     socket.userId = uId;
     socket.isPublisher = true;
 
-    console.log(`📡 [SCREEN STREAM] Registered screen publisher: ${streamData.userName} (${uId}) socket: ${socket.id}`);
-
-    // Notify all supervisors of the new or reconnected active screen stream
+    console.log(`📡 [SCREEN STREAM] Registered: ${streamData.userName} (${uId})`);
     io.to("supervisors_room").emit("screen_stream_started", streamData);
   });
 
-  // 3. WebRTC Signaling (Offer, Answer, ICE Candidate) between Supervisor & Employee
-  socket.on("webrtc_signal", (data) => {
-    // data: { targetSocketId, targetUserId, signal, senderId }
-    if (!data) return;
-
-    let destSocketId = data.targetSocketId;
-    if (data.targetUserId && activeScreenStreams.has(data.targetUserId.toString())) {
-      destSocketId = activeScreenStreams.get(data.targetUserId.toString()).socketId;
-    }
-
-    if (destSocketId) {
-      io.to(destSocketId).emit("webrtc_signal", {
-        senderSocketId: socket.id,
-        senderId: data.senderId,
-        signal: data.signal,
-      });
-    }
+  // 3. Employee sends a video chunk - relay to all supervisors
+  socket.on("screen_chunk", (data) => {
+    if (!data || !data.userId || !data.chunk) return;
+    // Relay the chunk to all supervisors watching this stream
+    io.to("supervisors_room").emit("screen_chunk", {
+      userId: data.userId,
+      chunk: data.chunk,
+      mimeType: data.mimeType || "video/webm;codecs=vp8",
+    });
   });
 
   // 4. Employee stops sharing screen
@@ -65,16 +56,15 @@ module.exports = function screenShareSocketHandler(io, socket) {
     const id = (userId || socket.userId)?.toString();
     if (id && activeScreenStreams.has(id)) {
       activeScreenStreams.delete(id);
-      console.log(`🛑 [SCREEN STREAM] Stopped screen publisher: ${id}`);
+      console.log(`🛑 [SCREEN STREAM] Stopped: ${id}`);
       io.to("supervisors_room").emit("screen_stream_stopped", { userId: id });
     }
   });
 
-  // 5. Handle Disconnecting
+  // 5. Handle Disconnect
   socket.on("disconnect", () => {
     if (socket.isPublisher && socket.userId) {
       const uId = socket.userId.toString();
-      // Delay removal slightly in case of immediate socket reconnection
       setTimeout(() => {
         const currentStream = activeScreenStreams.get(uId);
         if (currentStream && currentStream.socketId === socket.id) {
