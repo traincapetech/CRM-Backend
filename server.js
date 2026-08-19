@@ -408,6 +408,9 @@ io.on("connection", (socket) => {
   // Initialize modular handlers
   chatSocketHandler(io, socket);
   ticketSocketHandler(io, socket);
+  
+  const screenShareSocketHandler = require("./handlers/screenShareSocketHandler");
+  screenShareSocketHandler(io, socket);
 });
 
 // Reminder service
