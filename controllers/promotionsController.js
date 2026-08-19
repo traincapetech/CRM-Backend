@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const PromotionRequest = require("../models/PromotionRequest");
 const Employee = require("../models/Employee");
 const User = require("../models/User");
@@ -38,6 +39,34 @@ exports.createPromotionRequest = async (req, res) => {
       return res.status(404).json({ success: false, message: "Employee not found" });
     }
 
+    // Resolve proposedRole (handle ObjectId or string name)
+    let resolvedRole = proposedRole;
+    if (resolvedRole && !mongoose.Types.ObjectId.isValid(resolvedRole)) {
+      let roleDoc = await EmployeeRole.findOne({ name: { $regex: new RegExp(`^${resolvedRole}$`, "i") } });
+      if (!roleDoc) {
+        roleDoc = await EmployeeRole.create({ name: resolvedRole });
+      }
+      resolvedRole = roleDoc._id;
+    } else if (!resolvedRole) {
+      resolvedRole = employee.role?._id || employee.role;
+    }
+
+    // Resolve proposedDepartment (handle ObjectId or string name)
+    let resolvedDept = proposedDepartment || employee.department?._id || employee.department;
+    if (resolvedDept && !mongoose.Types.ObjectId.isValid(resolvedDept)) {
+      let deptDoc = await Department.findOne({ name: { $regex: new RegExp(`^${resolvedDept}$`, "i") } });
+      if (!deptDoc) {
+        deptDoc = await Department.create({ name: resolvedDept });
+      }
+      resolvedDept = deptDoc._id;
+    }
+
+    // Resolve proposedReportingManager (handle ObjectId, "CURRENT", or null)
+    let resolvedManager = proposedReportingManager;
+    if (!resolvedManager || resolvedManager === "CURRENT" || !mongoose.Types.ObjectId.isValid(resolvedManager)) {
+      resolvedManager = employee.reportingManager?._id || employee.reportingManager || null;
+    }
+
     const initialStatus = req.user.role === "Admin" ? "PENDING_ADMIN" : "PENDING_HR";
 
     const promotion = await PromotionRequest.create({
@@ -53,9 +82,9 @@ exports.createPromotionRequest = async (req, res) => {
       currentCareerLevel: employee.careerLevel || "L1 - Junior",
 
       // Proposed State
-      proposedRole,
-      proposedDepartment,
-      proposedReportingManager: proposedReportingManager || employee.reportingManager?._id || null,
+      proposedRole: resolvedRole,
+      proposedDepartment: resolvedDept,
+      proposedReportingManager: resolvedManager,
       proposedEmploymentType: proposedEmploymentType || employee.employmentType || "Permanent",
       proposedCareerLevel: proposedCareerLevel || "L2 - Mid",
       proposedSalaryRecommendation: proposedSalaryRecommendation ? Number(proposedSalaryRecommendation) : null,
