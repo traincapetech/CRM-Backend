@@ -53,6 +53,10 @@ const UserSchema = new mongoose.Schema(
       type: mongoose.Schema.ObjectId,
       ref: "Employee",
     },
+    branchId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "Branch",
+    },
     profilePicture: {
       type: String,
       default: null,

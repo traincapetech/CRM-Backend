@@ -532,7 +532,7 @@ exports.getActiveSessions = async (req, res) => {
 // @route   GET /api/auth/me
 // @access  Private
 exports.getMe = async (req, res) => {
-  const user = await User.findById(req.user.id);
+  const user = await User.findById(req.user.id).populate("branchId", "name code city state");
   const permissionPayload = await getUserPermissions(user);
 
   let activePIP = null;
