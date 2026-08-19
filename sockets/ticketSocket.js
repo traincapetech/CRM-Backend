@@ -29,8 +29,7 @@ const ticketSocketHandler = (io, socket) => {
       socket.join(`role-${user.role}`);
       console.log(`User ${user.name} joined role-${user.role}`);
     } catch (err) {
-      console.error("Ticket Socket auth failed:", err.message);
-      socket.disconnect(true);
+      console.warn("Ticket Socket auth skipped/failed:", err.message);
     }
   };
 
