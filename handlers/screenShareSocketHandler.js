@@ -1,10 +1,10 @@
 /**
- * Screen Share Socket Handler - MediaRecorder + Socket.IO Relay
- * No WebRTC P2P - video chunks are relayed through the server.
- * This works across all networks without STUN/TURN servers.
+ * Screen Share Socket Handler - Ultra-Reliable Canvas Frame Relay
+ * No WebRTC P2P or brittle MediaSource chunks.
+ * Directly streams compressed JPEG frames with instant cached last-frame delivery.
  */
 
-// Active streams registry: { [userId]: { userId, userName, branchName, role, socketId, startedAt } }
+// Active streams registry: { [userId]: { userId, userName, branchName, role, socketId, startedAt, lastFrame, lastActive } }
 const activeScreenStreams = new Map();
 
 module.exports = function screenShareSocketHandler(io, socket) {
@@ -13,7 +13,7 @@ module.exports = function screenShareSocketHandler(io, socket) {
     socket.join("supervisors_room");
     console.log(`📺 [SCREEN MONITOR] Supervisor joined monitors room: ${socket.id}`);
 
-    // Send current list of active streaming employees to the supervisor
+    // Send current list of active streaming employees with their last frame immediately
     const streamsList = Array.from(activeScreenStreams.values());
     socket.emit("active_screen_streams_list", streamsList);
   });
@@ -23,13 +23,17 @@ module.exports = function screenShareSocketHandler(io, socket) {
     if (!employeeInfo || !employeeInfo.userId) return;
 
     const uId = employeeInfo.userId.toString();
+    const existing = activeScreenStreams.get(uId);
+
     const streamData = {
       userId: uId,
       userName: employeeInfo.userName || "Sales Representative",
       branchName: employeeInfo.branchName || "Ukhrul Branch",
       role: employeeInfo.role || "Sales",
       socketId: socket.id,
-      startedAt: activeScreenStreams.get(uId)?.startedAt || new Date().toISOString(),
+      startedAt: existing?.startedAt || new Date().toISOString(),
+      lastFrame: existing?.lastFrame || null,
+      lastActive: Date.now(),
     };
 
     activeScreenStreams.set(uId, streamData);
@@ -40,15 +44,29 @@ module.exports = function screenShareSocketHandler(io, socket) {
     io.to("supervisors_room").emit("screen_stream_started", streamData);
   });
 
-  // 3. Employee sends a video chunk - relay to all supervisors
-  socket.on("screen_chunk", (data) => {
-    if (!data || !data.userId || !data.chunk) return;
-    // Relay the chunk to all supervisors watching this stream
-    io.to("supervisors_room").emit("screen_chunk", {
-      userId: data.userId,
-      chunk: data.chunk,
-      mimeType: data.mimeType || "video/webm;codecs=vp8",
+  // 3. Employee sends a compressed frame (JPEG/WebP dataUrl or buffer)
+  socket.on("screen_frame", (data) => {
+    if (!data || !data.userId || !data.frame) return;
+
+    const uId = data.userId.toString();
+    const stream = activeScreenStreams.get(uId);
+    if (stream) {
+      stream.lastFrame = data.frame;
+      stream.lastActive = Date.now();
+    }
+
+    // Relay the frame instantly to all supervisors
+    io.to("supervisors_room").emit("screen_frame", {
+      userId: uId,
+      frame: data.frame,
+      timestamp: data.timestamp || Date.now(),
     });
+  });
+
+  // Backward compatibility for chunk if sent
+  socket.on("screen_chunk", (data) => {
+    if (!data || !data.userId) return;
+    io.to("supervisors_room").emit("screen_chunk", data);
   });
 
   // 4. Employee stops sharing screen
