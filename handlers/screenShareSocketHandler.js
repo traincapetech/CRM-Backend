@@ -1,10 +1,11 @@
 /**
- * Screen Share Socket Handler - Ultra-Reliable Canvas Frame Relay
- * No WebRTC P2P or brittle MediaSource chunks.
- * Directly streams compressed JPEG frames with instant cached last-frame delivery.
+ * Screen Share & Remote Control Socket Handler
+ * - Ultra-Reliable Canvas Frame Relay
+ * - Bidirectional Remote Control Actions (Mouse, Keyboard, Scroll)
+ * - Desktop Agent & Browser Client Interoperability
  */
 
-// Active streams registry: { [userId]: { userId, userName, branchName, role, socketId, startedAt, lastFrame, lastActive } }
+// Active streams registry: { [userId]: { userId, userName, branchName, role, socketId, isAgent, startedAt, lastFrame, lastActive } }
 const activeScreenStreams = new Map();
 
 module.exports = function screenShareSocketHandler(io, socket) {
@@ -18,7 +19,7 @@ module.exports = function screenShareSocketHandler(io, socket) {
     socket.emit("active_screen_streams_list", streamsList);
   });
 
-  // 2. Employee registers as screen publisher
+  // 2. Employee registers as screen publisher (from Web or Desktop Agent)
   socket.on("register_screen_publisher", (employeeInfo) => {
     if (!employeeInfo || !employeeInfo.userId) return;
 
@@ -31,6 +32,7 @@ module.exports = function screenShareSocketHandler(io, socket) {
       branchName: employeeInfo.branchName || "Ukhrul Branch",
       role: employeeInfo.role || "Sales",
       socketId: socket.id,
+      isAgent: !!employeeInfo.isAgent, // true if running from Traincape Desktop Agent
       startedAt: existing?.startedAt || new Date().toISOString(),
       lastFrame: existing?.lastFrame || null,
       lastActive: Date.now(),
@@ -40,7 +42,7 @@ module.exports = function screenShareSocketHandler(io, socket) {
     socket.userId = uId;
     socket.isPublisher = true;
 
-    console.log(`📡 [SCREEN STREAM] Registered: ${streamData.userName} (${uId})`);
+    console.log(`📡 [SCREEN STREAM] Registered: ${streamData.userName} (${uId}) [Agent: ${streamData.isAgent}]`);
     io.to("supervisors_room").emit("screen_stream_started", streamData);
   });
 
@@ -63,13 +65,30 @@ module.exports = function screenShareSocketHandler(io, socket) {
     });
   });
 
-  // Backward compatibility for chunk if sent
+  // 4. Supervisor executes a Remote Control Action (Mouse Click / Move / Keyboard)
+  socket.on("remote_control_action", (actionData) => {
+    if (!actionData || !actionData.targetUserId) return;
+
+    const targetId = actionData.targetUserId.toString();
+    const targetStream = activeScreenStreams.get(targetId);
+
+    if (targetStream && targetStream.socketId) {
+      // Send directly to the employee's agent socket
+      io.to(targetStream.socketId).emit("execute_remote_action", {
+        ...actionData,
+        supervisorId: socket.userId || "supervisor",
+        timestamp: Date.now(),
+      });
+    }
+  });
+
+  // 5. Backward compatibility for chunk if sent
   socket.on("screen_chunk", (data) => {
     if (!data || !data.userId) return;
     io.to("supervisors_room").emit("screen_chunk", data);
   });
 
-  // 4. Employee stops sharing screen
+  // 6. Employee stops sharing screen
   socket.on("stop_screen_publisher", (userId) => {
     const id = (userId || socket.userId)?.toString();
     if (id && activeScreenStreams.has(id)) {
@@ -79,7 +98,7 @@ module.exports = function screenShareSocketHandler(io, socket) {
     }
   });
 
-  // 5. Handle Disconnect
+  // 7. Handle Disconnect
   socket.on("disconnect", () => {
     if (socket.isPublisher && socket.userId) {
       const uId = socket.userId.toString();
