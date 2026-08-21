@@ -71,7 +71,7 @@ const options = {
         description: "Development server",
       },
       {
-        url: "https://crm-backend-spvr.onrender.com",
+        url: process.env.BASE_URL || "https://crm-backend-7ad5.onrender.com",
         description: "Production server",
       },
     ],
