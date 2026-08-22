@@ -1120,24 +1120,26 @@ const generatePDFContent = (doc, payroll) => {
   }
 
   // Company Details (Right Aligned)
-  doc.fontSize(10).font("Helvetica-Bold").fillColor(SECONDARY_COLOR);
-  doc.text("Traincape Technology, Khandolia Plaza, ", MARGIN_RIGHT - 200, 45, {
+  const headerRightWidth = 260;
+  const headerRightX = MARGIN_RIGHT - headerRightWidth;
+
+  doc.fontSize(10).font("Helvetica-Bold").fillColor(PRIMARY_COLOR);
+  doc.text("Traincape Technology", headerRightX, 42, {
     align: "right",
-    width: 200,
+    width: headerRightWidth,
   });
-  doc.font("Helvetica").fontSize(9);
-  doc.text("118/C, Dabri - Palam Rd, Vaishali, Vaishali Colony, ", MARGIN_RIGHT - 200, 58, {
-    align: "right",
-    width: 200,
-  });
-  doc.text("Dashrath Puri, New Delhi, ", MARGIN_RIGHT - 200, 70, {
-    align: "right",
-    width: 200,
-  });
-  doc.text("Delhi, 110045, India", MARGIN_RIGHT - 200, 82, {
-    align: "right",
-    width: 200,
-  });
+
+  doc.font("Helvetica").fontSize(8.5).fillColor(SECONDARY_COLOR);
+  doc.text(
+    "Khandolia Plaza, 118/C, Dabri - Palam Rd,\nVaishali Colony, Dashrath Puri,\nNew Delhi, Delhi - 110045, India",
+    headerRightX,
+    55,
+    {
+      align: "right",
+      width: headerRightWidth,
+      lineGap: 2,
+    },
+  );
 
   doc.moveDown(2);
 
@@ -1340,7 +1342,20 @@ const generatePDFContent = (doc, payroll) => {
     { label: "Festival Bonus", val: payroll.festivalBonus },
   ].filter((i) => i.val > 0);
 
+  // Calculate LWP / Unpaid Leave Deduction
+  const lwpDays = Math.max(0, (payroll.workingDays || 30) - (payroll.daysPresent || 0));
+  let lwpDeduction = 0;
+  if (payroll.baseSalary && payroll.calculatedSalary !== undefined && payroll.baseSalary > payroll.calculatedSalary) {
+    lwpDeduction = payroll.baseSalary - payroll.calculatedSalary;
+  } else if (lwpDays > 0 && payroll.baseSalary) {
+    lwpDeduction = (payroll.baseSalary / (payroll.workingDays || 30)) * lwpDays;
+  }
+
   const deductions = [
+    {
+      label: lwpDays > 0 ? `LWP / Leave Deduction (${lwpDays} Day${lwpDays > 1 ? "s" : ""})` : "LWP / Leave Deduction",
+      val: lwpDeduction,
+    },
     { label: "Provident Fund (PF)", val: payroll.pf },
     { label: "ESI", val: payroll.esi },
     { label: "Professional Tax", val: payroll.tax },
