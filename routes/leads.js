@@ -13,7 +13,8 @@ const {
   getRepeatCustomers,
   getLeadStats,
   bulkUpdateLeads,
-  restoreLeads
+  restoreLeads,
+  getRestorePreview
 } = require('../controllers/leads');
 
 const { protect, authorize } = require('../middleware/auth');
@@ -22,9 +23,10 @@ const { cacheMiddleware, invalidateCache } = require('../middleware/cache');
 // All routes below this line require authentication
 router.use(protect);
 
-// Bulk update route
+// Bulk update & Revert routes
 router.put('/bulk-update', authorize('Admin', 'Manager', 'Lead Person'), invalidateCache(['cache:/api/leads*']), bulkUpdateLeads);
-router.put('/restore', authorize('Admin', 'Manager'), invalidateCache(['cache:/api/leads*']), restoreLeads);
+router.put('/restore', authorize('Admin', 'Manager', 'Lead Person'), invalidateCache(['cache:/api/leads*']), restoreLeads);
+router.post('/restore-preview', authorize('Admin', 'Manager', 'Lead Person'), getRestorePreview);
 
 // Routes specific to roles
 router.route('/')

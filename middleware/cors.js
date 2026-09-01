@@ -70,18 +70,7 @@ const corsMiddleware = cors({
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   credentials: true,
   optionsSuccessStatus: 204,
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'Origin',
-    'X-Requested-With',
-    'Accept',
-    'Access-Control-Allow-Origin',
-    'Access-Control-Allow-Headers',
-    'Access-Control-Allow-Methods'
-  ],
   exposedHeaders: ['Content-Length', 'X-Content-Type-Options'],
-  // Ensure preflight requests are handled correctly
   preflightContinue: false
 });
 
@@ -91,11 +80,18 @@ const ensureCorsHeaders = (req, res, next) => {
 
   // Check if origin is allowed
   if (isOriginAllowed(origin)) {
-    // Always set CORS headers for allowed origins
-    res.header('Access-Control-Allow-Origin', origin || '*');
+    if (origin) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Credentials', 'true');
+    } else {
+      res.header('Access-Control-Allow-Origin', '*');
+    }
     res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept');
-    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header(
+      'Access-Control-Allow-Headers',
+      req.headers['access-control-request-headers'] ||
+        'Content-Type, Authorization, Origin, X-Requested-With, Accept, Cache-Control, Pragma'
+    );
     console.log('✅ CORS headers set for origin:', origin || 'no origin');
   } else if (origin) {
     console.log('⚠️ CORS: Origin not allowed, headers not set:', origin);
@@ -110,24 +106,35 @@ const ensureCorsHeaders = (req, res, next) => {
   next();
 };
 
+const handleOptions = (req, res) => {
+  console.log('🔄 Explicit OPTIONS handler called for:', req.url);
+  const origin = req.headers.origin;
+
+  // Check if origin is allowed
+  if (isOriginAllowed(origin)) {
+    if (origin) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Credentials', 'true');
+    } else {
+      res.header('Access-Control-Allow-Origin', '*');
+    }
+    res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+    res.header(
+      'Access-Control-Allow-Headers',
+      req.headers['access-control-request-headers'] ||
+        'Content-Type, Authorization, Origin, X-Requested-With, Accept, Cache-Control, Pragma'
+    );
+    console.log('✅ OPTIONS: CORS headers set for origin:', origin || 'no origin');
+  } else {
+    console.log('❌ OPTIONS: Origin not allowed:', origin);
+  }
+
+  res.status(204).send();
+};
+
 module.exports = {
   corsMiddleware,
   ensureCorsHeaders,
-  handleOptions: (req, res) => {
-    console.log('🔄 Explicit OPTIONS handler called for:', req.url);
-    const origin = req.headers.origin;
-
-    // Check if origin is allowed
-    if (isOriginAllowed(origin)) {
-      res.header('Access-Control-Allow-Origin', origin || '*');
-      res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept');
-      res.header('Access-Control-Allow-Credentials', 'true');
-      console.log('✅ OPTIONS: CORS headers set for origin:', origin || 'no origin');
-    } else {
-      console.log('❌ OPTIONS: Origin not allowed:', origin);
-    }
-
-    res.status(204).send();
-  }
+  handleOptions,
+  isOriginAllowed
 }; 

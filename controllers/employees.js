@@ -615,11 +615,20 @@ exports.createEmployee = async (req, res) => {
       req.body.password &&
       ["HR", "Admin", "Manager"].includes(req.user.role)
     ) {
+      let userRoleName = "Sales Person";
+      if (employeeData.role) {
+        const EmployeeRole = require("../models/EmployeeRole");
+        const roleDoc = await EmployeeRole.findById(employeeData.role);
+        if (roleDoc && roleDoc.name) {
+          userRoleName = roleDoc.name;
+        }
+      }
+
       const userData = {
         fullName: employeeData.fullName,
         email: req.body.username.toLowerCase().trim(), // Official Email for login
         password: req.body.password,
-        role: "Employee",
+        role: userRoleName,
         employeeId: employee._id,
       };
 
@@ -863,6 +872,17 @@ exports.updateEmployee = async (req, res) => {
       const User = require("../models/User");
       await User.findByIdAndUpdate(employee.userId, { active: !isDeactivatedStatus });
       console.log(`Synced user ${employee.userId} active state to ${!isDeactivatedStatus} because employee status became ${employee.status}`);
+    }
+
+    // Sync role change to user account role
+    if (employeeData.role && employee.userId) {
+      const EmployeeRole = require("../models/EmployeeRole");
+      const roleDoc = await EmployeeRole.findById(employeeData.role);
+      if (roleDoc && roleDoc.name) {
+        const User = require("../models/User");
+        await User.findByIdAndUpdate(employee.userId, { role: roleDoc.name });
+        console.log(`Synced user ${employee.userId} role to "${roleDoc.name}" because employee role was updated`);
+      }
     }
 
     // Detailed Admin Notification

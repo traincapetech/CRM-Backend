@@ -2107,36 +2107,99 @@ exports.bulkUpdateLeads = async (req, res) => {
   }
 };
 
+// @desc    Get preview of leads ready to be reverted to original sales persons
+// @route   POST /api/leads/restore-preview
+// @access  Private (Admin, Manager)
+exports.getRestorePreview = async (req, res) => {
+  try {
+    const { leadIds, revertAll, tempUserId, beforeDate } = req.body;
+    let filter = {};
+
+    if (leadIds && Array.isArray(leadIds) && leadIds.length > 0) {
+      filter._id = { $in: leadIds };
+    } else if (revertAll || tempUserId || beforeDate) {
+      if (tempUserId) {
+        filter.assignedTo = tempUserId;
+      }
+      if (beforeDate) {
+        filter.createdAt = { $lte: new Date(beforeDate) };
+      }
+    }
+
+    // Must have an originalAssignedTo that differs from current assignedTo
+    const leads = await Lead.find(filter)
+      .populate("assignedTo", "fullName name email")
+      .populate("originalAssignedTo", "fullName name email");
+
+    const revertableLeads = leads.filter(
+      (l) =>
+        l.originalAssignedTo &&
+        (l.assignedTo?._id || l.assignedTo)?.toString() !==
+          (l.originalAssignedTo?._id || l.originalAssignedTo)?.toString()
+    );
+
+    res.status(200).json({
+      success: true,
+      count: revertableLeads.length,
+      leads: revertableLeads.map((l) => ({
+        _id: l._id,
+        name: l.name,
+        course: l.course,
+        currentAssignedTo: l.assignedTo?.fullName || l.assignedTo?.name || "Unassigned",
+        originalAssignedTo: l.originalAssignedTo?.fullName || l.originalAssignedTo?.name || "Unknown",
+        createdAt: l.createdAt,
+      })),
+    });
+  } catch (err) {
+    console.error("Error in getRestorePreview:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch restore preview" });
+  }
+};
+
 // @desc    Restore leads to original assigned sales person
 // @route   PUT /api/leads/restore
 // @access  Private (Admin, Manager)
 exports.restoreLeads = async (req, res) => {
   try {
-    const { leadIds } = req.body;
-    if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+    const { leadIds, revertAll, tempUserId, beforeDate } = req.body;
+
+    let filter = {};
+    if (leadIds && Array.isArray(leadIds) && leadIds.length > 0) {
+      filter._id = { $in: leadIds };
+    } else if (revertAll || tempUserId || beforeDate) {
+      if (tempUserId) {
+        filter.assignedTo = tempUserId;
+      }
+      if (beforeDate) {
+        filter.createdAt = { $lte: new Date(beforeDate) };
+      }
+    } else {
       return res.status(400).json({
         success: false,
-        message: "Please provide leadIds to restore",
+        message: "Please provide leadIds or specify bulk revert criteria (revertAll / tempUserId / beforeDate)",
       });
     }
 
-    const leads = await Lead.find({ _id: { $in: leadIds } });
+    const leads = await Lead.find(filter);
     let restoredCount = 0;
     const uniqueUserIds = new Set();
-    
+
     for (const lead of leads) {
-      if (lead.originalAssignedTo && lead.originalAssignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")) {
+      if (
+        lead.originalAssignedTo &&
+        lead.originalAssignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")
+      ) {
         const oldAssignedTo = lead.assignedTo;
         lead.assignedTo = lead.originalAssignedTo;
-        
-        // Track history
+
+        // Track history cleanly
         if (lead.assignmentHistory && lead.assignmentHistory.length > 0) {
           const lastIndex = lead.assignmentHistory.length - 1;
           if (!lead.assignmentHistory[lastIndex].unassignedAt) {
             lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
           }
         }
-        
+
         if (!lead.assignmentHistory) {
           lead.assignmentHistory = [];
         }
@@ -2144,9 +2207,9 @@ exports.restoreLeads = async (req, res) => {
         lead.assignmentHistory.push({
           assignedTo: lead.originalAssignedTo,
           assignedBy: req.user._id,
-          assignedAt: Date.now()
+          assignedAt: Date.now(),
         });
-        
+
         await lead.save({ validateModifiedOnly: true });
         restoredCount++;
 
@@ -2157,25 +2220,29 @@ exports.restoreLeads = async (req, res) => {
       }
     }
 
-    // Trigger performance updates for affected users
+    // Trigger performance recalculation updates for affected users
     if (uniqueUserIds.size > 0) {
-      const { queuePerformanceCalculation } = require("../services/performanceQueue");
-      const today = new Date();
-      uniqueUserIds.forEach(userId => {
-        queuePerformanceCalculation(userId, today).catch(() => {});
-      });
+      try {
+        const { queuePerformanceCalculation } = require("../services/performanceQueue");
+        const today = new Date();
+        uniqueUserIds.forEach((userId) => {
+          queuePerformanceCalculation(userId, today).catch(() => {});
+        });
+      } catch (queueErr) {
+        console.warn("Performance queue update skipped:", queueErr.message);
+      }
     }
 
     res.status(200).json({
       success: true,
-      message: `Successfully restored ${restoredCount} leads to their original sales persons`,
+      message: `Successfully reverted ${restoredCount} leads to their original sales persons`,
       count: restoredCount,
     });
   } catch (err) {
     console.error("Error in restoreLeads:", err);
     res.status(500).json({
       success: false,
-      message: err.message,
+      message: "Server error restoring leads",
     });
   }
 };

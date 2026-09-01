@@ -29,6 +29,11 @@ const UserSchema = new mongoose.Schema(
       type: String,
       enum: [
         "Sales Person",
+        "Sales Team Leader",
+        "Team Leader",
+        "Senior Sales Executive",
+        "Sales Executive",
+        "Sales Manager",
         "Lead Person",
         "Manager",
         "Admin",

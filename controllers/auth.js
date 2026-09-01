@@ -532,7 +532,21 @@ exports.getActiveSessions = async (req, res) => {
 // @route   GET /api/auth/me
 // @access  Private
 exports.getMe = async (req, res) => {
-  const user = await User.findById(req.user.id).populate("branchId", "name code city state");
+  let user = await User.findById(req.user.id).populate("branchId", "name code city state");
+
+  // Auto-sync User.role from linked Employee record if mismatched
+  try {
+    const Employee = require("../models/Employee");
+    const employee = await Employee.findOne({ userId: user._id }).populate("role");
+    if (employee && employee.role && employee.role.name && user.role !== employee.role.name) {
+      console.log(`[getMe] Auto-syncing User.role from "${user.role}" to "${employee.role.name}" for user ${user._id}`);
+      user.role = employee.role.name;
+      await user.save({ validateBeforeSave: false });
+    }
+  } catch (syncErr) {
+    console.error("Error auto-syncing user role in getMe:", syncErr.message);
+  }
+
   const permissionPayload = await getUserPermissions(user);
 
   let activePIP = null;
