@@ -103,7 +103,7 @@ const LeadSchema = new mongoose.Schema({
   assignmentMethod: {
     type: String,
     enum: ["MANUAL", "ROUND_ROBIN", "SENIOR_ALLOCATION"],
-    default: "ROUND_ROBIN",
+    default: "MANUAL",
   },
   assignmentHistory: [
     {
