@@ -290,6 +290,10 @@ exports.getEmployee = async (req, res) => {
       };
     }
 
+    if (["TERMINATED", "COMPLETED", "INACTIVE"].includes(empObj.status?.toUpperCase()) && !empObj.exitDate) {
+      empObj.exitDate = empObj.updatedAt || empObj.joiningDate;
+    }
+
     res.status(200).json({
       success: true,
       data: empObj,
@@ -455,7 +459,7 @@ exports.getTeamDirectory = async (req, res) => {
         status: emp.status,
         employmentType: emp.employmentType,
         joiningDate: emp.joiningDate,
-        exitDate: emp.exitDate || null,
+        exitDate: emp.exitDate || (["TERMINATED", "COMPLETED", "INACTIVE"].includes(emp.status?.toUpperCase()) ? emp.updatedAt || emp.joiningDate : null),
         skills: emp.skills || [],
         linkedInUrl: emp.linkedInUrl || null,
         photograph: emp.photograph || null,
@@ -866,12 +870,18 @@ exports.updateEmployee = async (req, res) => {
 
     console.log("Employee updated successfully");
 
-    // Sync status change to user account active state
-    if (employeeData.status && employeeData.status !== oldEmployee.status && employee.userId) {
+    // Sync status change to user account active state & set exitDate
+    if (employeeData.status && employeeData.status !== oldEmployee.status) {
       const isDeactivatedStatus = ["TERMINATED", "COMPLETED", "INACTIVE"].includes(employeeData.status);
-      const User = require("../models/User");
-      await User.findByIdAndUpdate(employee.userId, { active: !isDeactivatedStatus });
-      console.log(`Synced user ${employee.userId} active state to ${!isDeactivatedStatus} because employee status became ${employee.status}`);
+      if (isDeactivatedStatus && !employeeData.exitDate && !employee.exitDate) {
+        employee.exitDate = new Date();
+        await employee.save();
+      }
+      if (employee.userId) {
+        const User = require("../models/User");
+        await User.findByIdAndUpdate(employee.userId, { active: !isDeactivatedStatus });
+        console.log(`Synced user ${employee.userId} active state to ${!isDeactivatedStatus} because employee status became ${employee.status}`);
+      }
     }
 
     // Sync role change to user account role

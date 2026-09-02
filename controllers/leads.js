@@ -427,22 +427,29 @@ exports.createLead = async (req, res) => {
       console.log("Setting leadPerson to current user", req.user._id);
     }
 
-    // Critical: Make sure assignedTo is properly set
-    if (!leadData.assignedTo || leadData.assignedTo === "") {
-      console.log("No assignedTo provided, using current user", req.user._id);
-      leadData.assignedTo = req.user._id;
-    } else {
-      console.log("Using provided assignedTo:", leadData.assignedTo);
-      // ObjectId is handled properly by Mongoose, no need to convert
-    }
+    // Critical: Handle assignedTo (Auto Round-Robin by default vs Manual override)
+    const isAutoAssign =
+      !leadData.assignedTo ||
+      leadData.assignedTo === "AUTO" ||
+      leadData.assignedTo === "ROUND_ROBIN" ||
+      leadData.assignedTo === "";
 
-    // Set originalAssignedTo and initialize assignmentHistory
-    leadData.originalAssignedTo = leadData.assignedTo;
-    leadData.assignmentHistory = [{
-      assignedTo: leadData.assignedTo,
-      assignedBy: req.user._id,
-      assignedAt: Date.now()
-    }];
+    if (isAutoAssign) {
+      delete leadData.assignedTo;
+      leadData.assignmentMethod = "ROUND_ROBIN";
+    } else {
+      leadData.assignmentMethod = "MANUAL";
+      leadData.originalAssignedTo = leadData.assignedTo;
+      leadData.assignmentHistory = [
+        {
+          assignedTo: leadData.assignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now(),
+          assignmentMethod: "MANUAL",
+          note: `Manually assigned by ${req.user.fullName}`,
+        },
+      ];
+    }
 
     // Check if this is a repeat customer by phone number or email
     let previousLeads = [];
@@ -498,9 +505,17 @@ exports.createLead = async (req, res) => {
     // Make sure creation timestamp is set
     leadData.updatedAt = Date.now();
 
-    console.log("Final lead data before creation:", leadData);
-
     const lead = await Lead.create(leadData);
+
+    // If auto-assigned, trigger Round-Robin instant assignment
+    if (isAutoAssign) {
+      try {
+        const leadAssignmentService = require("../services/leadAssignmentService");
+        await leadAssignmentService.assignSingleLeadRoundRobin(lead, req.user);
+      } catch (assignError) {
+        console.error("Auto assign error in createLead:", assignError);
+      }
+    }
 
     // Trigger workflows for lead_created
     try {
@@ -804,31 +819,38 @@ exports.updateLead = async (req, res) => {
       }
     }
 
-    // Track assignment history if assignedTo changes
-    if (finalUpdateData.assignedTo !== undefined && finalUpdateData.assignedTo !== null && finalUpdateData.assignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")) {
-      // Set originalAssignedTo if not set
-      if (!lead.originalAssignedTo && lead.assignedTo) {
-        lead.originalAssignedTo = lead.assignedTo;
-      }
-      
-      // Initialize or update unassignedAt for previous active assignment
-      if (!lead.assignmentHistory) {
-        lead.assignmentHistory = [];
-      }
-      
-      if (lead.assignmentHistory.length > 0) {
-        const lastIndex = lead.assignmentHistory.length - 1;
-        if (!lead.assignmentHistory[lastIndex].unassignedAt) {
-          lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
+    // Track assignment history & handle Round-Robin vs Manual override if assignedTo changes
+    let triggerAutoAssignRR = false;
+    if (finalUpdateData.assignedTo !== undefined && finalUpdateData.assignedTo !== null) {
+      if (finalUpdateData.assignedTo === "AUTO" || finalUpdateData.assignedTo === "ROUND_ROBIN") {
+        triggerAutoAssignRR = true;
+        delete finalUpdateData.assignedTo;
+      } else if (finalUpdateData.assignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")) {
+        lead.assignmentMethod = "MANUAL";
+
+        if (!lead.originalAssignedTo && lead.assignedTo) {
+          lead.originalAssignedTo = lead.assignedTo;
         }
+
+        if (!lead.assignmentHistory) {
+          lead.assignmentHistory = [];
+        }
+
+        if (lead.assignmentHistory.length > 0) {
+          const lastIndex = lead.assignmentHistory.length - 1;
+          if (!lead.assignmentHistory[lastIndex].unassignedAt) {
+            lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
+          }
+        }
+
+        lead.assignmentHistory.push({
+          assignedTo: finalUpdateData.assignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now(),
+          assignmentMethod: "MANUAL",
+          note: `Manually updated assignment by ${req.user.fullName}`,
+        });
       }
-      
-      // Push new assignment
-      lead.assignmentHistory.push({
-        assignedTo: finalUpdateData.assignedTo,
-        assignedBy: req.user._id,
-        assignedAt: Date.now()
-      });
     }
 
     // Apply updates directly to the Mongoose document instance
@@ -836,6 +858,15 @@ exports.updateLead = async (req, res) => {
 
     // Save lead (triggers pre-save hooks for encryption and search hashes)
     await lead.save({ validateModifiedOnly: true });
+
+    if (triggerAutoAssignRR) {
+      try {
+        const leadAssignmentService = require("../services/leadAssignmentService");
+        await leadAssignmentService.assignSingleLeadRoundRobin(lead, req.user);
+      } catch (rrErr) {
+        console.error("Error running single lead Round-Robin on update:", rrErr);
+      }
+    }
 
     // Re-retrieve to populate assignedTo, leadPerson, createdBy fields
     lead = await Lead.findById(lead._id).populate("assignedTo leadPerson createdBy", "fullName email");
@@ -1581,13 +1612,20 @@ exports.importLeads = async (req, res) => {
         delete leadData.assignedToName;
       }
 
-      // Initialize originalAssignedTo and assignmentHistory for imported leads
-      leadData.originalAssignedTo = leadData.assignedTo || req.user._id;
-      leadData.assignmentHistory = [{
-        assignedTo: leadData.assignedTo || req.user._id,
-        assignedBy: req.user._id,
-        assignedAt: Date.now()
-      }];
+      // Initialize assignmentMethod, originalAssignedTo, and assignmentHistory for imported leads
+      if (leadData.assignedTo) {
+        leadData.assignmentMethod = "MANUAL";
+        leadData.originalAssignedTo = leadData.assignedTo;
+        leadData.assignmentHistory = [{
+          assignedTo: leadData.assignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now(),
+          assignmentMethod: "MANUAL",
+          note: "Manually assigned via CSV import"
+        }];
+      } else {
+        leadData.assignmentMethod = "ROUND_ROBIN";
+      }
     }
 
     // Validate the mapped data - make validation more flexible
@@ -1629,6 +1667,18 @@ exports.importLeads = async (req, res) => {
     });
 
     console.log(`Successfully imported ${results.length} leads`);
+
+    // Run Round-Robin distribution for unassigned imported leads
+    const unassignedLeads = results.filter((l) => !l.assignedTo || l.assignmentMethod === "ROUND_ROBIN");
+    if (unassignedLeads.length > 0) {
+      try {
+        const leadAssignmentService = require("../services/leadAssignmentService");
+        console.log(`🔄 Running Round-Robin distribution for ${unassignedLeads.length} imported lead(s)...`);
+        await leadAssignmentService.distributeLeadsBatchRoundRobin(unassignedLeads, req.user);
+      } catch (rrError) {
+        console.error("Error during CSV import Round-Robin assignment:", rrError);
+      }
+    }
 
     // Log assignment info for debugging
     if (req.user.role === "Lead Person") {
@@ -2246,3 +2296,40 @@ exports.restoreLeads = async (req, res) => {
     });
   }
 };
+
+// @desc    Auto assign selected leads via Round-Robin
+// @route   POST /api/leads/auto-assign
+// @access  Private (Admin, Manager, Lead Person)
+exports.autoAssignLeads = async (req, res) => {
+  try {
+    const { leadIds } = req.body;
+    if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an array of lead IDs to auto-assign",
+      });
+    }
+
+    const leadAssignmentService = require("../services/leadAssignmentService");
+    const leads = await Lead.find({ _id: { $in: leadIds } });
+
+    const result = await leadAssignmentService.distributeLeadsBatchRoundRobin(leads, req.user);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully auto-assigned ${result.count} lead(s) via Round-Robin.`,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Auto assign leads error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to auto assign leads",
+    });
+  }
+};
+

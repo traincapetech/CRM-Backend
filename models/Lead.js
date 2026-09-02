@@ -100,6 +100,11 @@ const LeadSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
   },
+  assignmentMethod: {
+    type: String,
+    enum: ["MANUAL", "ROUND_ROBIN", "SENIOR_ALLOCATION"],
+    default: "ROUND_ROBIN",
+  },
   assignmentHistory: [
     {
       assignedTo: {
@@ -116,6 +121,14 @@ const LeadSchema = new mongoose.Schema({
       },
       unassignedAt: {
         type: Date,
+      },
+      assignmentMethod: {
+        type: String,
+        enum: ["MANUAL", "ROUND_ROBIN", "SENIOR_ALLOCATION"],
+        default: "ROUND_ROBIN",
+      },
+      note: {
+        type: String,
       },
     },
   ],

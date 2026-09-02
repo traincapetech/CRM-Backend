@@ -14,7 +14,8 @@ const {
   getLeadStats,
   bulkUpdateLeads,
   restoreLeads,
-  getRestorePreview
+  getRestorePreview,
+  autoAssignLeads
 } = require('../controllers/leads');
 
 const { protect, authorize } = require('../middleware/auth');
@@ -25,6 +26,7 @@ router.use(protect);
 
 // Bulk update & Revert routes
 router.put('/bulk-update', authorize('Admin', 'Manager', 'Lead Person'), invalidateCache(['cache:/api/leads*']), bulkUpdateLeads);
+router.post('/auto-assign', authorize('Admin', 'Manager', 'Lead Person'), invalidateCache(['cache:/api/leads*']), autoAssignLeads);
 router.put('/restore', authorize('Admin', 'Manager', 'Lead Person'), invalidateCache(['cache:/api/leads*']), restoreLeads);
 router.post('/restore-preview', authorize('Admin', 'Manager', 'Lead Person'), getRestorePreview);
 
