@@ -68,26 +68,27 @@ const getPresentSalesPersons = async (targetDate = new Date()) => {
     ],
   });
 
-  const absentUserIds = new Set();
-  const absentEmployeeIds = new Set();
+  const presentUserIds = new Set();
+  const presentEmployeeIds = new Set();
 
   todayAttendanceRecords.forEach((att) => {
     const uId = att.userId ? att.userId.toString() : null;
     const eId = att.employeeId ? att.employeeId.toString() : null;
 
-    // Full day absent or on leave
-    if (att.status === "ABSENT" || att.status === "ON_LEAVE") {
-      if (uId) absentUserIds.add(uId);
-      if (eId) absentEmployeeIds.add(eId);
-    }
+    // Must have a valid check-in timestamp or present status
+    const isPresentStatus = ["PRESENT", "HALF_DAY", "LATE", "EARLY_LEAVE"].includes(att.status);
+    if (!att.checkIn && !isPresentStatus) return;
+
+    // Cannot be ABSENT or ON_LEAVE
+    if (att.status === "ABSENT" || att.status === "ON_LEAVE") return;
 
     // Checked out / Left early (went home in second half)
     if (att.checkOut && new Date(att.checkOut) <= targetDate) {
-      if (["EARLY_LEAVE", "HALF_DAY", "PRESENT"].includes(att.status)) {
-        if (uId) absentUserIds.add(uId);
-        if (eId) absentEmployeeIds.add(eId);
-      }
+      return;
     }
+
+    if (uId) presentUserIds.add(uId);
+    if (eId) presentEmployeeIds.add(eId);
   });
 
   // 3. Fetch approved Leave records spanning today
@@ -109,34 +110,31 @@ const getPresentSalesPersons = async (targetDate = new Date()) => {
 
     if (leave.isHalfDay) {
       // Morning Half-Day: Absent in morning (< 1 PM / 13:00), Present in afternoon (>= 1 PM)
-      if (leave.halfDaySession === "morning") {
-        if (currentHour < 13) {
-          if (uId) absentUserIds.add(uId);
-          if (eId) absentEmployeeIds.add(eId);
-        }
+      if (leave.halfDaySession === "morning" && currentHour < 13) {
+        if (uId) presentUserIds.delete(uId);
+        if (eId) presentEmployeeIds.delete(eId);
       }
       // Afternoon Half-Day: Present in morning (< 1 PM), Absent in afternoon (>= 1 PM)
-      else if (leave.halfDaySession === "afternoon") {
-        if (currentHour >= 13) {
-          if (uId) absentUserIds.add(uId);
-          if (eId) absentEmployeeIds.add(eId);
-        }
+      else if (leave.halfDaySession === "afternoon" && currentHour >= 13) {
+        if (uId) presentUserIds.delete(uId);
+        if (eId) presentEmployeeIds.delete(eId);
       }
     } else {
       // Full day leave
-      if (uId) absentUserIds.add(uId);
-      if (eId) absentEmployeeIds.add(eId);
+      if (uId) presentUserIds.delete(uId);
+      if (eId) presentEmployeeIds.delete(eId);
     }
   });
 
-  // 4. Filter present sales persons
+  // 4. Filter sales persons who are actively checked in and not on leave
   const presentSalesPersons = salesUsers.filter((user) => {
     const uIdStr = user._id.toString();
     const empIdStr = user.employeeId ? user.employeeId._id.toString() : null;
 
-    if (absentUserIds.has(uIdStr)) return false;
-    if (empIdStr && absentEmployeeIds.has(empIdStr)) return false;
-    return true;
+    const isUserPresent = presentUserIds.has(uIdStr);
+    const isEmpPresent = empIdStr && presentEmployeeIds.has(empIdStr);
+
+    return isUserPresent || isEmpPresent;
   });
 
   return presentSalesPersons;
