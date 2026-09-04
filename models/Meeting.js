@@ -41,8 +41,24 @@ const MeetingSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["scheduled", "active", "ended"],
+      enum: ["scheduled", "active", "ended", "cancelled"],
       default: "active",
+    },
+    scheduledAt: {
+      type: Date,
+      default: Date.now,
+    },
+    scheduledEndTime: {
+      type: Date,
+      default: null,
+    },
+    isScheduled: {
+      type: Boolean,
+      default: false,
+    },
+    cancelled: {
+      type: Boolean,
+      default: false,
     },
     participants: [
       {
