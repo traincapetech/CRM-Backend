@@ -44,6 +44,7 @@ const UserSchema = new mongoose.Schema(
         "IT Manager",
         "IT Intern",
         "IT Permanent",
+        "Branch Partner",
       ],
       default: "Sales Person",
     },

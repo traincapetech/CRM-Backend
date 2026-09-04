@@ -68,6 +68,10 @@ exports.getEmployees = async (req, res) => {
     } else if (req.user.role === "Admin" || req.user.role === "Manager") {
       // Admin and Manager can see all employees
       query = Employee.find(JSON.parse(queryStr));
+    } else if (req.user.role === "Branch Partner") {
+      const parsed = JSON.parse(queryStr);
+      if (req.user.branchId) parsed.branchId = req.user.branchId;
+      query = Employee.find(parsed);
     } else {
       // Other users can see all employees (for profile viewing)
       query = Employee.find(JSON.parse(queryStr));
@@ -497,6 +501,12 @@ exports.getTeamDirectory = async (req, res) => {
 // @route   POST /api/employees
 // @access  Private
 exports.createEmployee = async (req, res) => {
+  if (req.user.role === "Branch Partner") {
+    return res.status(403).json({
+      success: false,
+      message: "Branch Partner role has view-only access. Employee creation is not allowed.",
+    });
+  }
   let employeeData = null;
   try {
     console.log("Create employee request received:", {
@@ -761,6 +771,12 @@ exports.createEmployee = async (req, res) => {
 };
 
 exports.updateEmployee = async (req, res) => {
+  if (req.user.role === "Branch Partner") {
+    return res.status(403).json({
+      success: false,
+      message: "Branch Partner role has view-only access. Employee update is not allowed.",
+    });
+  }
   try {
     console.log("=== UPDATE EMPLOYEE REQUEST ===");
     console.log("Employee ID:", req.params.id);
@@ -1058,6 +1074,12 @@ exports.updateEmployee = async (req, res) => {
 // @route   DELETE /api/employees/:id
 // @access  Private
 exports.deleteEmployee = async (req, res) => {
+  if (req.user.role === "Branch Partner") {
+    return res.status(403).json({
+      success: false,
+      message: "Branch Partner role has view-only access. Employee deletion is not allowed.",
+    });
+  }
   try {
     const employee = await Employee.findById(req.params.id);
 

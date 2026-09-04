@@ -91,6 +91,18 @@ exports.getLeads = async (req, res) => {
       // Admin and Manager see all leads
       console.log("Admin/Manager role - fetching ALL leads");
       query = Lead.find({});
+    } else if (req.user.role === "Branch Partner") {
+      console.log("Branch Partner role - fetching branch leads");
+      const User = require("../models/User");
+      const branchUsers = await User.find({ branchId: req.user.branchId }).select("_id");
+      const branchUserIds = branchUsers.map((u) => u._id);
+      query = Lead.find({
+        $or: [
+          { assignedTo: { $in: branchUserIds } },
+          { leadPerson: { $in: branchUserIds } },
+          { createdBy: { $in: branchUserIds } },
+        ],
+      });
     } else if (req.user.role === "Lead Person") {
       // Lead Person sees leads they created or leads assigned to them
       console.log("Lead Person role - fetching created or assigned leads");
@@ -305,6 +317,7 @@ exports.getLead = async (req, res) => {
     if (
       req.user.role !== "Admin" &&
       req.user.role !== "Manager" &&
+      req.user.role !== "Branch Partner" &&
       (!leadAssignedId || leadAssignedId !== userId) &&
       !(
         req.user.role === "Lead Person" &&
@@ -336,6 +349,12 @@ exports.getLead = async (req, res) => {
 // @access  Private
 exports.createLead = async (req, res) => {
   try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Lead creation is not allowed.",
+      });
+    }
     console.log("============= CREATE LEAD REQUEST =============");
     console.log("Lead data submitted:", req.body);
     console.log("User creating lead:", {
@@ -649,6 +668,12 @@ exports.createLead = async (req, res) => {
 // @access  Private
 exports.updateLead = async (req, res) => {
   try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Lead update is not allowed.",
+      });
+    }
     console.log("============= UPDATE LEAD REQUEST =============");
     console.log("User updating lead:", {
       id: req.user._id,
@@ -1002,6 +1027,12 @@ exports.updateLead = async (req, res) => {
 // @access  Private
 exports.deleteLead = async (req, res) => {
   try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Lead deletion is not allowed.",
+      });
+    }
     const lead = await Lead.findById(req.params.id);
 
     if (!lead) {

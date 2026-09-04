@@ -31,6 +31,9 @@ exports.getExpenses = async (req, res) => {
     } else if (req.user.role === "Manager" || req.user.role === "IT Manager") {
       if (employeeId) query.employeeId = employeeId;
       if (branchId) query.branchId = branchId;
+    } else if (req.user.role === "Branch Partner") {
+      if (req.user.branchId) query.branchId = req.user.branchId;
+      if (employeeId) query.employeeId = employeeId;
     } else {
       // Admin/HR can see all
       if (employeeId) query.employeeId = employeeId;
@@ -83,6 +86,12 @@ exports.getExpenses = async (req, res) => {
 // @route   POST /api/expenses
 // @access  Private
 exports.createExpense = async (req, res) => {
+  if (req.user.role === "Branch Partner") {
+    return res.status(403).json({
+      success: false,
+      message: "Branch Partner role has view-only access. Expense submission is not allowed.",
+    });
+  }
   try {
     const { title, description, amount, date, category, branchId: reqBranchId } = req.body;
 
@@ -162,6 +171,12 @@ exports.createExpense = async (req, res) => {
 // @route   PATCH /api/expenses/:id/status
 // @access  Private (Admin/Manager)
 exports.updateExpenseStatus = async (req, res) => {
+  if (req.user.role === "Branch Partner") {
+    return res.status(403).json({
+      success: false,
+      message: "Branch Partner role has view-only access. Expense status update is not allowed.",
+    });
+  }
   try {
     const { status, rejectionReason } = req.body;
 

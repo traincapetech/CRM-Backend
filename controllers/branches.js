@@ -56,6 +56,12 @@ const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // @route   POST /api/branches
 // @access  Private/Admin
 exports.createBranch = asyncHandler(async (req, res, next) => {
+  if (req.user.role === "Branch Partner") {
+    return res.status(403).json({
+      success: false,
+      message: "Branch Partner role has view-only access.",
+    });
+  }
   const userId = req.user._id || req.user.id;
   req.body.createdBy = userId;
 

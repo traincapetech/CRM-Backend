@@ -87,6 +87,14 @@ exports.getSales = async (req, res) => {
       };
       query = Sale.find(leadPersonQuery);
     }
+    // Branch Partner sees sales belonging to their branch
+    else if (req.user.role === "Branch Partner") {
+      const branchFilter = req.user.branchId ? { branchId: req.user.branchId } : {};
+      query = Sale.find({
+        ...branchFilter,
+        ...parsedQuery,
+      });
+    }
     // Admin and Manager can see all
     else {
       query = Sale.find(parsedQuery);
@@ -283,6 +291,12 @@ exports.getSale = async (req, res) => {
 // @access  Private
 exports.createSale = async (req, res) => {
   try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Sale creation is not allowed.",
+      });
+    }
     // Add user to req.body
     req.body.createdBy = req.user.id;
 
@@ -411,6 +425,12 @@ exports.createSale = async (req, res) => {
 // @access  Private
 exports.updateSale = async (req, res) => {
   try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Sale update is not allowed.",
+      });
+    }
     let sale = await Sale.findById(req.params.id).populate(
       "salesPerson leadPerson",
       "fullName email",
@@ -746,6 +766,12 @@ exports.updateSale = async (req, res) => {
 // @access  Private
 exports.deleteSale = async (req, res) => {
   try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Sale deletion is not allowed.",
+      });
+    }
     const sale = await Sale.findById(req.params.id);
 
     if (!sale) {

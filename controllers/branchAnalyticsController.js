@@ -45,8 +45,13 @@ const getDateFilter = (query) => {
 exports.getBranchSalesSummary = asyncHandler(async (req, res, next) => {
   const dateFilter = getDateFilter(req.query);
 
-  // 1. Fetch all configured branches
-  const branches = await Branch.find({});
+  // 1. Fetch configured branches
+  let branches;
+  if (req.user.role === "Branch Partner" && req.user.branchId) {
+    branches = await Branch.find({ _id: req.user.branchId });
+  } else {
+    branches = await Branch.find({});
+  }
   const delhiHQ = branches.find((b) => b.code === "DEL") || branches[0];
 
   // 2. Get all Sales joined with user→employee→branch
