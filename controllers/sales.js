@@ -87,9 +87,18 @@ exports.getSales = async (req, res) => {
       };
       query = Sale.find(leadPersonQuery);
     }
-    // Branch Partner sees sales belonging to their branch
+    // Branch Partner sees sales belonging to their branch(es)
     else if (req.user.role === "Branch Partner") {
-      const branchFilter = req.user.branchId ? { branchId: req.user.branchId } : {};
+      let branchIds = req.user.branchIds || [];
+      if (req.user.branchId && !branchIds.some(id => id.toString() === req.user.branchId.toString())) {
+        branchIds.push(req.user.branchId);
+      }
+      if (branchIds.length === 0) {
+        const Employee = require("../models/Employee");
+        const emp = await Employee.findOne({ userId: req.user._id });
+        if (emp && emp.branchId) branchIds.push(emp.branchId);
+      }
+      const branchFilter = branchIds.length > 0 ? { branchId: { $in: branchIds } } : {};
       query = Sale.find({
         ...branchFilter,
         ...parsedQuery,

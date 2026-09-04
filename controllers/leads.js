@@ -94,14 +94,32 @@ exports.getLeads = async (req, res) => {
     } else if (req.user.role === "Branch Partner") {
       console.log("Branch Partner role - fetching branch leads");
       const User = require("../models/User");
-      const branchUsers = await User.find({ branchId: req.user.branchId }).select("_id");
+      const Employee = require("../models/Employee");
+
+      let branchIds = req.user.branchIds || [];
+      if (req.user.branchId && !branchIds.some(id => id.toString() === req.user.branchId.toString())) {
+        branchIds.push(req.user.branchId);
+      }
+      if (branchIds.length === 0) {
+        const emp = await Employee.findOne({ userId: req.user._id });
+        if (emp && emp.branchId) branchIds.push(emp.branchId);
+      }
+
+      const branchUsers = await User.find({
+        $or: [
+          { branchId: { $in: branchIds } },
+          { _id: req.user._id }
+        ]
+      }).select("_id");
       const branchUserIds = branchUsers.map((u) => u._id);
+
       query = Lead.find({
         $or: [
           { assignedTo: { $in: branchUserIds } },
           { leadPerson: { $in: branchUserIds } },
           { createdBy: { $in: branchUserIds } },
-        ],
+          { branchId: { $in: branchIds } }
+        ]
       });
     } else if (req.user.role === "Lead Person") {
       // Lead Person sees leads they created or leads assigned to them
@@ -1968,6 +1986,31 @@ exports.getLeadStats = async (req, res) => {
         { leadPerson: req.user._id },
         { assignedTo: req.user._id }
       ];
+    } else if (req.user.role === "Branch Partner") {
+      const User = require("../models/User");
+      const Employee = require("../models/Employee");
+      let branchIds = req.user.branchIds || [];
+      if (req.user.branchId && !branchIds.some(id => id.toString() === req.user.branchId.toString())) {
+        branchIds.push(req.user.branchId);
+      }
+      if (branchIds.length === 0) {
+        const emp = await Employee.findOne({ userId: req.user._id });
+        if (emp && emp.branchId) branchIds.push(emp.branchId);
+      }
+      if (branchIds.length > 0) {
+        const branchUsers = await User.find({
+          $or: [
+            { branchId: { $in: branchIds } },
+            { _id: req.user._id }
+          ]
+        }).select("_id");
+        const branchUserIds = branchUsers.map((u) => u._id);
+        filter.$or = [
+          { assignedTo: { $in: branchUserIds } },
+          { leadPerson: { $in: branchUserIds } },
+          { branchId: { $in: branchIds } }
+        ];
+      }
     }
 
     const startOfToday = new Date();

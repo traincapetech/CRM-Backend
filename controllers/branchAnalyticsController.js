@@ -47,12 +47,25 @@ exports.getBranchSalesSummary = asyncHandler(async (req, res, next) => {
 
   // 1. Fetch configured branches
   let branches;
-  if (req.user.role === "Branch Partner" && req.user.branchId) {
-    branches = await Branch.find({ _id: req.user.branchId });
+  if (req.user.role === "Branch Partner") {
+    let targetBranchIds = req.user.branchIds || [];
+    if (targetBranchIds.length === 0 && req.user.branchId) {
+      targetBranchIds = [req.user.branchId];
+    }
+    if (targetBranchIds.length === 0) {
+      const emp = await Employee.findOne({ userId: req.user._id });
+      if (emp && emp.branchId) targetBranchIds = [emp.branchId];
+    }
+    if (targetBranchIds.length > 0) {
+      branches = await Branch.find({ _id: { $in: targetBranchIds } });
+    } else {
+      branches = await Branch.find({});
+    }
   } else {
     branches = await Branch.find({});
   }
-  const delhiHQ = branches.find((b) => b.code === "DEL") || branches[0];
+  const actualDelhiHQ = (await Branch.findOne({ code: "DEL" })) || branches[0];
+  const delhiHQ = actualDelhiHQ;
 
   // 2. Get all Sales joined with user→employee→branch
   const salesMatch = {};
@@ -62,15 +75,6 @@ exports.getBranchSalesSummary = asyncHandler(async (req, res, next) => {
     { $match: salesMatch },
     {
       $lookup: {
-        from: "branches",
-        localField: "branchId",
-        foreignField: "_id",
-        as: "saleBranch",
-      },
-    },
-    { $unwind: { path: "$saleBranch", preserveNullAndEmptyArrays: true } },
-    {
-      $lookup: {
         from: "users",
         localField: "salesPerson",
         foreignField: "_id",
@@ -78,6 +82,15 @@ exports.getBranchSalesSummary = asyncHandler(async (req, res, next) => {
       },
     },
     { $unwind: { path: "$salesPersonUser", preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: "branches",
+        localField: "salesPersonUser.branchId",
+        foreignField: "_id",
+        as: "userBranch",
+      },
+    },
+    { $unwind: { path: "$userBranch", preserveNullAndEmptyArrays: true } },
     {
       $lookup: {
         from: "employees",
@@ -92,10 +105,19 @@ exports.getBranchSalesSummary = asyncHandler(async (req, res, next) => {
         from: "branches",
         localField: "employee.branchId",
         foreignField: "_id",
-        as: "branch",
+        as: "empBranch",
       },
     },
-    { $unwind: { path: "$branch", preserveNullAndEmptyArrays: true } },
+    { $unwind: { path: "$empBranch", preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: "branches",
+        localField: "branchId",
+        foreignField: "_id",
+        as: "saleBranch",
+      },
+    },
+    { $unwind: { path: "$saleBranch", preserveNullAndEmptyArrays: true } },
     {
       $project: {
         totalCost: 1,
@@ -122,9 +144,24 @@ exports.getBranchSalesSummary = asyncHandler(async (req, res, next) => {
           ]
         },
         salesPersonId: "$salesPersonUser._id",
-        branchId: { $ifNull: ["$saleBranch._id", { $ifNull: ["$branch._id", delhiHQ?._id || null] }] },
-        branchName: { $ifNull: ["$saleBranch.name", { $ifNull: ["$branch.name", delhiHQ?.name || "Delhi HQ (Fallback)"] }] },
-        branchCode: { $ifNull: ["$saleBranch.code", { $ifNull: ["$branch.code", delhiHQ?.code || "DEL"] }] },
+        branchId: {
+          $ifNull: [
+            "$userBranch._id",
+            { $ifNull: ["$empBranch._id", { $ifNull: ["$saleBranch._id", actualDelhiHQ?._id || null] }] }
+          ]
+        },
+        branchName: {
+          $ifNull: [
+            "$userBranch.name",
+            { $ifNull: ["$empBranch.name", { $ifNull: ["$saleBranch.name", actualDelhiHQ?.name || "Delhi HQ"] }] }
+          ]
+        },
+        branchCode: {
+          $ifNull: [
+            "$userBranch.code",
+            { $ifNull: ["$empBranch.code", { $ifNull: ["$saleBranch.code", actualDelhiHQ?.code || "DEL"] }] }
+          ]
+        },
       },
     },
   ]);
@@ -256,31 +293,39 @@ exports.getBranchMonthlyTrends = asyncHandler(async (req, res, next) => {
     salesMatch.date = { $gte: oneYearAgo };
   }
 
-  const branches = await Branch.find({});
-  const delhiHQ = branches.find((b) => b.code === "DEL") || branches[0];
+  const actualDelhiHQ = (await Branch.findOne({ code: "DEL" })) || (await Branch.findOne({}));
 
   const rawSales = await Sale.aggregate([
     { $match: salesMatch },
-    {
-      $lookup: { from: "branches", localField: "branchId", foreignField: "_id", as: "saleBranch" },
-    },
-    { $unwind: { path: "$saleBranch", preserveNullAndEmptyArrays: true } },
     {
       $lookup: { from: "users", localField: "salesPerson", foreignField: "_id", as: "salesPersonUser" },
     },
     { $unwind: { path: "$salesPersonUser", preserveNullAndEmptyArrays: true } },
     {
+      $lookup: { from: "branches", localField: "salesPersonUser.branchId", foreignField: "_id", as: "userBranch" },
+    },
+    { $unwind: { path: "$userBranch", preserveNullAndEmptyArrays: true } },
+    {
       $lookup: { from: "employees", localField: "salesPersonUser._id", foreignField: "userId", as: "employee" },
     },
     { $unwind: { path: "$employee", preserveNullAndEmptyArrays: true } },
     {
-      $lookup: { from: "branches", localField: "employee.branchId", foreignField: "_id", as: "branch" },
+      $lookup: { from: "branches", localField: "employee.branchId", foreignField: "_id", as: "empBranch" },
     },
-    { $unwind: { path: "$branch", preserveNullAndEmptyArrays: true } },
+    { $unwind: { path: "$empBranch", preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: { from: "branches", localField: "branchId", foreignField: "_id", as: "saleBranch" },
+    },
+    { $unwind: { path: "$saleBranch", preserveNullAndEmptyArrays: true } },
     {
       $project: {
         date: 1, totalCost: 1, currency: 1,
-        branchName: { $ifNull: ["$saleBranch.name", { $ifNull: ["$branch.name", delhiHQ?.name || "Delhi HQ (Fallback)"] }] },
+        branchName: {
+          $ifNull: [
+            "$userBranch.name",
+            { $ifNull: ["$empBranch.name", { $ifNull: ["$saleBranch.name", actualDelhiHQ?.name || "Delhi HQ"] }] }
+          ]
+        },
       },
     },
   ]);
@@ -297,33 +342,51 @@ exports.getBranchLeaderboard = asyncHandler(async (req, res, next) => {
   const salesMatch = { status: { $ne: "Cancelled" } };
   if (dateFilter) salesMatch.date = dateFilter;
 
-  const branches = await Branch.find({});
-  const delhiHQ = branches.find((b) => b.code === "DEL") || branches[0];
+  const actualDelhiHQ = (await Branch.findOne({ code: "DEL" })) || (await Branch.findOne({}));
 
   const rawSales = await Sale.aggregate([
     { $match: salesMatch },
-    {
-      $lookup: { from: "branches", localField: "branchId", foreignField: "_id", as: "saleBranch" },
-    },
-    { $unwind: { path: "$saleBranch", preserveNullAndEmptyArrays: true } },
     {
       $lookup: { from: "users", localField: "salesPerson", foreignField: "_id", as: "salesPersonUser" },
     },
     { $unwind: { path: "$salesPersonUser", preserveNullAndEmptyArrays: true } },
     {
+      $lookup: { from: "branches", localField: "salesPersonUser.branchId", foreignField: "_id", as: "userBranch" },
+    },
+    { $unwind: { path: "$userBranch", preserveNullAndEmptyArrays: true } },
+    {
       $lookup: { from: "employees", localField: "salesPersonUser._id", foreignField: "userId", as: "employee" },
     },
     { $unwind: { path: "$employee", preserveNullAndEmptyArrays: true } },
     {
-      $lookup: { from: "branches", localField: "employee.branchId", foreignField: "_id", as: "branch" },
+      $lookup: { from: "branches", localField: "employee.branchId", foreignField: "_id", as: "empBranch" },
     },
-    { $unwind: { path: "$branch", preserveNullAndEmptyArrays: true } },
+    { $unwind: { path: "$empBranch", preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: { from: "branches", localField: "branchId", foreignField: "_id", as: "saleBranch" },
+    },
+    { $unwind: { path: "$saleBranch", preserveNullAndEmptyArrays: true } },
     {
       $project: {
         totalCost: 1, currency: 1,
-        branchId: { $ifNull: ["$saleBranch._id", { $ifNull: ["$branch._id", "UNASSIGNED"] }] },
-        branchName: { $ifNull: ["$saleBranch.name", { $ifNull: ["$branch.name", delhiHQ?.name || "Delhi HQ (Fallback)"] }] },
-        branchCode: { $ifNull: ["$saleBranch.code", { $ifNull: ["$branch.code", delhiHQ?.code || "DEL"] }] },
+        branchId: {
+          $ifNull: [
+            "$userBranch._id",
+            { $ifNull: ["$empBranch._id", { $ifNull: ["$saleBranch._id", actualDelhiHQ?._id || "UNASSIGNED"] }] }
+          ]
+        },
+        branchName: {
+          $ifNull: [
+            "$userBranch.name",
+            { $ifNull: ["$empBranch.name", { $ifNull: ["$saleBranch.name", actualDelhiHQ?.name || "Delhi HQ"] }] }
+          ]
+        },
+        branchCode: {
+          $ifNull: [
+            "$userBranch.code",
+            { $ifNull: ["$empBranch.code", { $ifNull: ["$saleBranch.code", actualDelhiHQ?.code || "DEL"] }] }
+          ]
+        },
       },
     },
   ]);

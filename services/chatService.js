@@ -509,10 +509,12 @@ class ChatService {
       const group = await GroupChat.findById(groupId);
       if (!group) throw new Error("Group not found");
 
-      // Check if requester is admin
-      const isAdmin = group.admins.some(id => id.toString() === requesterId.toString());
-      if (!isAdmin && !group.settings.allowMemberInvite) {
-        throw new Error("Only admins can invite members to this group");
+      const requesterUser = await User.findById(requesterId);
+      const isCRMAdmin = requesterUser && ["Admin", "Manager", "Branch Partner"].includes(requesterUser.role);
+      const isGroupAdmin = group.admins.some(id => id.toString() === requesterId.toString()) || (group.createdBy && group.createdBy.toString() === requesterId.toString());
+
+      if (!isGroupAdmin && !isCRMAdmin && !group.settings?.allowMemberInvite) {
+        throw new Error("Only group admins can invite members to this group");
       }
 
       // Check if user is already a member
@@ -522,7 +524,7 @@ class ChatService {
 
       group.members.push({ user: userId, role: 'member', joinedAt: new Date() });
       await group.save();
-      return await group.populate('members.user', 'fullName email profilePicture');
+      return await group.populate('members.user', 'fullName email profilePicture role department');
     } catch (error) {
       throw new Error(`Error adding group member: ${error.message}`);
     }
@@ -534,10 +536,12 @@ class ChatService {
       const group = await GroupChat.findById(groupId);
       if (!group) throw new Error("Group not found");
 
-      const isAdmin = group.admins.some(id => id.toString() === requesterId.toString());
+      const requesterUser = await User.findById(requesterId);
+      const isCRMAdmin = requesterUser && ["Admin", "Manager", "Branch Partner"].includes(requesterUser.role);
+      const isGroupAdmin = group.admins.some(id => id.toString() === requesterId.toString()) || (group.createdBy && group.createdBy.toString() === requesterId.toString());
       const isSelf = userId.toString() === requesterId.toString();
 
-      if (!isAdmin && !isSelf) {
+      if (!isGroupAdmin && !isCRMAdmin && !isSelf) {
         throw new Error("Permission denied");
       }
 
@@ -552,7 +556,7 @@ class ChatService {
       }
 
       await group.save();
-      return group;
+      return await group.populate('members.user', 'fullName email profilePicture role department');
     } catch (error) {
       throw new Error(`Error removing group member: ${error.message}`);
     }

@@ -8,7 +8,7 @@ const {
 const { protect, authorize } = require("../middleware/auth");
 
 router.use(protect);
-router.use(authorize("Admin", "Manager", "HR"));
+router.use(authorize("Admin", "Manager", "HR", "Branch Partner"));
 
 router.get("/summary", getBranchSalesSummary);
 router.get("/trends", getBranchMonthlyTrends);

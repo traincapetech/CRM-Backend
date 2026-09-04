@@ -32,21 +32,21 @@ router.post('/restore-preview', authorize('Admin', 'Manager', 'Lead Person'), ge
 
 // Routes specific to roles
 router.route('/')
-  .get(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin'), cacheMiddleware(300), getLeads)
-  .post(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/leads*']), createLead);
+  .get(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin', 'Branch Partner'), cacheMiddleware(300), getLeads)
+  .post(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin', 'Branch Partner'), invalidateCache(['cache:/api/leads*']), createLead);
 
-// Import route (Admin, Manager, Lead Person)
-router.post('/import', authorize('Admin', 'Manager', 'Lead Person'), importLeads);
+// Import route (Admin, Manager, Lead Person, Branch Partner)
+router.post('/import', authorize('Admin', 'Manager', 'Lead Person', 'Branch Partner'), importLeads);
 
-// Stats route (Admin, Manager, Lead Person, Sales Person)
-router.get('/stats', authorize('Admin', 'Manager', 'Lead Person', 'Sales Person'), getLeadStats);
+// Stats route (Admin, Manager, Lead Person, Sales Person, Branch Partner)
+router.get('/stats', authorize('Admin', 'Manager', 'Lead Person', 'Sales Person', 'Branch Partner'), getLeadStats);
 
-// Repeat customers route (Admin/Manager only)
-router.get('/repeat-customers', authorize('Admin', 'Manager'), getRepeatCustomers);
+// Repeat customers route (Admin/Manager/Branch Partner)
+router.get('/repeat-customers', authorize('Admin', 'Manager', 'Branch Partner'), getRepeatCustomers);
 
 // The '/assigned' route must come BEFORE the '/:id' route
-router.get('/assigned', authorize('Sales Person'), getAssignedLeads);
-router.get('/customers', authorize('Sales Person', 'Admin', 'Manager'), getAllCustomers);
+router.get('/assigned', authorize('Sales Person', 'Branch Partner'), getAssignedLeads);
+router.get('/customers', authorize('Sales Person', 'Admin', 'Manager', 'Branch Partner'), getAllCustomers);
 
 // Rajesh duplicate checking routes - must come before /:id route
 router.get('/check-rajesh-duplicates', authorize('Admin', 'Manager'), async (req, res) => {
@@ -219,10 +219,10 @@ router.delete('/remove-rajesh-duplicates', authorize('Admin', 'Manager'), async 
 });
 
 router.route('/:id')
-  .get(authorize('Lead Person','Sales Person', 'Manager', 'Admin'), getLead)
-  .put(authorize('Lead Person', 'Manager', 'Admin', 'Sales Person'), invalidateCache(['cache:/api/leads*']), updateLead)
+  .get(authorize('Lead Person','Sales Person', 'Manager', 'Admin', 'Branch Partner'), getLead)
+  .put(authorize('Lead Person', 'Manager', 'Admin', 'Sales Person', 'Branch Partner'), invalidateCache(['cache:/api/leads*']), updateLead)
   .delete(authorize('Manager', 'Admin'), invalidateCache(['cache:/api/leads*']), deleteLead);
 
-router.put('/:id/feedback', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/leads*']), updateFeedback);
+router.put('/:id/feedback', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin', 'Branch Partner'), invalidateCache(['cache:/api/leads*']), updateFeedback);
 
 module.exports = router; 
