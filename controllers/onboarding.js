@@ -78,6 +78,15 @@ exports.createInvite = async (req, res) => {
     const expiryHours = parseInt(process.env.ONBOARDING_TOKEN_EXPIRY_HOURS) || 72;
     const tokenExpiry = new Date(Date.now() + expiryHours * 60 * 60 * 1000);
 
+    const Branch = require("../models/Branch");
+    let targetBranchId = req.body.branchId;
+    if (!targetBranchId && branchLocation) {
+      const foundBranch = await Branch.findOne({
+        name: { $regex: new RegExp(`^${branchLocation.trim()}$`, "i") }
+      });
+      if (foundBranch) targetBranchId = foundBranch._id;
+    }
+
     const invite = await CandidateInvite.create({
       fullName,
       personalEmail,
@@ -89,6 +98,7 @@ exports.createInvite = async (req, res) => {
       joiningDate,
       joiningTime,
       branchLocation,
+      branchId: targetBranchId || null,
       notes,
       internshipStartDate,
       internshipEndDate,
@@ -409,6 +419,16 @@ exports.finalizeOnboarding = async (req, res) => {
     // 1. Decrypt PII from invite
     const pii = invite.getDecryptedPII();
 
+    // Determine Branch reference
+    const Branch = require("../models/Branch");
+    let resolvedBranchId = req.body.branchId || (invite.branchId ? (invite.branchId._id || invite.branchId) : null);
+    if (!resolvedBranchId && invite.branchLocation) {
+      const foundBranch = await Branch.findOne({
+        name: { $regex: new RegExp(`^${invite.branchLocation.trim()}$`, "i") }
+      });
+      if (foundBranch) resolvedBranchId = foundBranch._id;
+    }
+
     // 2. Create User account (password hashed by pre('save'))
     let newUser;
     try {
@@ -417,6 +437,7 @@ exports.finalizeOnboarding = async (req, res) => {
         email: officialEmail.toLowerCase(),
         password: temporaryPassword,
         role: userRole || "Employee",
+        branchId: resolvedBranchId || null,
       });
     } catch (err) {
       if (err.code === 11000) {
@@ -434,6 +455,7 @@ exports.finalizeOnboarding = async (req, res) => {
         phoneNumber: invite.phoneNumber,
         department: invite.department._id || invite.department,
         role: invite.role._id || invite.role,
+        branchId: resolvedBranchId || null,
         employmentType: invite.employmentType,
         salary: confirmedSalary || invite.proposedSalary,
         joiningDate: invite.joiningDate,

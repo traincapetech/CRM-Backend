@@ -60,6 +60,10 @@ const candidateInviteSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    branchId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "Branch",
+    },
     notes: {
       type: String,
       trim: true,
@@ -341,6 +345,7 @@ candidateInviteSchema.virtual("daysUntilJoining").get(function () {
 candidateInviteSchema.pre(/^find/, function (next) {
   this.populate({ path: "department", select: "name" })
     .populate({ path: "role", select: "name" })
+    .populate({ path: "branchId", select: "name code status allowRemoteAccess enforceMandatory2FA" })
     .populate({ path: "invitedBy", select: "fullName email" })
     .populate({ path: "approvedBy", select: "fullName email" })
     .populate({ path: "reportingManagerId", select: "fullName email" })

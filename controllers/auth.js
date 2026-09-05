@@ -386,6 +386,24 @@ exports.login = async (req, res) => {
       // Don't rethrow - we want the user to stay logged in
     }
 
+    // Check if branch enforces mandatory 2FA
+    let isBranchMandatory2FA = false;
+    try {
+      const Branch = require("../models/Branch");
+      let userBranch = null;
+      if (user.branchId) {
+        userBranch = await Branch.findById(user.branchId);
+      }
+      if (!userBranch && employee && employee.branchId) {
+        userBranch = await Branch.findById(employee.branchId);
+      }
+      if (userBranch && (userBranch.enforceMandatory2FA || (userBranch.name && userBranch.name.toLowerCase().includes("bengaluru")))) {
+        isBranchMandatory2FA = true;
+      }
+    } catch (bErr) {
+      console.error("Error checking branch mandatory 2FA:", bErr.message);
+    }
+
     // Check if 2FA is enabled
     if (user.twoFactorEnabled) {
       console.log("🔐 2FA required for user:", user._id.toString());
@@ -399,6 +417,19 @@ exports.login = async (req, res) => {
         token, 
         userId: user._id,
         message: "Please enter your 2FA code",
+      });
+    }
+
+    // If 2FA is not enabled yet but mandatory for user's branch
+    if (isBranchMandatory2FA) {
+      console.log("🔐 Mandatory 2FA Setup required for user:", user._id.toString());
+      const token = user.getSignedJwtToken();
+      return res.status(200).json({
+        success: true,
+        requires2FASetup: true,
+        token,
+        userId: user._id,
+        message: "Two-Factor Authentication is mandatory for your branch. Please set up 2FA to continue.",
       });
     }
 

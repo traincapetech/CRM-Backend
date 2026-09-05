@@ -44,6 +44,14 @@ const branchSchema = new mongoose.Schema(
       type: Boolean,
       default: true, // true = Active, false = Deactivated
     },
+    allowRemoteAccess: {
+      type: Boolean,
+      default: false, // If true, employees of this branch can login from anywhere outside office WiFi
+    },
+    enforceMandatory2FA: {
+      type: Boolean,
+      default: false, // If true, 2FA is mandatory for employees of this branch and cannot be deactivated
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

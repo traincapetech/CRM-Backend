@@ -32,6 +32,8 @@ async function seedBranches() {
         state: "Delhi",
         country: "India",
         status: true,
+        allowRemoteAccess: false,
+        enforceMandatory2FA: false,
         createdBy: admin._id,
       },
       {
@@ -41,6 +43,19 @@ async function seedBranches() {
         state: "Manipur",
         country: "India",
         status: true,
+        allowRemoteAccess: false,
+        enforceMandatory2FA: false,
+        createdBy: admin._id,
+      },
+      {
+        name: "Bengaluru Branch",
+        code: "BLR",
+        city: "Bengaluru",
+        state: "Karnataka",
+        country: "India",
+        status: true,
+        allowRemoteAccess: true,
+        enforceMandatory2FA: true,
         createdBy: admin._id,
       },
     ];
@@ -53,7 +68,10 @@ async function seedBranches() {
         await Branch.create(bData);
         console.log(`✅ Created branch: ${bData.name} (${bData.code})`);
       } else {
-        console.log(`ℹ️ Branch already exists: ${existing.name} (${existing.code})`);
+        existing.allowRemoteAccess = bData.allowRemoteAccess;
+        existing.enforceMandatory2FA = bData.enforceMandatory2FA;
+        await existing.save();
+        console.log(`ℹ️ Branch updated: ${existing.name} (${existing.code})`);
       }
     }
 

@@ -25,6 +25,28 @@ const hashBackupCodes = async (codes) => {
   return hashed;
 };
 
+// Helper to check if mandatory 2FA applies to a user
+const checkIsMandatory2FA = async (user) => {
+  try {
+    const Branch = require("../models/Branch");
+    const Employee = require("../models/Employee");
+    let userBranch = null;
+    if (user.branchId) {
+      userBranch = await Branch.findById(user.branchId);
+    }
+    if (!userBranch) {
+      const emp = await Employee.findOne({ userId: user._id }).populate("branchId");
+      if (emp && emp.branchId) userBranch = emp.branchId;
+    }
+    if (userBranch && (userBranch.enforceMandatory2FA || (userBranch.name && userBranch.name.toLowerCase().includes("bengaluru")))) {
+      return true;
+    }
+  } catch (err) {
+    console.error("Error checking mandatory 2FA:", err.message);
+  }
+  return false;
+};
+
 // @desc    Setup 2FA - Generate secret and QR code
 // @route   POST /api/auth/2fa/setup
 // @access  Private
@@ -75,7 +97,7 @@ exports.setup2FA = async (req, res) => {
 // @access  Private
 exports.verify2FA = async (req, res) => {
   try {
-    const { token } = req.body;
+    const { token, isLoginSetup } = req.body;
 
     if (!token) {
       return res.status(400).json({
@@ -116,6 +138,11 @@ exports.verify2FA = async (req, res) => {
     user.twoFactorEnabled = true;
     user.twoFactorBackupCodes = hashedBackupCodes;
     await user.save();
+
+    if (isLoginSetup) {
+      const { sendTokenResponse } = require("./auth");
+      return await sendTokenResponse(user, 200, res);
+    }
 
     res.status(200).json({
       success: true,
@@ -236,6 +263,14 @@ exports.disable2FA = async (req, res) => {
       });
     }
 
+    const isMandatory = await checkIsMandatory2FA(user);
+    if (isMandatory) {
+      return res.status(400).json({
+        success: false,
+        message: "Two-Factor Authentication is mandatory for your branch and cannot be deactivated.",
+      });
+    }
+
     // Verify password
     const isMatch = await user.matchPassword(password);
     if (!isMatch) {
@@ -278,10 +313,13 @@ exports.get2FAStatus = async (req, res) => {
       });
     }
 
+    const isMandatory = await checkIsMandatory2FA(user);
+
     res.status(200).json({
       success: true,
       data: {
         twoFactorEnabled: user.twoFactorEnabled || false,
+        isMandatory: isMandatory || false,
       },
     });
   } catch (error) {

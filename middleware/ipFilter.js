@@ -117,7 +117,12 @@ const isIPInRange = (ip, network) => {
 /**
  * Refreshes the in-memory cache of active office networks from DB.
  */
+/**
+ * Refreshes the in-memory cache of active office networks from DB.
+ */
 const refreshCache = async () => {
+  const mongoose = require("mongoose");
+  if (mongoose.connection.readyState !== 1) return;
   try {
     const activeNetworks = await OfficeNetwork.find({ status: true });
     cachedNetworks = activeNetworks;
@@ -127,7 +132,7 @@ const refreshCache = async () => {
       console.log(`📡 IP Filter: Cache refreshed. ${cachedNetworks.length} offices loaded.`);
     }
   } catch (error) {
-    console.error("❌ IP Filter Cache Refresh Error:", error);
+    console.error("❌ IP Filter Cache Refresh Error:", error.message);
   }
 };
 
@@ -135,6 +140,8 @@ const refreshCache = async () => {
  * Seeding logic: Migration from .env to DB
  */
 const seedFromEnv = async () => {
+  const mongoose = require("mongoose");
+  if (mongoose.connection.readyState !== 1) return;
   try {
     const count = await OfficeNetwork.countDocuments();
     if (count === 0) {
@@ -154,12 +161,19 @@ const seedFromEnv = async () => {
       }
     }
   } catch (error) {
-    console.error("❌ IP Filter Seeding Error:", error);
+    console.error("❌ IP Filter Seeding Error:", error.message);
   }
 };
 
-// Initial cache load
-refreshCache().then(() => seedFromEnv());
+// Safe connection listener for initial cache load
+const mongoose = require("mongoose");
+if (mongoose.connection.readyState === 1) {
+  refreshCache().then(() => seedFromEnv()).catch(() => {});
+} else {
+  mongoose.connection.on("connected", () => {
+    refreshCache().then(() => seedFromEnv()).catch(() => {});
+  });
+}
 
 /**
  * Reusable IP matching function for HTTP middleware and WebSockets
@@ -167,8 +181,8 @@ refreshCache().then(() => seedFromEnv());
 const isIPAllowed = async (ip) => {
   const clientIP = normalizeIP(ip);
 
-  // Refresh cache if expired
-  if (Date.now() - lastCacheUpdate > CACHE_TTL) {
+  // Refresh cache if expired and DB connected
+  if (Date.now() - lastCacheUpdate > CACHE_TTL && mongoose.connection.readyState === 1) {
     await refreshCache();
   }
 
@@ -240,6 +254,46 @@ const ipFilter = async (req, res, next) => {
       console.log(`✅ Allowed IP: ${clientIP} | Office: ${officeName} ${logCtx}`);
     }
     return next();
+  }
+
+  // Check if user belongs to a branch with remote access allowed (e.g. Bengaluru Branch)
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const User = require("../models/User");
+      const Employee = require("../models/Employee");
+      const jwt = require("jsonwebtoken");
+
+      let userToTest = null;
+      if (req.body && req.body.email && (req.path.includes("/login") || req.originalUrl.includes("/login"))) {
+        const identifier = req.body.email.toLowerCase().trim();
+        userToTest = await User.findOne({ email: identifier }).populate("branchId");
+      }
+
+      if (!userToTest && req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
+        const token = req.headers.authorization.split(" ")[1];
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          if (decoded && decoded.id) {
+            userToTest = await User.findById(decoded.id).populate("branchId");
+          }
+        } catch (e) {}
+      }
+
+      if (userToTest) {
+        if (userToTest.branchId && (userToTest.branchId.allowRemoteAccess || (userToTest.branchId.name && userToTest.branchId.name.toLowerCase().includes("bengaluru")))) {
+          console.log(`✅ Allowed Remote IP: ${clientIP} | User: ${userToTest.email} | Branch: ${userToTest.branchId.name}`);
+          return next();
+        }
+
+        const emp = await Employee.findOne({ userId: userToTest._id }).populate("branchId");
+        if (emp && emp.branchId && (emp.branchId.allowRemoteAccess || (emp.branchId.name && emp.branchId.name.toLowerCase().includes("bengaluru")))) {
+          console.log(`✅ Allowed Remote IP: ${clientIP} | Employee: ${emp.fullName} | Branch: ${emp.branchId.name}`);
+          return next();
+        }
+      }
+    } catch (remoteErr) {
+      console.error("IP Filter Remote Check error:", remoteErr.message);
+    }
   }
 
   console.error(`🚫 Blocked IP: ${clientIP} ${logCtx}`);
