@@ -8,6 +8,7 @@ const staticAllowedOrigins = [
   'https://traincapecrm.traincapetech.in',
   'http://traincapecrm.traincapetech.in',
   'https://crm-backend-7ad5.onrender.com',
+  'https://crm-backend-o36v.onrender.com',
   'https://crm-backend-spvr.onrender.com',
   // Add any additional origins here
 ];
