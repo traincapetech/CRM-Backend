@@ -49,6 +49,19 @@ module.exports = function screenShareSocketHandler(io, socket) {
     if (!employeeInfo || !employeeInfo.userId) return;
 
     const uId = employeeInfo.userId.toString();
+    const userName = (employeeInfo.userName || "").toLowerCase();
+    const role = employeeInfo.role || "";
+
+    // Exclude Chihanhor Kasom and Branch Partners / Admins from screen streaming
+    if (
+      uId === "6a96ab2898f2272dbcbc1114" ||
+      userName.includes("chihanhor") ||
+      ["Admin", "Branch Partner", "Partner"].includes(role)
+    ) {
+      console.log(`🚫 [SCREEN STREAM] Blocked screen stream registration for: ${employeeInfo.userName} (${uId}, role: ${role})`);
+      return;
+    }
+
     const existing = activeScreenStreams.get(uId);
 
     const streamData = {
@@ -90,12 +103,15 @@ module.exports = function screenShareSocketHandler(io, socket) {
       stream.lastActive = Date.now();
     }
 
-    // Relay the frame instantly to all supervisors
-    io.to("supervisors_room").emit("screen_frame", {
-      userId: uId,
-      frame: data.frame,
-      timestamp: data.timestamp || Date.now(),
-    });
+    // Relay the frame instantly ONLY if supervisors are actually connected in the room
+    const supervisorsRoom = io.sockets.adapter.rooms.get("supervisors_room");
+    if (supervisorsRoom && supervisorsRoom.size > 0) {
+      io.to("supervisors_room").emit("screen_frame", {
+        userId: uId,
+        frame: data.frame,
+        timestamp: data.timestamp || Date.now(),
+      });
+    }
   });
 
   // 4. Supervisor executes a Remote Control Action (Mouse Click / Move / Keyboard)
