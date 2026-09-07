@@ -8,15 +8,40 @@
 // Active streams registry: { [userId]: { userId, userName, branchName, role, socketId, isAgent, startedAt, lastFrame, lastActive } }
 const activeScreenStreams = new Map();
 
+function updateSupervisorWatchingStatus(io) {
+  const supervisorsRoom = io.sockets.adapter.rooms.get("supervisors_room");
+  const supervisorsCount = supervisorsRoom ? supervisorsRoom.size : 0;
+  const isSupervisorWatching = supervisorsCount > 0;
+
+  io.emit("supervisor_watching_status", {
+    isSupervisorWatching,
+    supervisorsCount,
+  });
+
+  return { isSupervisorWatching, supervisorsCount };
+}
+
 module.exports = function screenShareSocketHandler(io, socket) {
   // 1. Supervisor joins the monitoring room
   socket.on("join_screen_monitors", () => {
     socket.join("supervisors_room");
+    socket.isSupervisor = true;
     console.log(`📺 [SCREEN MONITOR] Supervisor joined monitors room: ${socket.id}`);
 
     // Send current list of active streaming employees with their last frame immediately
     const streamsList = Array.from(activeScreenStreams.values());
     socket.emit("active_screen_streams_list", streamsList);
+
+    // Broadcast updated supervisor count to all publishers
+    updateSupervisorWatchingStatus(io);
+  });
+
+  // 1b. Supervisor leaves monitoring room
+  socket.on("leave_screen_monitors", () => {
+    socket.leave("supervisors_room");
+    socket.isSupervisor = false;
+    console.log(`📺 [SCREEN MONITOR] Supervisor left monitors room: ${socket.id}`);
+    updateSupervisorWatchingStatus(io);
   });
 
   // 2. Employee registers as screen publisher (from Web or Desktop Agent)
@@ -44,6 +69,14 @@ module.exports = function screenShareSocketHandler(io, socket) {
 
     console.log(`📡 [SCREEN STREAM] Registered: ${streamData.userName} (${uId}) [Agent: ${streamData.isAgent}]`);
     io.to("supervisors_room").emit("screen_stream_started", streamData);
+
+    // Send current supervisor status directly to newly registered publisher
+    const supervisorsRoom = io.sockets.adapter.rooms.get("supervisors_room");
+    const supervisorsCount = supervisorsRoom ? supervisorsRoom.size : 0;
+    socket.emit("supervisor_watching_status", {
+      isSupervisorWatching: supervisorsCount > 0,
+      supervisorsCount,
+    });
   });
 
   // 3. Employee sends a compressed frame (JPEG/WebP dataUrl or buffer)
@@ -100,6 +133,11 @@ module.exports = function screenShareSocketHandler(io, socket) {
 
   // 7. Handle Disconnect
   socket.on("disconnect", () => {
+    if (socket.isSupervisor) {
+      setTimeout(() => {
+        updateSupervisorWatchingStatus(io);
+      }, 500);
+    }
     if (socket.isPublisher && socket.userId) {
       const uId = socket.userId.toString();
       setTimeout(() => {
