@@ -54,6 +54,12 @@ const UserSchema = new mongoose.Schema(
         trim: true,
       },
     ],
+    permissions: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
     // Employee reference for Employee role users
     employeeId: {
       type: mongoose.Schema.ObjectId,
