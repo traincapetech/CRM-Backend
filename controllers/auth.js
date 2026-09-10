@@ -664,7 +664,7 @@ exports.getAllUsers = async (req, res) => {
     }
 
     const users = await User.find(filter).select(
-      "fullName email role roles createdAt active",
+      "fullName email role roles permissions createdAt active",
     );
 
     res.status(200).json({
@@ -721,6 +721,9 @@ exports.updateUser = async (req, res) => {
     user.role = role || user.role;
     if (Array.isArray(roles)) {
       user.roles = roles;
+    }
+    if (Array.isArray(permissions)) {
+      user.permissions = permissions;
     }
 
     // If password is provided, update it
@@ -1390,6 +1393,20 @@ exports.updateUserWithDocuments = async (req, res) => {
     if (email && email.trim() !== "")
       updateData.email = email.toLowerCase().trim();
     if (role && role.trim() !== "") updateData.role = role;
+
+    if (req.body.permissions !== undefined) {
+      let parsedPerms = [];
+      if (Array.isArray(req.body.permissions)) {
+        parsedPerms = req.body.permissions;
+      } else if (typeof req.body.permissions === "string") {
+        try {
+          parsedPerms = JSON.parse(req.body.permissions);
+        } catch {
+          parsedPerms = req.body.permissions ? [req.body.permissions] : [];
+        }
+      }
+      updateData.permissions = parsedPerms;
+    }
 
     // Handle password update if provided
     if (req.body.password && req.body.password.trim() !== "") {

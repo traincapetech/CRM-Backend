@@ -39,7 +39,14 @@ const getUserPermissions = async (user) => {
   const roleNames = getUserRoleNames(user);
   const permissionsSet = await getPermissionsForRoles(roleNames);
 
-  // Industry Standard Role-Based Default Assessment Permissions:
+  // Direct user-assigned permissions
+  if (user && Array.isArray(user.permissions)) {
+    user.permissions.forEach((permission) => {
+      if (permission) permissionsSet.add(permission);
+    });
+  }
+
+  // Industry Standard Role-Based Default Permissions:
   roleNames.forEach((role) => {
     // 1. Everyone except Customer can take assigned tests & view own attempt results
     if (role !== "Customer") {
@@ -62,6 +69,19 @@ const getUserPermissions = async (user) => {
       permissionsSet.add("test.assign");
       permissionsSet.add("test.evaluate");
       permissionsSet.add("test.report");
+    }
+
+    // 4. Course Pricing Permissions by Role:
+    // Admin and Manager have full course pricing management authority
+    if (["Admin", "Manager"].includes(role)) {
+      permissionsSet.add("courses.view");
+      permissionsSet.add("courses.create");
+      permissionsSet.add("courses.edit");
+      permissionsSet.add("courses.delete");
+      permissionsSet.add("courses.write");
+    } else if (["Sales Person", "Lead Person", "Sales Team Leader", "Senior Sales Executive", "Sales Executive", "Branch Partner"].includes(role)) {
+      // Sales staff have view permission by default
+      permissionsSet.add("courses.view");
     }
   });
 
