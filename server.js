@@ -151,6 +151,7 @@ const onboardingRoutes = require("./routes/onboarding");
 const exitRoutes = require("./routes/exits");
 const branchRoutes = require("./routes/branches");
 const branchAnalyticsRoutes = require("./routes/branchAnalytics");
+const collectionRoutes = require("./routes/collectionRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -554,6 +555,7 @@ app.use("/uploads", cors(), express.static("uploads"));
 app.use("/api/auth", authRoutes);
 app.use("/api/leads", leadRoutes);
 app.use("/api/sales", salesRoutes);
+app.use("/api/collections", collectionRoutes);
 app.use("/api/lead-sales", leadSalesRoutes);
 app.use("/api/lead-person-sales", leadPersonSalesRoutes);
 app.use("/api/currency", currencyRoutes);

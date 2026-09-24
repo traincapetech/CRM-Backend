@@ -42,6 +42,12 @@ exports.getSales = async (req, res) => {
       });
     }
 
+    // Support collectionOwner and collectionStatus query filters
+    if (reqQuery.collectionOwner) {
+      reqQuery.currentCollectionOwners = reqQuery.collectionOwner;
+      delete reqQuery.collectionOwner;
+    }
+
     // Create query string
     let queryStr = JSON.stringify(reqQuery);
 
@@ -53,12 +59,21 @@ exports.getSales = async (req, res) => {
 
     const parsedQuery = JSON.parse(queryStr);
 
-    // If user is a sales person / team leader, only show their own sales
+    // If user is a sales person / team leader, show their sales or sales assigned to them for collection
     if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
-      query = Sale.find({
-        salesPerson: req.user.id,
-        ...parsedQuery,
-      });
+      if (parsedQuery.salesPerson) {
+        query = Sale.find(parsedQuery);
+      } else if (parsedQuery.currentCollectionOwners) {
+        query = Sale.find(parsedQuery);
+      } else {
+        query = Sale.find({
+          $or: [
+            { salesPerson: req.user.id },
+            { currentCollectionOwners: req.user.id },
+          ],
+          ...parsedQuery,
+        });
+      }
     }
     // If user is a lead person, show sales where they are assigned as leadPerson OR their name is in leadBy field
     else if (req.user.role === "Lead Person") {
@@ -124,7 +139,7 @@ exports.getSales = async (req, res) => {
     }
 
     // Populate
-    query = query.populate("salesPerson leadPerson", "fullName email");
+    query = query.populate("salesPerson leadPerson currentCollectionOwners", "fullName email");
 
     // Pagination
     const page = parseInt(req.query.page, 10) || 1;
@@ -180,7 +195,10 @@ exports.getSales = async (req, res) => {
 
       if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
         fullQuery = Sale.find({
-          salesPerson: req.user.id,
+          $or: [
+            { salesPerson: req.user.id },
+            { currentCollectionOwners: req.user.id },
+          ],
         });
       } else if (req.user.role === "Lead Person") {
         fullQuery = Sale.find({ leadPerson: req.user.id });
@@ -197,7 +215,7 @@ exports.getSales = async (req, res) => {
       }
 
       const allSales = await fullQuery
-        .populate("salesPerson leadPerson", "fullName email")
+        .populate("salesPerson leadPerson currentCollectionOwners", "fullName email")
         .sort("-date");
 
       // Ensure currency fields are consistent for all sales
@@ -245,7 +263,7 @@ exports.getSales = async (req, res) => {
 exports.getSale = async (req, res) => {
   try {
     const sale = await Sale.findById(req.params.id).populate(
-      "salesPerson leadPerson createdBy",
+      "salesPerson leadPerson createdBy currentCollectionOwners",
       "fullName email",
     );
 
@@ -261,8 +279,11 @@ exports.getSale = async (req, res) => {
       const salesPersonId =
         sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
       const userId = req.user._id?.toString() || req.user.id?.toString();
+      const isCollectionOwner = sale.currentCollectionOwners?.some(
+        (id) => (id._id || id).toString() === userId
+      );
 
-      if (salesPersonId !== userId) {
+      if (salesPersonId !== userId && !isCollectionOwner) {
         return res.status(403).json({
           success: false,
           message: "Not authorized to access this sale",
@@ -461,17 +482,22 @@ exports.updateSale = async (req, res) => {
 
     // Check permissions
     if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
-      // Sales person can only update their own sales
       const salesPersonId =
         sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
       const userId = req.user._id?.toString() || req.user.id?.toString();
+      const isCollectionOwner = sale.currentCollectionOwners?.some(
+        (id) => (id._id || id).toString() === userId
+      );
 
-      if (salesPersonId !== userId) {
+      if (salesPersonId !== userId && !isCollectionOwner) {
         return res.status(403).json({
           success: false,
           message: "Not authorized to update this sale",
         });
       }
+
+      // Non-managers cannot reassign the original sales person
+      delete req.body.salesPerson;
     } else if (req.user.role === "Lead Person") {
       // Lead person can only update sales where they are the lead person
       const leadPersonId =
@@ -589,7 +615,17 @@ exports.updateSale = async (req, res) => {
     sale = await Sale.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
-    }).populate("salesPerson leadPerson createdBy", "fullName email");
+    }).populate("salesPerson leadPerson createdBy currentCollectionOwners", "fullName email");
+
+    // Automatically settle active collection assignments if status changed to Completed
+    if (sale.status === "Completed" && originalStatus !== "Completed") {
+      try {
+        const { settleSaleCollectionsOnComplete } = require("../services/collectionService");
+        await settleSaleCollectionsOnComplete(sale, req.user._id || req.user.id);
+      } catch (colErr) {
+        console.error("Non-blocking collection settlement error:", colErr);
+      }
+    }
 
     // Trigger workflows for sale_updated
     try {

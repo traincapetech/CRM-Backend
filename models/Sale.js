@@ -134,6 +134,29 @@ const SaleSchema = new mongoose.Schema({
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  // Payment Collection Ownership Summary
+  collectionStatus: {
+    type: String,
+    enum: ['UNASSIGNED', 'ASSIGNED', 'PARTIALLY_ASSIGNED', 'COLLECTED'],
+    default: 'UNASSIGNED',
+    index: true
+  },
+  currentCollectionOwners: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  totalCollectionAssigned: {
+    type: Number,
+    default: 0
+  },
+  totalCollectionCollected: {
+    type: Number,
+    default: 0
+  },
+  totalCollectionRemaining: {
+    type: Number,
+    default: 0
   }
 }, {
   timestamps: true
@@ -143,5 +166,7 @@ const SaleSchema = new mongoose.Schema({
 SaleSchema.index({ salesPerson: 1, date: -1 });
 SaleSchema.index({ date: -1 });
 SaleSchema.index({ isReference: 1 });
+SaleSchema.index({ currentCollectionOwners: 1 });
+SaleSchema.index({ collectionStatus: 1 });
 
 module.exports = mongoose.model('Sale', SaleSchema); 
