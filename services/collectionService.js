@@ -562,6 +562,7 @@ const getBulkPreview = async ({ salesPersonId, collectorId }) => {
 
   const eligibleSales = [];
   let totalPendingAmount = 0;
+  const currencyBreakdown = {};
 
   for (const sale of sales) {
     const total = parseFloat(sale.totalCost || sale.amount || 0);
@@ -578,12 +579,15 @@ const getBulkPreview = async ({ salesPersonId, collectorId }) => {
       if (!isAssigned) continue;
     }
 
+    const curr = sale.currency || 'USD';
+    currencyBreakdown[curr] = (currencyBreakdown[curr] || 0) + pending;
     totalPendingAmount += pending;
+
     eligibleSales.push({
       _id: sale._id,
       customerName: sale.customerName,
       product: sale.course || sale.product || 'Unknown',
-      currency: sale.currency || 'USD',
+      currency: curr,
       date: sale.date || sale.createdAt,
       totalCost: total,
       tokenAmount: paid,
@@ -594,9 +598,15 @@ const getBulkPreview = async ({ salesPersonId, collectorId }) => {
     });
   }
 
+  const currencies = Object.keys(currencyBreakdown);
+  const primaryCurrency = currencies.length === 1 ? currencies[0] : (currencies[0] || 'USD');
+
   return {
     count: eligibleSales.length,
     totalPendingAmount,
+    currencyBreakdown,
+    primaryCurrency,
+    isMultiCurrency: currencies.length > 1,
     sales: eligibleSales,
   };
 };
