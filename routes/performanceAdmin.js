@@ -1,0 +1,529 @@
+const express = require("express");
+const router = express.Router();
+const { protect, authorize } = require("../middleware/auth");
+const PerformanceCronJobs = require("../services/performanceCronJobs");
+const { seedKPIs } = require("../seeds/kpiSeeds");
+
+/**
+ * Manual triggers for testing/admin purposes
+ */
+
+// @desc    Manually trigger performance calculation
+// @route   POST /api/performance/admin/calculate
+// @access  Private (Admin, HR)
+router.post(
+  "/admin/calculate",
+  protect,
+  authorize("Admin", "HR"),
+  async (req, res) => {
+    try {
+      const { date } = req.body; // Optional: specific date
+      const result = await PerformanceCronJobs.runManualCalculation(
+        date ? new Date(date) : null,
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "Performance calculation completed",
+        data: result,
+      });
+    } catch (error) {
+      console.error("Error in manual calculation:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error running performance calculation",
+        error: error.message,
+      });
+    }
+  },
+);
+
+const PIPService = require("../services/pipService");
+const PIP = require("../models/PIP");
+
+// @desc    Manually trigger PIP check
+// @route   POST /api/performance/admin/pip-check
+// @access  Private (Admin, HR)
+router.post(
+  "/admin/pip-check",
+  protect,
+  authorize("Admin", "HR"),
+  async (req, res) => {
+    try {
+      const result = await PerformanceCronJobs.runManualPIPCheck();
+
+      res.status(200).json({
+        success: true,
+        message: "PIP check completed",
+        data: result,
+      });
+    } catch (error) {
+      console.error("Error in manual PIP check:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error running PIP check",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Issue manual PIP to an employee
+// @route   POST /api/performance/admin/issue-pip
+// @access  Private (Admin, HR)
+router.post(
+  "/admin/issue-pip",
+  protect,
+  authorize("Admin", "HR"),
+  async (req, res) => {
+    try {
+      const { employeeId, triggerReason, startDate, endDate, expectations } = req.body;
+      if (!employeeId) {
+        return res.status(400).json({
+          success: false,
+          message: "Employee ID is required",
+        });
+      }
+
+      const pip = await PIPService.initiateManualPIP({
+        employeeId,
+        triggerReason,
+        startDate,
+        endDate,
+        expectations,
+        adminId: req.user._id,
+      });
+
+      res.status(201).json({
+        success: true,
+        message: "PIP issued successfully and notification email dispatched",
+        data: pip,
+      });
+    } catch (error) {
+      console.error("Error issuing PIP:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error issuing PIP",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Get current logged in employee's active PIP
+// @route   GET /api/performance/my-pip
+// @access  Private
+router.get(
+  "/my-pip",
+  protect,
+  async (req, res) => {
+    try {
+      const Employee = require("../models/Employee");
+      const User = require("../models/User");
+
+      const searchIds = [req.user._id];
+      const employeeDoc = await Employee.findOne({
+        $or: [{ userId: req.user._id }, { email: req.user.email }],
+      });
+      if (employeeDoc?._id) searchIds.push(employeeDoc._id);
+
+      const activePIP = await PIP.findOne({
+        employeeId: { $in: searchIds },
+        status: "active",
+      })
+        .populate("assignedManager", "fullName email avatar")
+        .sort({ createdAt: -1 });
+
+      res.status(200).json({
+        success: true,
+        data: activePIP || null,
+      });
+    } catch (error) {
+      console.error("Error fetching my PIP details:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error fetching PIP details",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Get PIP history for an employee
+// @route   GET /api/performance/admin/pip/:employeeId
+// @access  Private (Admin, HR, Manager)
+router.get(
+  "/admin/pip/:employeeId",
+  protect,
+  async (req, res) => {
+    try {
+      const { employeeId } = req.params;
+      const Employee = require("../models/Employee");
+      const User = require("../models/User");
+
+      let employeeDoc = await Employee.findById(employeeId);
+      let userDoc = null;
+      if (employeeDoc && employeeDoc.userId) {
+        userDoc = await User.findById(employeeDoc.userId);
+      } else if (!employeeDoc) {
+        userDoc = await User.findById(employeeId);
+        if (userDoc) {
+          employeeDoc = await Employee.findOne({
+            $or: [{ userId: userDoc._id }, { email: userDoc.email }],
+          });
+        }
+      }
+
+      const searchIds = [employeeId];
+      if (employeeDoc?._id) searchIds.push(employeeDoc._id);
+      if (userDoc?._id) searchIds.push(userDoc._id);
+
+      const pips = await PIP.find({ employeeId: { $in: searchIds } })
+        .populate("assignedManager", "fullName email avatar")
+        .sort({ createdAt: -1 });
+
+      const activePIP = pips.find((p) => p.status === "active") || null;
+
+      res.status(200).json({
+        success: true,
+        data: {
+          activePIP,
+          history: pips,
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching employee PIP details:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error fetching PIP details",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Seed default KPI templates
+// @route   POST /api/performance/admin/seed-kpis
+// @access  Private (Admin)
+router.post(
+  "/admin/seed-kpis",
+  protect,
+  authorize("Admin"),
+  async (req, res) => {
+    try {
+      await seedKPIs();
+
+      res.status(200).json({
+        success: true,
+        message: "Default KPI templates seeded successfully",
+      });
+    } catch (error) {
+      console.error("Error seeding KPIs:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error seeding KPIs",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Set custom target for an employee
+// @route   POST /api/performance/admin/set-target
+// @access  Private (Admin, HR)
+router.post(
+  "/admin/set-target",
+  protect,
+  authorize("Admin", "HR"),
+  async (req, res) => {
+    try {
+      const {
+        employeeId,
+        year,
+        month,
+        leadDailyTarget,
+        leadMinimumDailyTarget,
+        monthlySalesTarget,
+      } = req.body;
+
+      if (!employeeId || !year || !month) {
+        return res.status(400).json({
+          success: false,
+          message: "employeeId, year, and month are required",
+        });
+      }
+
+      const periodKey = `${year}-${month.toString().padStart(2, "0")}`;
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 0);
+
+      const target = await require("../models/EmployeeTarget").findOneAndUpdate(
+        { employeeId, "period.periodKey": periodKey },
+        {
+          employeeId,
+          period: {
+            startDate,
+            endDate,
+            periodKey,
+          },
+          leadDailyTarget,
+          leadMinimumDailyTarget,
+          monthlySalesTarget,
+          updatedAt: new Date(),
+        },
+        { upsert: true, new: true },
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "Target set successfully",
+        data: target,
+      });
+    } catch (error) {
+      console.error("Error setting target:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error setting target",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Finalize performance for a month
+// @route   POST /api/performance/admin/finalize-month
+// @access  Private (Admin, HR)
+router.post(
+  "/admin/finalize-month",
+  protect,
+  authorize("Admin", "HR"),
+  async (req, res) => {
+    try {
+      const { year, month } = req.body;
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+      const User = require("../models/User");
+
+      if (!year || !month) {
+        return res.status(400).json({
+          success: false,
+          message: "year and month are required",
+        });
+      }
+
+      const employees = await User.find({
+        active: true,
+        role: { $in: ["Lead Person", "Sales Person"] },
+      });
+
+      const results = [];
+      for (const emp of employees) {
+        const record = await PerformanceCalculationService.finalizeMonthlyRecord(
+          emp._id,
+          year,
+          month,
+        );
+        results.push({ employeeId: emp._id, fullName: emp.fullName, success: !!record });
+      }
+
+      res.status(200).json({
+        success: true,
+        message: `Monthly finalization complete for ${results.length} employees`,
+        data: results,
+      });
+    } catch (error) {
+      console.error("Error finalizing month:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error finalizing month",
+        error: error.message,
+      });
+    }
+  },
+);
+
+// @desc    Get all employee performance summaries
+// @route   GET /api/performance/admin/all-employees
+// @access  Private (Admin, HR)
+router.get(
+  "/admin/all-employees",
+  protect,
+  authorize("Admin", "HR", "Manager"),
+  async (req, res) => {
+    try {
+      const PerformanceSummary = require("../models/PerformanceSummary");
+      const DailyPerformanceRecord = require("../models/DailyPerformanceRecord");
+      const User = require("../models/User");
+      const PerformanceCalculationService = require("../services/performanceCalculation");
+
+      const { month, year } = req.query;
+      const now = new Date();
+      const currentMonth = now.getMonth() + 1; // 1-12
+      const currentYear = now.getFullYear();
+
+      const isHistorical =
+        (year && parseInt(year) < currentYear) ||
+        (year &&
+          parseInt(year) === currentYear &&
+          month &&
+          parseInt(month) < currentMonth);
+
+      const KPIService = require("../services/kpiService");
+
+      if (!isHistorical) {
+        // --- CURRENT MONTH LOGIC (Default) ---
+        // Ensure all active employees with KPI-eligible roles have at least a summary record
+        const eligibleEmployees = await User.find({
+          active: true,
+          role: { $in: ["Lead Person", "Sales Person", "Manager"] },
+        }).select("_id");
+
+        const eligibleIds = eligibleEmployees.map(emp => emp._id);
+        const existingSummaries = await PerformanceSummary.find({
+          employeeId: { $in: eligibleIds }
+        }).select("employeeId");
+
+        const existingIdsSet = new Set(existingSummaries.map(s => s.employeeId.toString()));
+        const missingEmployees = eligibleEmployees.filter(emp => !existingIdsSet.has(emp._id.toString()));
+
+        if (missingEmployees.length > 0) {
+          const createPromises = missingEmployees.map(emp => 
+            PerformanceSummary.create({
+              employeeId: emp._id,
+              currentRating: 0,
+              ratingTier: "poor",
+              stars: 1,
+            }).catch(() => null) // Ignore duplicate key errors if race condition occurs
+          );
+          await Promise.all(createPromises);
+        }
+
+        const summaries = await PerformanceSummary.find({})
+          .populate({
+            path: "employeeId",
+            match: { active: true },
+            select: "fullName email role active"
+          })
+          .sort({ currentRating: -1 });
+
+        const activeSummaries = summaries.filter(s => s.employeeId);
+
+        // Enhance with 'live' averages from KPIService as requested
+        const liveNow = new Date();
+        const curMonth = liveNow.getMonth() + 1;
+        const curYear = liveNow.getFullYear();
+
+        const enrichedData = activeSummaries.map((s) => {
+          const data = s.toObject();
+          // Use pre-calculated averages from the database summary document
+          if (!data.averages) {
+            data.averages = {
+              last7Days: 0,
+              last30Days: 0,
+              last90Days: 0,
+              thisMonth: s.currentRating || 0,
+              previousMonth: 0
+            };
+          } else {
+            // Ensure thisMonth is aligned with currentRating
+            data.averages.thisMonth = s.currentRating || 0;
+          }
+          return data;
+        });
+
+        return res.status(200).json({
+          success: true,
+          count: enrichedData.length,
+          data: enrichedData,
+        });
+      }
+
+      // --- HISTORICAL AGGREGATION LOGIC ---
+      const targetMonth = parseInt(month);
+      const targetYear = parseInt(year);
+
+      // Create date range for the target month
+      const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
+      const endOfMonth = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
+      // Aggregate DailyPerformanceRecord for the month
+      const historicalData = await DailyPerformanceRecord.aggregate([
+        {
+          $match: {
+            date: { $gte: startOfMonth, $lte: endOfMonth },
+          },
+        },
+        {
+          $group: {
+            _id: "$employeeId",
+            avgScore: { $avg: "$overallScore" },
+            recordsCount: { $sum: 1 },
+          },
+        },
+        {
+          $sort: { avgScore: -1 },
+        },
+      ]);
+
+      // Populate user info with strict active filter and live averages
+      const results = [];
+      const liveNow = new Date();
+      const curMonth = liveNow.getMonth() + 1;
+      const curYear = liveNow.getFullYear();
+
+      // Batch fetch users and summaries to resolve N+1 queries
+      const employeeIds = historicalData.map((h) => h._id);
+      const [users, summaries] = await Promise.all([
+        User.find({ _id: { $in: employeeIds }, active: true }).select("fullName email role active"),
+        PerformanceSummary.find({ employeeId: { $in: employeeIds } })
+      ]);
+
+      const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+      const summaryMap = new Map(summaries.map((s) => [s.employeeId.toString(), s]));
+
+      for (const item of historicalData) {
+        const user = userMap.get(item._id.toString());
+        if (user) {
+          const summary = summaryMap.get(item._id.toString());
+          const averages = summary?.averages || {
+            last7Days: 0,
+            last30Days: 0,
+            last90Days: 0,
+            thisMonth: summary?.currentRating || 0,
+            previousMonth: 0
+          };
+
+          results.push({
+            employeeId: user,
+            currentRating: item.avgScore,
+            ratingTier: PerformanceCalculationService.getRatingTier(item.avgScore),
+            stars: PerformanceCalculationService.getStars(item.avgScore),
+            isHistorical: true,
+            month: targetMonth,
+            year: targetYear,
+            averages: {
+              last7Days: averages.last7Days || 0,
+              last30Days: averages.last30Days || 0,
+              last90Days: averages.last90Days || 0,
+              thisMonth: averages.thisMonth || 0
+            },
+          });
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        count: results.length,
+        data: results,
+      });
+    } catch (error) {
+      console.error("Error fetching all employee performance:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error fetching employee performance data",
+        error: error.message,
+      });
+    }
+  },
+);
+
+module.exports = router;

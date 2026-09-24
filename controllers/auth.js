@@ -1,0 +1,2314 @@
+const User = require("../models/User");
+const LoginHistory = require("../models/LoginHistory"); // Added LoginHistory model
+const bcrypt = require("bcrypt");
+const fs = require("fs"); // Added for file cleanup
+const path = require("path"); // Added for path.join
+const { UPLOAD_PATHS } = require("../config/storage");
+const { sendEmail } = require("../config/nodemailer");
+const asyncHandler = require("../middleware/async"); // Added for asyncHandler
+const UAParser = require("ua-parser-js"); // Changed to default import for better compatibility
+const geoip = require("geoip-lite");
+const { notifyAdmins } = require("../services/notificationService");
+const { getUserPermissions } = require("../utils/rbac");
+ 
+const strongPassword = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$/;
+
+const recordLoginHistory = async (
+  req,
+  userId,
+  status,
+  failureReason = null,
+) => {
+  try {
+    const ip = req.ip || req.connection.remoteAddress || "127.0.0.1";
+    const geo = geoip.lookup(ip);
+    const location = geo ? `${geo.city || "Unknown"}, ${geo.country || "Unknown"}` : "Unknown";
+
+    const parser = new UAParser();
+    const ua = parser.setUA(req.headers["user-agent"] || "").getResult();
+
+    await LoginHistory.create({
+      userId,
+      ipAddress: ip,
+      userAgent: req.headers["user-agent"],
+      deviceType: ua.device.type || "Desktop",
+      browser: `${ua.browser.name || "Unknown"} ${ua.browser.version || ""}`.trim() || "Unknown",
+      os: `${ua.os.name || "Unknown"} ${ua.os.version || ""}`.trim() || "Unknown",
+      location,
+      status,
+      failureReason,
+    });
+  } catch (error) {
+    console.error("Error recording login history:", error);
+  }
+};
+
+// @desc    Register user
+// @route   POST /api/auth/register
+// @access  Public
+exports.register = async (req, res) => {
+  try {
+    console.log("Register attempt:", {
+      email: req.body.email,
+      fullName: req.body.fullName,
+      role: req.body.role,
+    });
+
+    const { fullName, email, password, role } = req.body;
+
+    // Basic validation
+    if (!fullName || !email || !password) {
+      console.log("Missing required registration fields");
+      return res.status(400).json({
+        success: false,
+        message: "Please provide name, email and password",
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+
+    if (existingUser) {
+      console.log(`User with email ${email} already exists`);
+      return res.status(400).json({
+        success: false,
+        message: "Email already registered",
+      });
+    }
+
+    // Password complexity check
+    if (!strongPassword.test(password)) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.",
+      });
+    }
+
+    console.log("Creating new user...");
+    // Create user
+    const user = await User.create({
+      fullName,
+      email: email.toLowerCase(),
+      password,
+      role: role || "Sales Person", // Default role if not specified
+    });
+
+    console.log(`User created successfully with ID: ${user._id}`);
+    
+    // Notify Admins
+    await notifyAdmins({
+      type: "USER_REGISTERED",
+      message: `New User Registered: ${user.fullName} (${user.role})`,
+      userId: user._id
+    });
+
+    sendTokenResponse(user, 201, res);
+  } catch (err) {
+    console.error("Registration error details:", {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+    });
+
+    // Provide more specific error messages for common issues
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map((val) => val.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(", "),
+      });
+    }
+
+    if (err.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: "Email already registered",
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: err.message || "Internal server error during registration",
+    });
+  }
+};
+
+// @desc    Login user
+// @route   POST /api/auth/login
+// @access  Public
+exports.login = async (req, res) => {
+  console.log("--- LOGIN PROCESS STARTED ---");
+  try {
+    const { email, password } = req.body;
+    const identifier = email ? email.toLowerCase().trim() : "";
+
+    console.log(`[LOGIN] Attempt for: ${identifier}`);
+
+    // Validate identifier & password
+    if (!identifier || !password) {
+      console.log("[LOGIN] Missing credentials");
+      return res.status(400).json({
+        success: false,
+        message: "Please provide email and password",
+      });
+    }
+
+    // Check for user by email
+    console.log("[LOGIN] Searching for user in DB...");
+    let user = await User.findOne({ email: { $regex: new RegExp(`^${identifier}$`, 'i') } }).select("+password +failedLoginAttempts +lockUntil");
+
+    if (!user) {
+      console.log("[LOGIN] User not found");
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
+    console.log(`[LOGIN] User found: ${user._id}`);
+
+    // Check if account is locked
+    if (user.lockUntil && user.lockUntil > Date.now()) {
+      const remainingMinutes = Math.ceil((user.lockUntil - Date.now()) / (60 * 1000));
+      console.log(`[LOGIN] Account is locked for ${remainingMinutes} more mins`);
+      return res.status(403).json({
+        success: false,
+        message: `Account is temporarily locked. Please try again in ${remainingMinutes} minutes.`,
+      });
+    }
+
+    // Retrieve associated employee record to verify status
+    const Employee = require("../models/Employee");
+    const employee = await Employee.findOne({ userId: user._id });
+
+    // --- Internship Extension Pre-Check ---
+    // Run this BEFORE the user.active check so a deactivated intern with a
+    // valid extension can be re-activated before being blocked.
+    if (user.role === "IT Intern") {
+      if (employee && employee.internshipEndDate) {
+        const today = new Date();
+        const endDate = new Date(employee.internshipEndDate);
+        today.setHours(0, 0, 0, 0);
+        endDate.setHours(0, 0, 0, 0);
+
+        if (today > endDate) {
+          // Internship period is over — check for an active extension
+          if (employee.internshipExtensionEndDate) {
+            const extDate = new Date(employee.internshipExtensionEndDate);
+            extDate.setHours(0, 0, 0, 0);
+
+            if (today <= extDate) {
+              // Extension is still valid — re-activate the user account if needed
+              if (user.active === false) {
+                user.active = true;
+                await user.save();
+              }
+              // Also update employee status to EXTENDED to reflect in UI
+              if (employee.status !== "EXTENDED") {
+                employee.status = "EXTENDED";
+                await employee.save();
+              }
+              // Allow the login to proceed (fall through to password check)
+            } else {
+              // Extension has also expired — deactivate account
+              user.active = false;
+              await user.save();
+
+              await recordLoginHistory(
+                req,
+                user._id,
+                "FAILED",
+                "Internship Extension Expired",
+              );
+
+              return res.status(403).json({
+                success: false,
+                message:
+                  "Your internship extension has also ended. Your account has been deactivated. Please contact your administrator.",
+              });
+            }
+          } else {
+            // No extension set — auto-deactivate account if internship expired
+            user.active = false;
+            await user.save();
+
+            await recordLoginHistory(
+              req,
+              user._id,
+              "FAILED",
+              "Internship Expired",
+            );
+
+            return res.status(403).json({
+              success: false,
+              message:
+                "Your internship has ended. Your account has been deactivated. Please contact your administrator.",
+            });
+          }
+        }
+      }
+    }
+
+    // --- General Employee Status Check ---
+    if (employee) {
+      const isDeactivatedStatus = ["TERMINATED", "COMPLETED", "INACTIVE"].includes(employee.status);
+      if (isDeactivatedStatus) {
+        if (user.active !== false) {
+          user.active = false;
+          await user.save();
+        }
+        await recordLoginHistory(
+          req,
+          user._id,
+          "FAILED",
+          `Employee Status: ${employee.status}`
+        );
+        return res.status(403).json({
+          success: false,
+          message: `Your account has been deactivated because your employment status is ${employee.status.toLowerCase()}. Please contact your administrator.`,
+        });
+      }
+    }
+
+    // Check if user account is active (runs after extension re-activation above)
+    if (user.active === false) {
+      await recordLoginHistory(req, user._id, "FAILED", "Account Deactivated");
+      return res.status(403).json({
+        success: false,
+        message:
+          "Your account has been deactivated. Please contact your administrator.",
+      });
+    }
+
+
+    // Check if password matches
+    console.log("[LOGIN] Verifying password...");
+    const isMatch = await user.matchPassword(password);
+
+    if (!isMatch) {
+      console.log("[LOGIN] Password mismatch");
+      // Increment failed attempts
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+      
+      let message = "Invalid credentials";
+      
+      if (user.failedLoginAttempts >= 5) {
+        user.lockUntil = Date.now() + 30 * 60 * 1000; // Lock for 30 minutes
+        message = "Too many failed attempts. Account locked for 30 minutes.";
+        console.log("[LOGIN] Account LOCKING now");
+
+        // Send security email about lockout
+        try {
+          await sendEmail({
+            email: user.email,
+            subject: "Security Alert: Account Temporarily Locked",
+            message: `Hello ${user.fullName},\n\nYour account has been temporarily locked for 30 minutes due to 5 consecutive failed login attempts.\n\nIf this was not you, please contact your administrator immediately or reset your password once the lock expires.\n\nTime of lockout: ${new Date().toLocaleString()}\nIP Address: ${req.ip || req.connection.remoteAddress}`
+          });
+        } catch (emailErr) {
+          console.error("Failed to send lockout alert email:", emailErr);
+        }
+      }
+      
+      await user.save({ validateBeforeSave: false });
+
+      await recordLoginHistory(req, user._id, "FAILED", "Invalid Password");
+      return res.status(401).json({
+        success: false,
+        message,
+      });
+    }
+    console.log("[LOGIN] Password match success");
+
+    // Reset failed attempts on successful password match
+    if (user.failedLoginAttempts > 0 || user.lockUntil) {
+      user.failedLoginAttempts = 0;
+      user.lockUntil = undefined;
+      await user.save({ validateBeforeSave: false });
+    }
+
+    // --- POST-LOGIN BACKGROUND TASKS ---
+    // Wrapped in try-catch to ensure login success even if secondary tasks fail
+    try {
+      // Check for anomaly: Login from new IP
+      const currentIp = req.ip || req.connection.remoteAddress;
+      const previousLogin = await LoginHistory.findOne({ 
+        userId: user._id, 
+        status: "SUCCESS",
+        ipAddress: { $ne: currentIp }
+      }).sort({ timestamp: -1 });
+
+      if (previousLogin) {
+        const ip = req.ip || req.connection.remoteAddress || "127.0.0.1";
+        const geo = geoip.lookup(ip);
+        const currentCountry = geo ? geo.country : "Unknown";
+        const currentUserAgent = req.headers["user-agent"] || "Unknown";
+
+        // Check if IP, Country or User-Agent has been seen before
+        const knownActivity = await LoginHistory.findOne({ 
+          userId: user._id, 
+          status: "SUCCESS",
+          $or: [
+            { ipAddress: ip },
+            { location: new RegExp(currentCountry, "i") },
+            { userAgent: currentUserAgent }
+          ]
+        });
+
+        if (!knownActivity) {
+          // This combination of IP/Country/UA has never been seen before
+          console.log(`⚠️ Security Alert: Anomaly detected for ${user.email} (New Location/Device)`);
+          
+          try {
+            const locationStr = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+            await sendEmail({
+              email: user.email,
+              subject: "Security Alert: New Login Detected",
+              message: `Hello ${user.fullName},\n\nA new login was detected for your account from a new location or device.\n\n📍 Location: ${locationStr}\n🌐 IP Address: ${ip}\n📱 Device: ${currentUserAgent}\n\nIf this was you, you can ignore this email. If not, please change your password immediately or contact support.`
+            });
+          } catch (emailErr) {
+            console.error("Failed to send security alert email:", emailErr);
+          }
+        }
+      }
+
+      // Record success in history
+      await recordLoginHistory(req, user._id, "SUCCESS");
+
+      // Notify Admins about login
+      await notifyAdmins({
+        type: "USER_LOGIN",
+        message: `${user.fullName} (${user.role}) has logged in.`,
+        userId: user._id,
+        ipAddress: currentIp
+      });
+    } catch (bgError) {
+      console.error("Error in post-login background tasks:", bgError);
+      // Don't rethrow - we want the user to stay logged in
+    }
+
+    // Check if branch enforces mandatory 2FA
+    let isBranchMandatory2FA = false;
+    try {
+      const Branch = require("../models/Branch");
+      let userBranch = null;
+      if (user.branchId) {
+        userBranch = await Branch.findById(user.branchId);
+      }
+      if (!userBranch && employee && employee.branchId) {
+        userBranch = await Branch.findById(employee.branchId);
+      }
+      if (userBranch && (userBranch.enforceMandatory2FA || (userBranch.name && userBranch.name.toLowerCase().includes("bengaluru")))) {
+        isBranchMandatory2FA = true;
+      }
+    } catch (bErr) {
+      console.error("Error checking branch mandatory 2FA:", bErr.message);
+    }
+
+    // Check if 2FA is enabled
+    if (user.twoFactorEnabled) {
+      console.log("🔐 2FA required for user:", user._id.toString());
+      
+      // Issue a temporary token just for the 2FA step (not a full session)
+      const token = user.getSignedJwtToken(); 
+      
+      return res.status(200).json({
+        success: true,
+        requires2FA: true,
+        token, 
+        userId: user._id,
+        message: "Please enter your 2FA code",
+      });
+    }
+
+    // If 2FA is not enabled yet but mandatory for user's branch
+    if (isBranchMandatory2FA) {
+      console.log("🔐 Mandatory 2FA Setup required for user:", user._id.toString());
+      const token = user.getSignedJwtToken();
+      return res.status(200).json({
+        success: true,
+        requires2FASetup: true,
+        token,
+        userId: user._id,
+        message: "Two-Factor Authentication is mandatory for your branch. Please set up 2FA to continue.",
+      });
+    }
+
+    // Create tokens and send response
+    console.log("[LOGIN] Issuing tokens...");
+    await sendTokenResponse(user, 200, res);
+    console.log("--- LOGIN PROCESS COMPLETED SUCCESSFULLY ---");
+  } catch (error) {
+    console.error("--- LOGIN PROCESS CRASHED ---");
+    console.error("Error Name:", error.name);
+    console.error("Error Message:", error.message);
+    console.error("Error Stack:", error.stack);
+    
+    // Check for specific common errors
+    let status = 500;
+    let message = "Internal server error during login";
+    
+    if (error.message.includes("JWT_SECRET") || error.message.includes("REFRESH_TOKEN_SECRET")) {
+      message = "Server configuration error: Authentication secrets are not set.";
+    }
+
+    res.status(status).json({
+      success: false,
+      message: message,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Get login history for current user
+// @route   GET /api/auth/login-history
+// @access  Private
+exports.getLoginHistory = async (req, res) => {
+  try {
+    const history = await LoginHistory.find({ userId: req.user.id })
+      .sort({ timestamp: -1 })
+      .limit(20);
+
+    res.status(200).json({
+      success: true,
+      count: history.length,
+      data: history,
+    });
+  } catch (err) {
+    console.error("Error fetching login history:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch login history",
+    });
+  }
+};
+
+// @desc    Get active sessions
+// @route   GET /api/auth/sessions
+// @access  Private
+exports.getActiveSessions = async (req, res) => {
+  try {
+    // For now, since we don't store session tokens in DB,
+    // we'll return the current session (from request) and recent successful logins
+    // This is a "mock" active sessions list based on recent history
+    // In a full implementation, you'd track tokens in a DB collection.
+
+    // Get recent distinct successful logins (last 5)
+    // This is an approximation
+    const recentLogins = await LoginHistory.aggregate([
+      { $match: { userId: req.user._id, status: "SUCCESS" } },
+      { $sort: { timestamp: -1 } },
+      {
+        $group: {
+          _id: "$userAgent",
+          latestLogin: { $first: "$$ROOT" },
+        },
+      },
+      { $limit: 3 },
+    ]);
+
+    const ua = uaparser(req.headers["user-agent"]);
+    const currentSession = {
+      id: "current",
+      deviceType: ua.device.type || "Desktop",
+      browser:
+        `${ua.browser.name || "Unknown"} ${ua.browser.version || ""}`.trim(),
+      os: `${ua.os.name || "Unknown"} ${ua.os.version || ""}`.trim(),
+      ipAddress: req.ip || req.connection.remoteAddress,
+      lastActive: new Date(),
+      isCurrent: true,
+    };
+
+    const formattedSessions = recentLogins
+      .map((item) => {
+        const login = item.latestLogin;
+        // Skip if it looks like the current session (simple check)
+        if (
+          login.userAgent === req.headers["user-agent"] &&
+          (login.ipAddress === req.ip ||
+            login.ipAddress === req.connection.remoteAddress)
+        ) {
+          return null; // Skip duplicate of current
+        }
+
+        return {
+          id: login._id,
+          deviceType: login.deviceType,
+          browser: login.browser,
+          os: login.os,
+          ipAddress: login.ipAddress,
+          lastActive: login.timestamp,
+          isCurrent: false,
+        };
+      })
+      .filter(Boolean); // Remove nulls
+
+    // Prepend current session
+    const sessions = [currentSession, ...formattedSessions];
+
+    res.status(200).json({
+      success: true,
+      count: sessions.length,
+      data: sessions,
+    });
+  } catch (err) {
+    console.error("Error fetching active sessions:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch active sessions",
+    });
+  }
+};
+
+// @desc    Get current logged in user
+// @route   GET /api/auth/me
+// @access  Private
+exports.getMe = async (req, res) => {
+  let user = await User.findById(req.user.id).populate("branchId", "name code city state");
+
+  // Auto-sync User.role from linked Employee record if mismatched
+  try {
+    const Employee = require("../models/Employee");
+    const employee = await Employee.findOne({ userId: user._id }).populate("role");
+    if (employee && employee.role && employee.role.name && user.role !== employee.role.name) {
+      console.log(`[getMe] Auto-syncing User.role from "${user.role}" to "${employee.role.name}" for user ${user._id}`);
+      user.role = employee.role.name;
+      await user.save({ validateBeforeSave: false });
+    }
+  } catch (syncErr) {
+    console.error("Error auto-syncing user role in getMe:", syncErr.message);
+  }
+
+  const permissionPayload = await getUserPermissions(user);
+
+  let activePIP = null;
+  try {
+    const PIP = require("../models/PIP");
+    activePIP = await PIP.findOne({ employeeId: user._id, status: "active" }).sort({ createdAt: -1 });
+  } catch (pipErr) {
+    console.error("Error fetching active PIP for getMe:", pipErr.message);
+  }
+
+  res.status(200).json({
+    success: true,
+    data: {
+      ...user.toObject(),
+      roles: permissionPayload.roleNames,
+      permissions: permissionPayload.permissions,
+      activePIP: activePIP || null,
+    },
+  });
+};
+
+// @desc    Logout user / clear cookies
+// @route   POST /api/auth/logout
+// @access  Private
+exports.logout = async (req, res) => {
+  // Clear Refresh Token from DB
+  if (req.user) {
+    await User.findByIdAndUpdate(req.user.id, { $unset: { refreshToken: 1 } });
+  }
+
+  // Clear cookies
+  const clearOptions = {
+    expires: new Date(Date.now() + 10 * 1000),
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  };
+
+  res.cookie("refreshToken", "none", { ...clearOptions, path: "/api/auth/refresh" });
+  res.cookie("token", "none", clearOptions);
+
+  // Notify Admins about logout
+  if (req.user) {
+    await notifyAdmins({
+      type: "USER_LOGOUT",
+      message: `${req.user.fullName} (${req.user.role}) has logged out.`,
+      userId: req.user.id
+    });
+  }
+
+  res.status(200).json({
+    success: true,
+    message: "Logged out successfully",
+  });
+};
+
+// @desc    Get all users for assignment
+// @route   GET /api/auth/users
+// @access  Private (Admin, Manager, Sales Person, Lead Person)
+exports.getAllUsers = async (req, res) => {
+  try {
+    // Get the role filter from query params (if provided). Support multiple roles.
+    const roleParam = req.query.role || "";
+    const includeInactive = req.query.includeInactive === "true";
+
+    // Build filter
+    const filter = includeInactive ? {} : { active: true };
+    if (roleParam) {
+      if (Array.isArray(roleParam)) {
+        filter.role = { $in: roleParam.filter(Boolean) };
+      } else if (typeof roleParam === "string" && roleParam.includes(",")) {
+        filter.role = {
+          $in: roleParam
+            .split(",")
+            .map((r) => r.trim())
+            .filter(Boolean),
+        };
+      } else if (roleParam === "Sales Person") {
+        // Include Sales Persons, Sales Team Leaders, Team Leaders, and Managers for sales assignments
+        filter.role = { $in: ["Sales Person", "Sales Team Leader", "Team Leader", "Manager"] };
+      } else {
+        filter.role = roleParam;
+      }
+    }
+
+    const users = await User.find(filter).select(
+      "fullName email role roles permissions createdAt active",
+    );
+
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      data: users,
+    });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Update user
+// @route   PUT /api/auth/users/:id
+// @access  Private (Admin and Manager, but Manager cannot modify Admin accounts)
+exports.updateUser = async (req, res) => {
+  try {
+    console.log(`Attempting to update user with ID: ${req.params.id}`);
+    const { fullName, email, role, roles } = req.body;
+
+    // Check if user exists
+    let user = await User.findById(req.params.id);
+
+    if (!user) {
+      console.log(`User not found with ID: ${req.params.id}`);
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Prevent Managers from modifying Admin accounts
+    if (req.user.role === "Manager" && user.role === "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot modify Admin accounts",
+      });
+    }
+
+    // Prevent Managers from creating new Admin accounts
+    if (req.user.role === "Manager" && role === "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot create Admin accounts",
+      });
+    }
+
+    // Update basic user data
+    user.fullName = fullName || user.fullName;
+    user.email = email || user.email;
+    user.role = role || user.role;
+    if (Array.isArray(roles)) {
+      user.roles = roles;
+    }
+    if (Array.isArray(permissions)) {
+      user.permissions = permissions;
+    }
+
+    // If password is provided, update it
+    if (req.body.password && req.body.password.trim() !== "") {
+      // Password complexity check
+      if (!strongPassword.test(req.body.password)) {
+        return res.status(400).json({
+          success: false,
+          message: "Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.",
+        });
+      }
+      user.password = req.body.password;
+      // The password will be hashed via the pre-save middleware
+    }
+
+    // Save the user - this will trigger the pre-save hook for password hashing
+    await user.save();
+
+    // Make sure we don't return the password
+    user = await User.findById(user._id);
+
+    console.log(`User updated successfully: ${user._id}`);
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "USER_UPDATED",
+      message: `User Updated: ${user.fullName} (${user.role}) by ${req.user.fullName}`,
+      userId: user._id,
+      updatedBy: req.user.id
+    });
+
+    res.status(200).json({
+      success: true,
+      data: user,
+    });
+  } catch (err) {
+    console.error(`Error updating user: ${err.message}`);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Delete user
+// @route   DELETE /api/auth/users/:id
+// @access  Private (Admin and Manager, but Manager cannot delete Admin accounts)
+exports.deleteUser = async (req, res) => {
+  try {
+    console.log(`Attempting to delete user with ID: ${req.params.id}`);
+
+    // Check if user exists
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      console.log(`User not found with ID: ${req.params.id}`);
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Prevent user from deleting themselves
+    if (user._id.toString() === req.user.id) {
+      console.log("User attempted to delete their own account");
+      return res.status(400).json({
+        success: false,
+        message: "You cannot delete your own account",
+      });
+    }
+
+    // Prevent Managers from deleting Admin accounts
+    if (req.user.role === "Manager" && user.role === "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot delete Admin accounts",
+      });
+    }
+
+    // Delete associated employee record if it exists
+    const Employee = require("../models/Employee");
+    const employee = await Employee.findOne({ userId: req.params.id });
+    if (employee) {
+      console.log(`Deleting associated employee record: ${employee._id}`);
+      await Employee.findByIdAndDelete(employee._id);
+    }
+
+    // Delete user with the findByIdAndDelete method
+    const result = await User.findByIdAndDelete(req.params.id);
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        message: "Failed to delete user",
+      });
+    }
+
+    console.log(
+      `User and associated employee deleted successfully: ${req.params.id}`,
+    );
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "USER_DELETED",
+      message: `User Deleted: ID ${req.params.id} (formerly ${user.fullName})`,
+      deletedBy: req.user.id
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {},
+    });
+  } catch (err) {
+    console.error(`Error deleting user: ${err.message}`);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Toggle user active status
+// @route   PUT /api/auth/users/:id/toggle-active
+// @access  Private (Admin and IT Manager)
+exports.toggleUserActive = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Prevent toggling own account
+    if (user._id.toString() === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot deactivate your own account",
+      });
+    }
+
+    // Prevent IT Manager from toggling Admin or other IT Manager accounts
+    if (
+      req.user.role === "IT Manager" &&
+      (user.role === "Admin" || user.role === "IT Manager")
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "IT Managers cannot modify Admin or other IT Manager accounts",
+      });
+    }
+
+    // Toggle active status
+    user.active = !user.active;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      data: user,
+      message: `User ${user.active ? "activated" : "deactivated"} successfully`,
+    });
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "USER_STATUS_TOGGLED",
+      message: `User ${user.fullName} has been ${user.active ? "activated" : "deactivated"} by ${req.user.fullName}`,
+      userId: user._id,
+      toggledBy: req.user.id
+    });
+  } catch (err) {
+    console.error(`Error toggling user active status: ${err.message}`);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Update profile picture
+// @route   PUT /api/auth/profile-picture
+// @access  Private
+exports.updateProfilePicture = async (req, res) => {
+  try {
+    console.log("Profile picture update requested by user:", req.user.id);
+    console.log("Request files:", req.files);
+
+    // Check if a file was uploaded
+    if (!req.files || !req.files.profilePicture) {
+      console.log("No profile picture file provided in request");
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a profile picture file",
+      });
+    }
+
+    const profilePictureFile = req.files.profilePicture[0];
+    console.log("Received profile picture file:", profilePictureFile.filename);
+
+    // Import R2 service
+    const { uploadToR2, isR2Configured } = require("../services/r2Service");
+
+    let profilePictureUrl;
+
+    if (isR2Configured) {
+      // Upload to Cloudflare R2
+      console.log("Uploading profile picture to Cloudflare R2...");
+      const uploadResult = await uploadToR2(
+        profilePictureFile,
+        "profile-pictures",
+      );
+      profilePictureUrl = uploadResult.url;
+      console.log("R2 upload successful:", profilePictureUrl);
+    } else {
+      // Fallback to local storage
+      console.log("R2 not configured, using local storage");
+      const fs = require("fs");
+      const profilePicturesDir = UPLOAD_PATHS.PROFILE_PICTURES;
+      const destPath = path.join(
+        profilePicturesDir,
+        profilePictureFile.filename,
+      );
+
+      try {
+        fs.mkdirSync(profilePicturesDir, { recursive: true });
+        fs.copyFileSync(profilePictureFile.path, destPath);
+        fs.unlinkSync(profilePictureFile.path);
+      } catch (err) {
+        console.error("Local storage error:", err);
+      }
+
+      profilePictureUrl = `/uploads/profile-pictures/${profilePictureFile.filename}`;
+    }
+
+    // Update the user's profile picture in MongoDB
+    console.log(
+      "Updating user profile picture in database:",
+      profilePictureUrl,
+    );
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { profilePicture: profilePictureUrl },
+      { new: true, runValidators: true },
+    );
+
+    if (!user) {
+      console.log("User not found with ID:", req.user.id);
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Synchronize with associated employee record if it exists
+    const Employee = require("../models/Employee");
+    try {
+      const employee = await Employee.findOne({ userId: req.user.id });
+      if (employee) {
+        console.log("Found associated employee, updating photograph field...");
+        employee.photograph = profilePictureUrl;
+        
+        // Ensure documents object is initialized and contains the photo
+        if (!employee.documents) {
+          employee.documents = {};
+        }
+        // Set both 'photograph' and 'photo' for maximum compatibility with different UI versions
+        employee.documents.photograph = profilePictureUrl;
+        employee.documents.photo = profilePictureUrl;
+        
+        // Mark as modified if it's a mixed type
+        employee.markModified('documents');
+        await employee.save();
+        console.log("Employee profile photo synchronized successfully");
+      }
+    } catch (empError) {
+      console.warn("Failed to synchronize with employee record:", empError.message);
+      // Non-critical, so we don't fail the entire request
+    }
+
+    console.log("Profile picture updated successfully for user:", user._id);
+    res.status(200).json({
+      success: true,
+      data: user,
+      profilePicture: profilePictureUrl,
+    });
+  } catch (err) {
+    console.error(`Error updating profile picture: ${err.message}`);
+    console.error("Stack trace:", err.stack);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Create new user (for Admin and Manager)
+// @route   POST /api/auth/users
+// @access  Private (Admin and Manager, but Manager cannot create Admin accounts)
+exports.createUser = async (req, res) => {
+  try {
+    console.log("Create user attempt by:", req.user.role, "for:", req.body);
+    const { fullName, email, password, role } = req.body;
+
+    // Basic validation
+    if (!fullName || !email || !password) {
+      console.log("Missing required fields for user creation");
+      return res.status(400).json({
+        success: false,
+        message: "Please provide name, email and password",
+      });
+    }
+
+    // Prevent Managers from creating Admin accounts
+    if (req.user.role === "Manager" && role === "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot create Admin accounts",
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      console.log(`User with email ${email} already exists`);
+      return res.status(400).json({
+        success: false,
+        message: "Email already registered",
+      });
+    }
+
+    console.log("Creating new user...");
+    // Create user
+    const user = await User.create({
+      fullName,
+      email,
+      password,
+      role: role || "Sales Person", // Default role if not specified
+    });
+
+    console.log(`User created successfully with ID: ${user._id}`);
+
+    // Return user data without password
+    const userData = await User.findById(user._id);
+
+    res.status(201).json({
+      success: true,
+      data: userData,
+    });
+  } catch (err) {
+    console.error("User creation error details:", {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+    });
+
+    // Provide more specific error messages for common issues
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map((val) => val.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(", "),
+      });
+    }
+
+    if (err.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: "Email already registered",
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: err.message || "Internal server error during user creation",
+    });
+  }
+};
+
+// @desc    Create new user with documents (for Admin and Manager)
+// @route   POST /api/auth/users/with-documents
+// @access  Private (Admin and Manager, but Manager cannot create Admin accounts)
+exports.createUserWithDocuments = async (req, res) => {
+  try {
+    console.log("Create user with documents attempt by:", req.user.role);
+    console.log("Request body:", req.body);
+    console.log(
+      "Request files:",
+      req.files ? Object.keys(req.files) : "No files",
+    );
+
+    const { fullName, email, password, role } = req.body;
+
+    // Basic validation
+    if (!fullName || !email || !password) {
+      console.log("Missing required fields for user creation");
+      return res.status(400).json({
+        success: false,
+        message: "Please provide name, email and password",
+      });
+    }
+
+    // Prevent Managers from creating Admin accounts
+    if (req.user.role === "Manager" && role === "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot create Admin accounts",
+      });
+    }
+
+    // IT Manager restriction (cannot create Admin/IT Manager)
+    if (
+      req.user.role === "IT Manager" &&
+      (role === "Admin" || role === "IT Manager")
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "IT Managers cannot create Admin or other IT Manager accounts",
+      });
+    }
+
+    if (
+      req.user.role === "IT Manager" &&
+      !["IT Intern", "IT Permanent"].includes(role)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "IT Managers can only create IT Interns and Permanent IT staff.",
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email already registered" });
+    }
+
+    // Documents are now optional - users can be created without documents
+    // Documents will be processed if provided, but are not required
+
+    // Create user
+    let user;
+    try {
+      user = await User.create({
+        fullName,
+        email,
+        password,
+        role: role || "Sales Person",
+      });
+    } catch (userError) {
+      console.error("Error creating user:", userError);
+      throw userError;
+    }
+
+    // Handle employee creation for roles
+    if (
+      [
+        "Sales Person",
+        "Lead Person",
+        "Manager",
+        "Employee",
+        "IT Manager",
+        "IT Intern",
+        "IT Permanent",
+      ].includes(role)
+    ) {
+      try {
+        const Employee = require("../models/Employee");
+        const Department = require("../models/Department");
+        const Role = require("../models/EmployeeRole");
+
+        // Department: IT for IT roles, else General
+        let department;
+        if (["IT Manager", "IT Intern", "IT Permanent"].includes(role)) {
+          department =
+            (await Department.findOne({ name: "IT" })) ||
+            (await Department.create({
+              name: "IT",
+              description: "IT Department",
+            }));
+        } else {
+          department =
+            (await Department.findOne({ name: "General" })) ||
+            (await Department.create({
+              name: "General",
+              description: "General Department for all employees",
+            }));
+        }
+
+        // Employee Role
+        let employeeRole =
+          (await Role.findOne({ name: role })) ||
+          (await Role.create({ name: role, description: `Role for ${role}` }));
+
+        // Build employee payload
+        const employeeData = {
+          fullName,
+          email,
+          userId: user._id,
+          role: employeeRole._id,
+          department: department._id,
+          phoneNumber: req.body.phoneNumber || "",
+          whatsappNumber: req.body.whatsappNumber || "",
+          linkedInUrl: req.body.linkedInUrl || "",
+          currentAddress: req.body.currentAddress || "",
+          permanentAddress: req.body.permanentAddress || "",
+          dateOfBirth: req.body.dateOfBirth || null,
+          joiningDate: req.body.joiningDate || new Date(),
+          salary: req.body.salary ? parseFloat(req.body.salary) : 0,
+          status: req.body.status || "ACTIVE",
+          collegeName: req.body.collegeName || "",
+          internshipDuration: req.body.internshipDuration
+            ? parseInt(req.body.internshipDuration)
+            : null,
+        };
+
+        // Set employmentType for IT roles
+        if (role === "IT Intern") {
+          employeeData.employmentType = "INTERN";
+          // Handle internship dates
+          if (req.body.internshipStartDate) {
+            employeeData.internshipStartDate = new Date(
+              req.body.internshipStartDate,
+            );
+          }
+          if (req.body.internshipEndDate) {
+            employeeData.internshipEndDate = new Date(
+              req.body.internshipEndDate,
+            );
+          }
+        } else if (role === "IT Permanent") {
+          employeeData.employmentType = "PERMANENT";
+        }
+
+        // Handle skills field (comma-separated string to array)
+        if (req.body.skills) {
+          const skillsStr =
+            typeof req.body.skills === "string" ? req.body.skills : "";
+          employeeData.skills = skillsStr
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+        }
+
+        // Process uploaded documents using file storage service
+        if (req.files) {
+          const documentTypes = [
+            "photograph",
+            "tenthMarksheet",
+            "twelfthMarksheet",
+            "bachelorDegree",
+            "postgraduateDegree",
+            "aadharCard",
+            "panCard",
+            "pcc",
+            "resume",
+            "offerLetter",
+          ];
+          employeeData.documents = {}; // Initialize documents object
+          for (const docType of documentTypes) {
+            if (req.files[docType] && req.files[docType][0]) {
+              const file = req.files[docType][0];
+              try {
+                const fileStorage = require("../services/fileStorageService");
+                const uploaded = await fileStorage.uploadEmployeeDoc(
+                  file,
+                  docType,
+                );
+                // Store in both individual field and documents object for consistency
+                employeeData[docType] = uploaded;
+                employeeData.documents[docType] = uploaded;
+              } catch (fileError) {
+                console.error(`Error processing file ${docType}:`, fileError);
+              }
+            }
+          }
+        }
+
+        await Employee.create(employeeData);
+      } catch (employeeError) {
+        await User.findByIdAndDelete(user._id);
+        throw new Error(
+          `Failed to create employee record: ${employeeError.message}`,
+        );
+      }
+    }
+
+    const userData = await User.findById(user._id);
+    return res.status(201).json({
+      success: true,
+      data: userData,
+      message: "User created successfully with documents",
+    });
+  } catch (err) {
+    console.error("User creation with documents error details:", {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+    });
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Internal server error during user creation",
+    });
+  }
+};
+
+// @desc    Update user with documents
+// @route   PUT /api/auth/users/:id/with-documents
+// @access  Private (Admin and Manager, but Manager cannot modify Admin accounts)
+exports.updateUserWithDocuments = async (req, res) => {
+  try {
+    console.log(
+      `Attempting to update user with documents, ID: ${req.params.id}`,
+    );
+    console.log("Request body:", req.body);
+    console.log(
+      "Request files:",
+      req.files ? Object.keys(req.files) : "No files",
+    );
+
+    // Validate required parameters
+    if (!req.params.id) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required",
+      });
+    }
+
+    const { fullName, email, role } = req.body;
+
+    // Check if user exists
+    let user = await User.findById(req.params.id);
+
+    if (!user) {
+      console.log(`User not found with ID: ${req.params.id}`);
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Prevent Managers from modifying Admin accounts
+    if (req.user.role === "Manager" && user.role === "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot modify Admin accounts",
+      });
+    }
+
+    // Prevent Managers from making users Admin
+    if (req.user.role === "Manager" && role === "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Managers cannot create Admin accounts",
+      });
+    }
+
+    // Update user fields - only update provided fields
+    const updateData = {};
+    if (fullName && fullName.trim() !== "") updateData.fullName = fullName;
+    if (email && email.trim() !== "")
+      updateData.email = email.toLowerCase().trim();
+    if (role && role.trim() !== "") updateData.role = role;
+
+    if (req.body.permissions !== undefined) {
+      let parsedPerms = [];
+      if (Array.isArray(req.body.permissions)) {
+        parsedPerms = req.body.permissions;
+      } else if (typeof req.body.permissions === "string") {
+        try {
+          parsedPerms = JSON.parse(req.body.permissions);
+        } catch {
+          parsedPerms = req.body.permissions ? [req.body.permissions] : [];
+        }
+      }
+      updateData.permissions = parsedPerms;
+    }
+
+    // Handle password update if provided
+    if (req.body.password && req.body.password.trim() !== "") {
+      const salt = await bcrypt.genSalt(10);
+      updateData.password = await bcrypt.hash(req.body.password, salt);
+    }
+
+    // Ensure we have at least some data to update
+    if (
+      Object.keys(updateData).length === 0 &&
+      (!req.files || Object.keys(req.files).length === 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "No data provided for update",
+      });
+    }
+
+    // Update user only if there's data to update
+    if (Object.keys(updateData).length > 0) {
+      user = await User.findByIdAndUpdate(req.params.id, updateData, {
+        new: true,
+        runValidators: true,
+      });
+    }
+
+    console.log(`User updated successfully: ${user._id}`);
+
+    // Handle employee update for non-admin/non-hr roles
+    const userRole = updateData.role || user.role;
+    if (
+      [
+        "Sales Person",
+        "Lead Person",
+        "Manager",
+        "Employee",
+        "IT Manager",
+        "IT Intern",
+        "IT Permanent",
+      ].includes(userRole)
+    ) {
+      const Employee = require("../models/Employee");
+      const Department = require("../models/Department");
+      const Role = require("../models/EmployeeRole");
+
+      console.log(
+        `Looking for employee record for user: ${user._id}, role: ${userRole}`,
+      );
+
+      // Debug: Check what employees exist with this email
+      const allEmployeesWithEmail = await Employee.find({ email: user.email });
+      console.log(
+        `All employees with email ${user.email}:`,
+        allEmployeesWithEmail.map((emp) => ({
+          id: emp._id,
+          userId: emp.userId,
+          fullName: emp.fullName,
+          email: emp.email,
+        })),
+      );
+
+      // Find or create employee record - try multiple search criteria
+      let employee = await Employee.findOne({ userId: user._id });
+
+      // If not found by userId, try by email
+      if (!employee) {
+        console.log(
+          `Employee not found by userId, trying by email: ${user.email}`,
+        );
+        employee = await Employee.findOne({ email: user.email });
+      }
+
+      console.log(`Employee lookup result:`, {
+        found: !!employee,
+        employeeId: employee?._id,
+        employeeUserId: employee?.userId,
+        employeeEmail: employee?.email,
+        searchUserId: user._id,
+        searchEmail: user.email,
+      });
+
+      if (!employee) {
+        console.log("No employee record found, creating new one...");
+
+        // Double-check: Make sure no employee exists with this email
+        const existingEmployeeByEmail = await Employee.findOne({
+          email: user.email,
+        });
+        if (existingEmployeeByEmail) {
+          console.log(
+            `Found existing employee by email, updating userId instead of creating new one`,
+          );
+          employee = existingEmployeeByEmail;
+          // Update the userId to link it to this user
+          employee.userId = user._id;
+          await employee.save();
+        } else {
+          // Find or create department
+          let department = await Department.findOne({ name: "General" });
+          if (!department) {
+            department = await Department.create({
+              name: "General",
+              description: "General Department for all employees",
+            });
+          }
+
+          // Find or create role for the current user role
+          let employeeRole = await Role.findOne({ name: userRole });
+          if (!employeeRole) {
+            employeeRole = await Role.create({
+              name: userRole,
+              description: `Role for ${userRole}`,
+            });
+          }
+
+          // Create new employee if doesn't exist
+          const employeeData = {
+            fullName: user.fullName,
+            email: user.email,
+            userId: user._id,
+            role: employeeRole._id,
+            department: department._id,
+          };
+
+          // Set employmentType for IT roles
+          if (userRole === "IT Intern") {
+            employeeData.employmentType = "INTERN";
+          } else if (userRole === "IT Permanent") {
+            employeeData.employmentType = "PERMANENT";
+          }
+
+          employee = await Employee.create(employeeData);
+          console.log(`Created new employee record: ${employee._id}`);
+        }
+      } else {
+        console.log(`Found existing employee record: ${employee._id}`);
+        // Update the userId if it's missing or different
+        if (
+          !employee.userId ||
+          employee.userId.toString() !== user._id.toString()
+        ) {
+          console.log(
+            `Updating employee userId from ${employee.userId} to ${user._id}`,
+          );
+          employee.userId = user._id;
+        }
+      }
+
+      // Update employee basic info with new values
+      if (updateData.fullName) employee.fullName = updateData.fullName;
+      if (updateData.email) employee.email = updateData.email;
+
+      // Update employee role if user role changed
+      if (updateData.role) {
+        // Find or create role for the new role
+        let newEmployeeRole = await Role.findOne({ name: updateData.role });
+        if (!newEmployeeRole) {
+          newEmployeeRole = await Role.create({
+            name: updateData.role,
+            description: `Role for ${updateData.role}`,
+          });
+        }
+        employee.role = newEmployeeRole._id;
+
+        // Update employmentType for IT roles
+        if (updateData.role === "IT Intern") {
+          employee.employmentType = "INTERN";
+        } else if (updateData.role === "IT Permanent") {
+          employee.employmentType = "PERMANENT";
+        }
+      }
+
+      // Also check current role for employmentType if not set
+      const currentRole = updateData.role || userRole;
+      if (!employee.employmentType && currentRole === "IT Intern") {
+        employee.employmentType = "INTERN";
+      } else if (!employee.employmentType && currentRole === "IT Permanent") {
+        employee.employmentType = "PERMANENT";
+      }
+
+      // Handle internship dates for IT Intern
+      if (
+        req.body.internshipStartDate !== undefined &&
+        req.body.internshipStartDate !== ""
+      ) {
+        employee.internshipStartDate = new Date(req.body.internshipStartDate);
+      }
+      if (
+        req.body.internshipEndDate !== undefined &&
+        req.body.internshipEndDate !== ""
+      ) {
+        employee.internshipEndDate = new Date(req.body.internshipEndDate);
+      }
+      // Allow clearing dates if empty string is sent
+      if (req.body.internshipStartDate === "") {
+        employee.internshipStartDate = null;
+      }
+      if (req.body.internshipEndDate === "") {
+        employee.internshipEndDate = null;
+      }
+
+      // Update all employee fields from form
+      if (req.body.phoneNumber !== undefined)
+        employee.phoneNumber = req.body.phoneNumber;
+      if (req.body.whatsappNumber !== undefined)
+        employee.whatsappNumber = req.body.whatsappNumber;
+      if (req.body.linkedInUrl !== undefined)
+        employee.linkedInUrl = req.body.linkedInUrl;
+      if (req.body.currentAddress !== undefined)
+        employee.currentAddress = req.body.currentAddress;
+      if (req.body.permanentAddress !== undefined)
+        employee.permanentAddress = req.body.permanentAddress;
+      if (req.body.dateOfBirth !== undefined)
+        employee.dateOfBirth = req.body.dateOfBirth
+          ? new Date(req.body.dateOfBirth)
+          : null;
+      if (req.body.joiningDate !== undefined)
+        employee.joiningDate = req.body.joiningDate
+          ? new Date(req.body.joiningDate)
+          : null;
+      if (req.body.salary !== undefined)
+        employee.salary = req.body.salary ? parseFloat(req.body.salary) : 0;
+      if (req.body.status !== undefined) employee.status = req.body.status;
+      if (req.body.collegeName !== undefined)
+        employee.collegeName = req.body.collegeName;
+      if (req.body.internshipDuration !== undefined)
+        employee.internshipDuration = req.body.internshipDuration
+          ? parseInt(req.body.internshipDuration)
+          : null;
+
+      // Update skills if provided
+      if (req.body.skills !== undefined) {
+        employee.skills = req.body.skills
+          ? req.body.skills.split(",").map((skill) => skill.trim())
+          : [];
+      }
+
+      // Update department if provided
+      if (req.body.department !== undefined && req.body.department !== "") {
+        const department = await Department.findById(req.body.department);
+        if (department) {
+          employee.department = department._id;
+        }
+      }
+
+      // Update employee role if provided
+      if (req.body.employeeRole !== undefined && req.body.employeeRole !== "") {
+        const employeeRole = await Role.findById(req.body.employeeRole);
+        if (employeeRole) {
+          employee.role = employeeRole._id;
+        }
+      }
+
+      // Process uploaded documents using file storage service
+      if (req.files) {
+        console.log(
+          "Processing file uploads in update auth controller:",
+          Object.keys(req.files),
+        );
+        const documentTypes = [
+          "photograph",
+          "tenthMarksheet",
+          "twelfthMarksheet",
+          "bachelorDegree",
+          "postgraduateDegree",
+          "aadharCard",
+          "panCard",
+          "pcc",
+          "resume",
+          "offerLetter",
+        ];
+
+        for (const docType of documentTypes) {
+          if (req.files[docType] && req.files[docType][0]) {
+            const file = req.files[docType][0];
+            console.log(`Processing file ${docType} for update:`, {
+              originalName: file.originalname,
+              filename: file.filename,
+              mimetype: file.mimetype,
+              size: file.size,
+              path: file.path,
+            });
+
+            try {
+              const fileStorage = require("../services/fileStorageService");
+              console.log(
+                `Calling fileStorage.uploadEmployeeDoc for ${docType}...`,
+              );
+              const uploaded = await fileStorage.uploadEmployeeDoc(
+                file,
+                docType,
+              );
+              console.log(
+                `File ${docType} uploaded successfully for update:`,
+                uploaded,
+              );
+
+              // Store the uploaded file info directly in employee data
+              employee[docType] = uploaded;
+              console.log(
+                `Stored ${docType} in employee record:`,
+                employee[docType],
+              );
+            } catch (fileError) {
+              console.error(
+                `Error processing file ${docType} for update:`,
+                fileError,
+              );
+              console.error(`File error details:`, {
+                message: fileError.message,
+                stack: fileError.stack,
+              });
+              // Continue with other files if one fails
+            }
+          }
+        }
+      } else {
+        console.log("No files found in update auth controller request");
+      }
+
+      console.log("About to save employee with documents:", {
+        employeeId: employee._id,
+        documents: {
+          photograph: !!employee.photograph,
+          tenthMarksheet: !!employee.tenthMarksheet,
+          aadharCard: !!employee.aadharCard,
+          panCard: !!employee.panCard,
+          pcc: !!employee.pcc,
+          resume: !!employee.resume,
+          offerLetter: !!employee.offerLetter,
+        },
+      });
+
+      // Use findByIdAndUpdate instead of save() to ensure proper update
+      const employeeUpdateData = {};
+
+      // Add all the updated fields
+      if (employee.fullName) employeeUpdateData.fullName = employee.fullName;
+      if (employee.email) employeeUpdateData.email = employee.email;
+      if (req.body.phoneNumber !== undefined)
+        employeeUpdateData.phoneNumber = req.body.phoneNumber;
+      if (req.body.whatsappNumber !== undefined)
+        employeeUpdateData.whatsappNumber = req.body.whatsappNumber;
+      if (req.body.linkedInUrl !== undefined)
+        employeeUpdateData.linkedInUrl = req.body.linkedInUrl;
+      if (req.body.currentAddress !== undefined)
+        employeeUpdateData.currentAddress = req.body.currentAddress;
+      if (req.body.permanentAddress !== undefined)
+        employeeUpdateData.permanentAddress = req.body.permanentAddress;
+      if (req.body.dateOfBirth !== undefined)
+        employeeUpdateData.dateOfBirth = req.body.dateOfBirth
+          ? new Date(req.body.dateOfBirth)
+          : null;
+      if (req.body.joiningDate !== undefined)
+        employeeUpdateData.joiningDate = req.body.joiningDate
+          ? new Date(req.body.joiningDate)
+          : null;
+      if (req.body.salary !== undefined)
+        employeeUpdateData.salary = req.body.salary
+          ? parseFloat(req.body.salary)
+          : 0;
+      if (req.body.status !== undefined)
+        employeeUpdateData.status = req.body.status;
+      if (req.body.collegeName !== undefined)
+        employeeUpdateData.collegeName = req.body.collegeName;
+      if (req.body.internshipDuration !== undefined)
+        employeeUpdateData.internshipDuration = req.body.internshipDuration
+          ? parseInt(req.body.internshipDuration)
+          : null;
+
+      // Add internship dates
+      if (req.body.internshipStartDate !== undefined) {
+        employeeUpdateData.internshipStartDate = req.body.internshipStartDate
+          ? new Date(req.body.internshipStartDate)
+          : null;
+      }
+      if (req.body.internshipEndDate !== undefined) {
+        employeeUpdateData.internshipEndDate = req.body.internshipEndDate
+          ? new Date(req.body.internshipEndDate)
+          : null;
+      }
+
+      // Add skills
+      if (req.body.skills !== undefined) {
+        employeeUpdateData.skills = req.body.skills
+          ? req.body.skills
+            .split(",")
+            .map((skill) => skill.trim())
+            .filter((skill) => skill.length > 0)
+          : [];
+      }
+
+      // Ensure employmentType is set correctly
+      if (employee.employmentType) {
+        employeeUpdateData.employmentType = employee.employmentType;
+      }
+
+      // Add document fields
+      if (employee.photograph)
+        employeeUpdateData.photograph = employee.photograph;
+      if (employee.tenthMarksheet)
+        employeeUpdateData.tenthMarksheet = employee.tenthMarksheet;
+      if (employee.twelfthMarksheet)
+        employeeUpdateData.twelfthMarksheet = employee.twelfthMarksheet;
+      if (employee.bachelorDegree)
+        employeeUpdateData.bachelorDegree = employee.bachelorDegree;
+      if (employee.postgraduateDegree)
+        employeeUpdateData.postgraduateDegree = employee.postgraduateDegree;
+      if (employee.aadharCard)
+        employeeUpdateData.aadharCard = employee.aadharCard;
+      if (employee.panCard) employeeUpdateData.panCard = employee.panCard;
+      if (employee.pcc) employeeUpdateData.pcc = employee.pcc;
+      if (employee.resume) employeeUpdateData.resume = employee.resume;
+      if (employee.offerLetter)
+        employeeUpdateData.offerLetter = employee.offerLetter;
+
+      console.log("Update data for employee:", employeeUpdateData);
+
+      employee = await Employee.findByIdAndUpdate(
+        employee._id,
+        employeeUpdateData,
+        {
+          new: true,
+          runValidators: true,
+        },
+      );
+
+      console.log(`Employee updated successfully with ID: ${employee._id}`);
+
+      // Verify the saved employee data
+      const savedEmployee = await Employee.findById(employee._id);
+      console.log("Saved employee verification:", {
+        employeeId: savedEmployee._id,
+        documents: {
+          photograph: !!savedEmployee.photograph,
+          tenthMarksheet: !!savedEmployee.tenthMarksheet,
+          aadharCard: !!savedEmployee.aadharCard,
+          panCard: !!savedEmployee.panCard,
+          pcc: !!savedEmployee.pcc,
+          resume: !!savedEmployee.resume,
+          offerLetter: !!savedEmployee.offerLetter,
+        },
+      });
+    } else {
+      console.log(`User role ${userRole} does not require employee record`);
+    }
+
+    // Fetch updated employee data if it exists
+    let updatedEmployeeData = null;
+    if (
+      [
+        "Sales Person",
+        "Lead Person",
+        "Manager",
+        "Employee",
+        "IT Manager",
+        "IT Intern",
+        "IT Permanent",
+      ].includes(userRole)
+    ) {
+      const Employee = require("../models/Employee");
+      updatedEmployeeData = await Employee.findOne({ userId: user._id })
+        .populate("department", "name")
+        .populate("role", "name");
+    }
+
+    res.status(200).json({
+      success: true,
+      data: user,
+      employee: updatedEmployeeData,
+    });
+  } catch (err) {
+    console.error(`Error updating user with documents: ${err.message}`);
+    console.error(`Error stack: ${err.stack}`);
+    console.error(`Error details:`, {
+      name: err.name,
+      code: err.code,
+      errors: err.errors,
+    });
+    res.status(400).json({
+      success: false,
+      message: err.message,
+      details: err.errors || err.message,
+    });
+  }
+};
+
+// @desc    Update user profile
+// @route   PUT /api/auth/me
+// @access  Private
+exports.updateProfile = async (req, res) => {
+  try {
+    console.log("Profile update requested by user:", req.user.id);
+    console.log("Request body:", req.body);
+
+    const { fullName, email } = req.body;
+
+    // Build update object
+    const updateData = {};
+    if (fullName) updateData.fullName = fullName;
+    if (email) updateData.email = email;
+
+    // Update password if provided
+    if (req.body.password) {
+      const salt = await bcrypt.genSalt(10);
+      updateData.password = await bcrypt.hash(req.body.password, salt);
+    }
+
+    // Update user
+    const user = await User.findByIdAndUpdate(req.user.id, updateData, {
+      new: true,
+      runValidators: true,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: user,
+    });
+  } catch (err) {
+    console.error("Error updating profile:", err);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Forgot password
+// @route   POST /api/auth/forgot-password
+// @access  Public
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const { sendPasswordResetOTP } = require("../utils/emailService");
+
+    // Normalize email to lowercase for case-insensitive search
+    const normalizedEmail = email ? email.toLowerCase().trim() : "";
+
+    console.log("Forgot password request for:", normalizedEmail);
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an email address",
+      });
+    }
+
+    // Find user by email (case-insensitive)
+    let user = await User.findOne({ email: normalizedEmail });
+
+    // If not found, try case-insensitive regex search
+    if (!user) {
+      user = await User.findOne({
+        email: {
+          $regex: new RegExp(
+            `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+            "i",
+          ),
+        },
+      });
+    }
+
+    if (!user) {
+      console.log("User not found for email:", normalizedEmail);
+      return res.status(404).json({
+        success: false,
+        message: "User not found with that email address",
+      });
+    }
+
+    console.log("Found user for password reset:", {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+    });
+
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    // Save OTP to user
+    user.verifyOtp = otp;
+    user.verifyOtpExpireAt = otpExpiry;
+    await user.save();
+
+    console.log("OTP generated and saved for user:", user.email);
+
+    // Send OTP via Brevo email
+    try {
+      await sendPasswordResetOTP(user.email, otp);
+      console.log("OTP email sent successfully to:", user.email);
+    } catch (emailError) {
+      console.error("Failed to send OTP email:", emailError.message);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send OTP email. Please try again later.",
+      });
+    }
+
+    // Success - don't return OTP to client for security
+    res.status(200).json({
+      success: true,
+      message: "OTP sent to your email address",
+    });
+  } catch (error) {
+    console.error("Forgot password error:", {
+      message: error.message,
+      stack: error.stack,
+    });
+
+    res.status(500).json({
+      success: false,
+      message:
+        "Error processing password reset request. Please try again later.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+// @desc    Verify OTP
+// @route   POST /api/auth/verifyOtp
+// @access  Public
+exports.verifyOTP = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    // Normalize email to lowercase for case-insensitive search
+    const normalizedEmail = email ? email.toLowerCase().trim() : "";
+
+    console.log("OTP verification request:", { email: normalizedEmail, otp });
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an email address",
+      });
+    }
+
+    // Find user by email (case-insensitive)
+    let user = await User.findOne({ email: normalizedEmail });
+
+    // If not found, try case-insensitive regex search
+    if (!user) {
+      user = await User.findOne({
+        email: {
+          $regex: new RegExp(
+            `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+            "i",
+          ),
+        },
+      });
+    }
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Check if OTP matches and is not expired
+    if (user.verifyOtp !== otp || Date.now() > user.verifyOtpExpireAt) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired OTP",
+      });
+    }
+
+    // Generate reset OTP
+    const resetOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const resetOtpExpiry = Date.now() + 30 * 60 * 1000; // 30 minutes
+
+    console.log("Generating reset OTP:", {
+      email,
+      resetOtp,
+      resetOtpExpiry,
+    });
+
+    // Save reset OTP
+    user.resetOtp = resetOtp;
+    user.resetOtpExpireAt = resetOtpExpiry;
+    user.verifyOtp = undefined;
+    user.verifyOtpExpireAt = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "OTP verified successfully",
+      resetOtp,
+    });
+  } catch (error) {
+    console.error("OTP verification error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error verifying OTP",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Reset password
+// @route   POST /api/auth/reset_password
+// @access  Public
+exports.resetPassword = async (req, res) => {
+  try {
+    const { email, resetOtp, newPassword } = req.body;
+
+    // Normalize email to lowercase for case-insensitive search
+    const normalizedEmail = email ? email.toLowerCase().trim() : "";
+
+    console.log("Password reset request:", {
+      email: normalizedEmail,
+      resetOtp,
+      hasPassword: !!newPassword,
+      passwordLength: newPassword ? newPassword.length : 0,
+      body: req.body,
+    });
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an email address",
+      });
+    }
+
+    // Validate password
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters long",
+      });
+    }
+
+    // Find user by email (case-insensitive)
+    let user = await User.findOne({ email: normalizedEmail });
+
+    // If not found, try case-insensitive regex search
+    if (!user) {
+      user = await User.findOne({
+        email: {
+          $regex: new RegExp(
+            `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+            "i",
+          ),
+        },
+      });
+    }
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Check if reset OTP matches and is not expired
+    console.log("Password Reset Validation:", {
+      email,
+      providedOtp: resetOtp,
+      storedOtp: user.resetOtp,
+      otpExpiry: new Date(user.resetOtpExpireAt),
+      now: new Date(),
+      timeDiff: (user.resetOtpExpireAt - Date.now()) / 1000 / 60 + " minutes",
+      password: newPassword ? "provided" : "missing",
+      passwordLength: newPassword?.length,
+    });
+
+    if (!user.resetOtp || !user.resetOtpExpireAt) {
+      return res.status(400).json({
+        success: false,
+        message: "No reset OTP found. Please request a new password reset.",
+      });
+    }
+
+    if (user.resetOtp !== resetOtp) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid reset OTP. Please use the OTP from the verification step.",
+      });
+    }
+
+    if (Date.now() > user.resetOtpExpireAt) {
+      // Clear expired OTPs
+      user.resetOtp = undefined;
+      user.resetOtpExpireAt = undefined;
+      await user.save();
+
+      return res.status(400).json({
+        success: false,
+        message: "Reset OTP has expired. Please request a new password reset.",
+      });
+    }
+
+    // Update password
+    user.password = newPassword;
+    user.resetOtp = undefined;
+    user.resetOtpExpireAt = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Password reset successful",
+    });
+  } catch (error) {
+    console.error("Password reset error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error resetting password",
+      error: error.message,
+    });
+  }
+};
+
+// Get tokens from model, create cookies and send response
+const sendTokenResponse = async (user, statusCode, res) => {
+  // Create Access Token
+  const accessToken = user.getSignedJwtToken();
+  
+  // Create Refresh Token
+  const refreshToken = user.getSignedRefreshToken();
+
+  // Save Refresh Token to User record (for invalidation/rotation)
+  user.refreshToken = refreshToken;
+  await user.save({ validateBeforeSave: false });
+
+  // Cookie options for Refresh Token
+  const refreshCookieOptions = {
+    expires: new Date(
+      Date.now() + (process.env.REFRESH_TOKEN_COOKIE_EXPIRE || 7) * 24 * 60 * 60 * 1000
+    ),
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    path: "/api/auth/refresh" // Limit cookie exposure to refresh endpoint only
+  };
+
+  const permissionPayload = await getUserPermissions(user);
+
+  res
+    .status(statusCode)
+    .cookie("refreshToken", refreshToken, refreshCookieOptions)
+    .json({
+      success: true,
+      token: accessToken, // Return access token in body
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        roles: permissionPayload.roleNames,
+        permissions: permissionPayload.permissions,
+        profilePicture: user.profilePicture,
+      },
+    });
+};
+
+// @desc    Refresh Access Token
+// @route   POST /api/auth/refresh
+// @access  Public
+exports.refreshToken = async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(401).json({ success: false, message: "Refresh token missing" });
+    }
+
+    // Verify token
+    const jwt = require("jsonwebtoken");
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
+    } catch (err) {
+      return res.status(401).json({ success: false, message: "Invalid refresh token" });
+    }
+
+    // Check if user exists and has this refresh token
+    const user = await User.findById(decoded.id).select("+refreshToken");
+
+    if (!user || user.refreshToken !== refreshToken) {
+      return res.status(401).json({ success: false, message: "Session expired" });
+    }
+
+    // Generate new access token
+    const accessToken = user.getSignedJwtToken();
+
+    res.status(200).json({
+      success: true,
+      token: accessToken
+    });
+  } catch (err) {
+    console.error("Refresh token error:", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+exports.sendTokenResponse = sendTokenResponse;

@@ -1,0 +1,1018 @@
+const mongoose = require("mongoose");
+const Sale = require("../models/Sale");
+const User = require("../models/User");
+const {
+  sendPaymentConfirmationEmail,
+  sendServiceDeliveryEmail,
+} = require("../services/emailService");
+const trackChanges = require("../utils/changeTracker");
+
+// @desc    Get all sales
+// @route   GET /api/sales
+// @access  Private
+exports.getSales = async (req, res) => {
+  try {
+    let query;
+
+    // Copy req.query
+    const reqQuery = { ...req.query };
+
+    // Fields to exclude
+    const removeFields = ["select", "sort", "page", "limit", "full", "nocache"];
+
+    // Loop over removeFields and delete them from reqQuery
+    removeFields.forEach((param) => delete reqQuery[param]);
+
+    // If full=true is requested, ignore any date filters to ensure all sales are returned
+    if (req.query.full === "true") {
+      // Remove any potential date filters
+      delete reqQuery.date;
+      delete reqQuery.createdAt;
+      delete reqQuery.updatedAt;
+      // Remove any date range operators
+      Object.keys(reqQuery).forEach((key) => {
+        if (
+          key.includes("date") ||
+          key.includes("Date") ||
+          key.includes("created") ||
+          key.includes("updated")
+        ) {
+          delete reqQuery[key];
+        }
+      });
+    }
+
+    // Support collectionOwner and collectionStatus query filters
+    if (reqQuery.collectionOwner) {
+      reqQuery.currentCollectionOwners = reqQuery.collectionOwner;
+      delete reqQuery.collectionOwner;
+    }
+
+    // Create query string
+    let queryStr = JSON.stringify(reqQuery);
+
+    // Create operators ($gt, $gte, etc)
+    queryStr = queryStr.replace(
+      /\b(gt|gte|lt|lte|in)\b/g,
+      (match) => `$${match}`,
+    );
+
+    const parsedQuery = JSON.parse(queryStr);
+
+    // If user is a sales person / team leader, show their sales or sales assigned to them for collection
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+      if (parsedQuery.salesPerson) {
+        query = Sale.find(parsedQuery);
+      } else if (parsedQuery.currentCollectionOwners) {
+        query = Sale.find(parsedQuery);
+      } else {
+        query = Sale.find({
+          $or: [
+            { salesPerson: req.user.id },
+            { currentCollectionOwners: req.user.id },
+          ],
+          ...parsedQuery,
+        });
+      }
+    }
+    // If user is a lead person, show sales where they are assigned as leadPerson OR their name is in leadBy field
+    else if (req.user.role === "Lead Person") {
+      const leadPersonName = req.user.fullName;
+
+      // Security: Use exact string match instead of regex to prevent ReDoS attacks
+      // Validate name length to prevent abuse
+      if (!leadPersonName || leadPersonName.length > 100) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid user name",
+        });
+      }
+
+      // Combine parsedQuery with lead person filter using $and
+      const leadPersonQuery = {
+        $and: [
+          {
+            $or: [
+              { leadPerson: req.user.id },
+              { leadBy: leadPersonName }, // Exact match, case-sensitive
+            ],
+          },
+          parsedQuery,
+        ],
+      };
+      query = Sale.find(leadPersonQuery);
+    }
+    // Branch Partner sees sales belonging to their branch(es)
+    else if (req.user.role === "Branch Partner") {
+      let branchIds = req.user.branchIds || [];
+      if (req.user.branchId && !branchIds.some(id => id.toString() === req.user.branchId.toString())) {
+        branchIds.push(req.user.branchId);
+      }
+      if (branchIds.length === 0) {
+        const Employee = require("../models/Employee");
+        const emp = await Employee.findOne({ userId: req.user._id });
+        if (emp && emp.branchId) branchIds.push(emp.branchId);
+      }
+      const branchFilter = branchIds.length > 0 ? { branchId: { $in: branchIds } } : {};
+      query = Sale.find({
+        ...branchFilter,
+        ...parsedQuery,
+      });
+    }
+    // Admin and Manager can see all
+    else {
+      query = Sale.find(parsedQuery);
+    }
+
+    // Select Fields
+    if (req.query.select) {
+      const fields = req.query.select.split(",").join(" ");
+      query = query.select(fields);
+    }
+
+    // Sort
+    if (req.query.sort) {
+      const sortBy = req.query.sort.split(",").join(" ");
+      query = query.sort(sortBy);
+    } else {
+      query = query.sort("-date");
+    }
+
+    // Populate
+    query = query.populate("salesPerson leadPerson currentCollectionOwners", "fullName email");
+
+    // Pagination
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 25;
+    const startIndex = (page - 1) * limit;
+    const endIndex = page * limit;
+    const total = await Sale.countDocuments();
+
+    query = query.skip(startIndex).limit(limit);
+
+    // Executing query
+    const sales = await query;
+
+    // Ensure currency fields are consistent for paginated sales
+    const processedSales = sales.map((sale) => {
+      const saleObj = sale.toObject();
+
+      // Ensure currency fields are properly set
+      if (!saleObj.totalCostCurrency) {
+        saleObj.totalCostCurrency = saleObj.currency || "USD";
+      }
+      if (!saleObj.tokenAmountCurrency) {
+        saleObj.tokenAmountCurrency = saleObj.currency || "USD";
+      }
+      if (!saleObj.currency) {
+        saleObj.currency = saleObj.totalCostCurrency || "USD";
+      }
+
+      return saleObj;
+    });
+
+    // Pagination result
+    const pagination = {};
+
+    if (endIndex < total) {
+      pagination.next = {
+        page: page + 1,
+        limit,
+      };
+    }
+
+    if (startIndex > 0) {
+      pagination.prev = {
+        page: page - 1,
+        limit,
+      };
+    }
+
+    // Check if this is a request for all sales without pagination
+    if (req.query.full === "true") {
+      // Apply the same role-based filtering for full results, but ignore all query parameters
+      let fullQuery;
+
+      if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+        fullQuery = Sale.find({
+          $or: [
+            { salesPerson: req.user.id },
+            { currentCollectionOwners: req.user.id },
+          ],
+        });
+      } else if (req.user.role === "Lead Person") {
+        fullQuery = Sale.find({ leadPerson: req.user.id });
+      }
+      // Only Admin and Manager can see all sales
+      else if (req.user.role === "Admin" || req.user.role === "Manager") {
+        fullQuery = Sale.find({});
+      } else {
+        // For any other role, return empty results
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to access sales data",
+        });
+      }
+
+      const allSales = await fullQuery
+        .populate("salesPerson leadPerson currentCollectionOwners", "fullName email")
+        .sort("-date");
+
+      // Ensure currency fields are consistent for all sales
+      const processedSales = allSales.map((sale) => {
+        const saleObj = sale.toObject();
+
+        // Ensure currency fields are properly set
+        if (!saleObj.totalCostCurrency) {
+          saleObj.totalCostCurrency = saleObj.currency || "USD";
+        }
+        if (!saleObj.tokenAmountCurrency) {
+          saleObj.tokenAmountCurrency = saleObj.currency || "USD";
+        }
+        if (!saleObj.currency) {
+          saleObj.currency = saleObj.totalCostCurrency || "USD";
+        }
+
+        return saleObj;
+      });
+
+      return res.status(200).json({
+        success: true,
+        count: processedSales.length,
+        data: processedSales,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      count: processedSales.length,
+      pagination,
+      data: processedSales,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Get single sale
+// @route   GET /api/sales/:id
+// @access  Private
+exports.getSale = async (req, res) => {
+  try {
+    const sale = await Sale.findById(req.params.id).populate(
+      "salesPerson leadPerson createdBy currentCollectionOwners",
+      "fullName email",
+    );
+
+    if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: "Sale not found",
+      });
+    }
+
+    // Check if user can access this sale
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+      const salesPersonId =
+        sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+      const isCollectionOwner = sale.currentCollectionOwners?.some(
+        (id) => (id._id || id).toString() === userId
+      );
+
+      if (salesPersonId !== userId && !isCollectionOwner) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to access this sale",
+        });
+      }
+    }
+
+    if (req.user.role === "Lead Person") {
+      const leadPersonId =
+        sale.leadPerson?._id?.toString() || sale.leadPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+
+      if (leadPersonId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to access this sale",
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: sale,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Create new sale
+// @route   POST /api/sales
+// @access  Private
+exports.createSale = async (req, res) => {
+  try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Sale creation is not allowed.",
+      });
+    }
+    // Add user to req.body
+    req.body.createdBy = req.user.id;
+
+    // If no salesPerson is specified, use the current user
+    if (!req.body.salesPerson) {
+      req.body.salesPerson = req.user.id;
+    }
+
+    // Handle empty leadPerson - set to undefined so mongoose doesn't try to cast empty string to ObjectId
+    if (req.body.leadPerson === "" || req.body.leadPerson === "null") {
+      delete req.body.leadPerson;
+    }
+
+    // Enforce 100% payment on Completed status
+    if (req.body.status === "Completed") {
+      req.body.tokenAmount = req.body.totalCost || 0;
+      req.body.pending = false;
+    }
+
+    // SECURITY: Always derive branch from salesperson's Employee.branchId (ignore client-sent branchId)
+    delete req.body.branchId;
+    const Employee = require("../models/Employee");
+    const salesPersonId = req.body.salesPerson;
+    if (salesPersonId) {
+      const emp = await Employee.findOne({
+        $or: [{ userId: salesPersonId }, { _id: salesPersonId }]
+      }).select("branchId");
+      if (emp && emp.branchId) {
+        req.body.branchId = emp.branchId;
+      } else {
+        req.body.branchId = null;
+      }
+    } else {
+      req.body.branchId = null;
+    }
+
+    // Create sale
+    const sale = await Sale.create(req.body);
+
+    // Trigger workflows for sale_created
+    try {
+      const workflowService = require("../services/workflowService");
+      await workflowService.executeWorkflows("sale_created", {
+        ...sale.toObject(),
+        saleId: sale._id,
+      });
+    } catch (workflowError) {
+      console.error("Workflow execution error (non-blocking):", workflowError);
+    }
+
+    // REAL-TIME PERFORMANCE UPDATE
+    // Calculate performance for salesPerson and leadPerson immediately
+    try {
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
+      const today = new Date();
+
+      // Update for sales person
+      if (sale.salesPerson) {
+        console.log(
+          `⚡️ Triggering real-time performance update for salesPerson (sale created): ${sale.salesPerson}`,
+        );
+        queuePerformanceCalculation(
+          sale.salesPerson,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${sale.salesPerson}:`,
+            err.message,
+          ),
+        );
+      }
+
+      // Update for lead person (if exists)
+      if (sale.leadPerson) {
+        console.log(
+          `⚡️ Triggering real-time performance update for leadPerson (sale created): ${sale.leadPerson}`,
+        );
+        queuePerformanceCalculation(
+          sale.leadPerson,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${sale.leadPerson}:`,
+            err.message,
+          ),
+        );
+      }
+    } catch (perfError) {
+      console.error("Performance update error (non-blocking):", perfError);
+    }
+
+    // Notify all admins
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `New sale created by ${req.user.fullName} for customer ${sale.customerName}. Course: ${sale.course}, Amount: ${sale.totalCost} ${sale.totalCostCurrency}`,
+        data: { saleId: sale._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: sale,
+    });
+  } catch (err) {
+    if (err.name === "ValidationError") {
+      const message = Object.values(err.errors).map((val) => val.message);
+      return res.status(400).json({
+        success: false,
+        message: message,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Update sale
+// @route   PUT /api/sales/:id
+// @access  Private
+exports.updateSale = async (req, res) => {
+  try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Sale update is not allowed.",
+      });
+    }
+    let sale = await Sale.findById(req.params.id).populate(
+      "salesPerson leadPerson",
+      "fullName email",
+    );
+
+    if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: "Sale not found",
+      });
+    }
+
+    const oldSale = sale.toObject();
+
+    // Store original values for comparison
+    const originalStatus = sale.status;
+    const originalTokenAmount = sale.tokenAmount;
+    const originalTotalCost = sale.totalCost;
+
+    // Check permissions
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+      const salesPersonId =
+        sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+      const isCollectionOwner = sale.currentCollectionOwners?.some(
+        (id) => (id._id || id).toString() === userId
+      );
+
+      if (salesPersonId !== userId && !isCollectionOwner) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to update this sale",
+        });
+      }
+
+      // Non-managers cannot reassign the original sales person
+      delete req.body.salesPerson;
+    } else if (req.user.role === "Lead Person") {
+      // Lead person can only update sales where they are the lead person
+      const leadPersonId =
+        sale.leadPerson?._id?.toString() || sale.leadPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+
+      if (leadPersonId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to update this sale",
+        });
+      }
+    }
+
+    // Enforce 100% payment on Completed status
+    const finalStatus = req.body.status !== undefined ? req.body.status : sale.status;
+    if (finalStatus === "Completed") {
+      req.body.tokenAmount = req.body.totalCost !== undefined ? parseFloat(req.body.totalCost) : sale.totalCost;
+      req.body.pending = false;
+    }
+
+    // SECURITY: Ignore any branchId sent from client
+    delete req.body.branchId;
+
+    // If sale doesn't have a branchId snapshot yet, derive from salesperson's employee record
+    if (!sale.branchId) {
+      const targetSalesPerson = req.body.salesPerson || sale.salesPerson?._id || sale.salesPerson;
+      if (targetSalesPerson) {
+        const Employee = require("../models/Employee");
+        const emp = await Employee.findOne({
+          $or: [{ userId: targetSalesPerson }, { _id: targetSalesPerson }]
+        }).select("branchId");
+        if (emp && emp.branchId) {
+          req.body.branchId = emp.branchId;
+        }
+      }
+    }
+
+    // Add updatedBy field and timestamp
+    req.body.updatedBy = req.user.id;
+    req.body.updatedAt = new Date();
+
+    // Ensure remarks is preserved if not provided in update
+    if (req.body.remarks === undefined) {
+      req.body.remarks = sale.remarks || "";
+    }
+
+    // Preserve existing leadPerson if not provided or if being set to null/empty when sale already has one
+    // This prevents accidentally removing the leadPerson assignment during updates
+    console.log("Update sale - leadPerson handling:", {
+      existingLeadPerson: sale.leadPerson,
+      requestLeadPerson: req.body.leadPerson,
+      leadPersonType: typeof req.body.leadPerson,
+    });
+
+    if (sale.leadPerson) {
+      // If sale already has a leadPerson, preserve it unless explicitly changed
+      if (
+        req.body.leadPerson === null ||
+        req.body.leadPerson === undefined ||
+        req.body.leadPerson === ""
+      ) {
+        // Don't overwrite existing leadPerson with null/empty - preserve the existing one
+        delete req.body.leadPerson;
+        console.log("Preserving existing leadPerson:", sale.leadPerson);
+      } else {
+        // Ensure leadPerson is converted to ObjectId if it's a string
+        if (
+          typeof req.body.leadPerson === "string" &&
+          req.body.leadPerson.trim() !== ""
+        ) {
+          try {
+            req.body.leadPerson = new mongoose.Types.ObjectId(
+              req.body.leadPerson,
+            );
+            console.log(
+              "Converting leadPerson string to ObjectId:",
+              req.body.leadPerson,
+            );
+          } catch (err) {
+            console.error("Invalid leadPerson ID format:", req.body.leadPerson);
+            // If conversion fails, preserve existing
+            delete req.body.leadPerson;
+          }
+        }
+      }
+    } else {
+      // If sale doesn't have a leadPerson, only set it if explicitly provided and not empty
+      if (
+        req.body.leadPerson === null ||
+        req.body.leadPerson === undefined ||
+        req.body.leadPerson === ""
+      ) {
+        delete req.body.leadPerson;
+        console.log(
+          "No leadPerson in request and sale has none - leaving as is",
+        );
+      } else if (
+        typeof req.body.leadPerson === "string" &&
+        req.body.leadPerson.trim() !== ""
+      ) {
+        try {
+          req.body.leadPerson = new mongoose.Types.ObjectId(
+            req.body.leadPerson,
+          );
+          console.log("Setting new leadPerson:", req.body.leadPerson);
+        } catch (err) {
+          console.error("Invalid leadPerson ID format:", req.body.leadPerson);
+          delete req.body.leadPerson;
+        }
+      }
+    }
+
+    // Update the sale with all fields including remarks
+    sale = await Sale.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    }).populate("salesPerson leadPerson createdBy currentCollectionOwners", "fullName email");
+
+    // Automatically settle active collection assignments if status changed to Completed
+    if (sale.status === "Completed" && originalStatus !== "Completed") {
+      try {
+        const { settleSaleCollectionsOnComplete } = require("../services/collectionService");
+        await settleSaleCollectionsOnComplete(sale, req.user._id || req.user.id);
+      } catch (colErr) {
+        console.error("Non-blocking collection settlement error:", colErr);
+      }
+    }
+
+    // Trigger workflows for sale_updated
+    try {
+      const workflowService = require("../services/workflowService");
+      await workflowService.executeWorkflows("sale_updated", {
+        ...sale.toObject(),
+        saleId: sale._id,
+        originalStatus: originalStatus,
+        newStatus: sale.status,
+      });
+    } catch (workflowError) {
+      console.error("Workflow execution error (non-blocking):", workflowError);
+    }
+
+    // REAL-TIME PERFORMANCE UPDATE
+    // Calculate performance for salesPerson and leadPerson immediately
+    try {
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
+      const today = new Date();
+
+      // Update for sales person
+      if (sale.salesPerson) {
+        const salesPersonId = sale.salesPerson._id || sale.salesPerson;
+        console.log(
+          `⚡️ Triggering real-time performance update for salesPerson (sale updated): ${salesPersonId}`,
+        );
+        queuePerformanceCalculation(
+          salesPersonId,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${salesPersonId}:`,
+            err.message,
+          ),
+        );
+      }
+
+      // Update for lead person (if exists)
+      if (sale.leadPerson) {
+        const leadPersonId = sale.leadPerson._id || sale.leadPerson;
+        console.log(
+          `⚡️ Triggering real-time performance update for leadPerson (sale updated): ${leadPersonId}`,
+        );
+        queuePerformanceCalculation(
+          leadPersonId,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${leadPersonId}:`,
+            err.message,
+          ),
+        );
+      }
+    } catch (perfError) {
+      console.error("Performance update error (non-blocking):", perfError);
+    }
+
+    // Email logic - send emails when certain conditions are met
+    let emailResults = [];
+
+    // 1. Send payment confirmation email when token amount is updated (and customer has email)
+    if (
+      req.body.tokenAmount &&
+      req.body.tokenAmount !== originalTokenAmount &&
+      req.body.tokenAmount > 0
+    ) {
+      if (sale.email) {
+        try {
+          const paymentResult = await sendPaymentConfirmationEmail(
+            sale,
+            sale.salesPerson?.email,
+          );
+          emailResults.push({
+            type: "payment_confirmation",
+            success: paymentResult.success,
+            message: paymentResult.success
+              ? "Payment confirmation email sent"
+              : paymentResult.message,
+          });
+        } catch (emailError) {
+          emailResults.push({
+            type: "payment_confirmation",
+            success: false,
+            message: "Failed to send payment confirmation email",
+          });
+        }
+      } else {
+        emailResults.push({
+          type: "payment_confirmation",
+          success: false,
+          message: "Email unavailable - cannot send payment confirmation",
+        });
+      }
+    }
+
+    // 2. Send service delivery email when status changes to "Completed"
+    if (req.body.status === "Completed" && originalStatus !== "Completed") {
+      if (sale.email) {
+        try {
+          const deliveryResult = await sendServiceDeliveryEmail(
+            sale,
+            sale.salesPerson?.email,
+          );
+          emailResults.push({
+            type: "service_delivery",
+            success: deliveryResult.success,
+            message: deliveryResult.success
+              ? "Service delivery email sent"
+              : deliveryResult.message,
+          });
+        } catch (emailError) {
+          emailResults.push({
+            type: "service_delivery",
+            success: false,
+            message: "Failed to send service delivery email",
+          });
+        }
+      } else {
+        emailResults.push({
+          type: "service_delivery",
+          success: false,
+          message:
+            "Email unavailable - cannot send service delivery confirmation",
+        });
+      }
+    }
+
+    // Notify all admins of the update with details
+    try {
+      const notificationService = require("../services/notificationService");
+
+      const fieldLabels = {
+        customerName: "Customer Name",
+        email: "Email",
+        phoneNumber: "Phone",
+        course: "Course",
+        totalCost: "Total Cost",
+        tokenAmount: "Token Amount",
+        status: "Status",
+        paymentMethod: "Payment Method",
+        salesPerson: "Sales Person",
+        leadPerson: "Lead Person",
+        remarks: "Remarks",
+        feedback: "Feedback"
+      };
+
+      const changes = trackChanges(oldSale, sale.toObject(), fieldLabels);
+
+      if (changes.length > 0) {
+        await notificationService.notifyAdmins({
+          type: "ACTIVITY",
+          message: `${req.user.fullName} updated sale for ${sale.customerName}. Changes: ${changes.join(", ")}`,
+          data: { saleId: sale._id }
+        });
+      }
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: sale,
+      emailNotifications: emailResults.length > 0 ? emailResults : undefined,
+    });
+  } catch (err) {
+    if (err.name === "ValidationError") {
+      const message = Object.values(err.errors).map((val) => val.message);
+      return res.status(400).json({
+        success: false,
+        message: message,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Delete sale
+// @route   DELETE /api/sales/:id
+// @access  Private
+exports.deleteSale = async (req, res) => {
+  try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Sale deletion is not allowed.",
+      });
+    }
+    const sale = await Sale.findById(req.params.id);
+
+    if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: "Sale not found",
+      });
+    }
+
+    // Check permissions - only sales person who created it, manager, or admin can delete
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+      const salesPersonId =
+        sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
+      const userId = req.user._id?.toString() || req.user.id?.toString();
+
+      if (salesPersonId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to delete this sale",
+        });
+      }
+    } else if (req.user.role === "Lead Person") {
+      // Lead persons cannot delete sales
+      return res.status(403).json({
+        success: false,
+        message: "Lead persons cannot delete sales",
+      });
+    }
+
+    await sale.deleteOne();
+
+    // Notify all admins of the deletion
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `Sale for ${sale.customerName} (${sale.course || "N/A"}) of amount ${sale.totalCost || 0} ${sale.currency || "USD"} was deleted by ${req.user.fullName}.`,
+        data: { saleId: sale._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {},
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Get sales count
+// @route   GET /api/sales/count
+// @access  Private
+exports.getSalesCount = async (req, res) => {
+  try {
+    let count;
+
+    // If user is a sales person / team leader, only count their sales
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+      count = await Sale.countDocuments({
+        salesPerson: req.user.id,
+        isLeadPersonSale: { $ne: true }, // Exclude lead person sales
+        status: { $ne: "Cancelled" },
+      });
+    }
+    // If user is a lead person, only count sales with them as lead
+    else if (req.user.role === "Lead Person") {
+      count = await Sale.countDocuments({
+        leadPerson: req.user.id,
+        status: { $ne: "Cancelled" },
+      });
+    }
+    // Admin and Manager can see all
+    else {
+      count = await Sale.countDocuments({ status: { $ne: "Cancelled" } });
+    }
+
+    res.status(200).json({
+      success: true,
+      count,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Import sales from CSV
+// @route   POST /api/sales/import
+// @access  Private (Admin only)
+exports.importSales = async (req, res) => {
+  try {
+    console.log("=== IMPORT SALES REQUEST ===");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("User:", req.user.fullName, req.user.role);
+
+    // Handle both direct sales array and nested data structure
+    let sales = req.body.sales;
+    if (!sales && req.body.data && req.body.data.sales) {
+      sales = req.body.data.sales;
+      console.log("Found sales in nested data structure");
+    }
+
+    if (!sales || !Array.isArray(sales) || sales.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No sales data provided or invalid format",
+      });
+    }
+
+    console.log(`Importing ${sales.length} sales from CSV...`);
+
+    // Map CSV column names to our database fields
+    const mappedSales = sales.map((sale) => {
+      return {
+        customerName:
+          sale.CustomerName || sale["Customer Name"] || sale.customerName || "",
+        email: sale.Email || sale.email || "",
+        contactNumber:
+          sale.ContactNumber ||
+          sale["Contact Number"] ||
+          sale.contactNumber ||
+          sale.Phone ||
+          sale.phone ||
+          "",
+        countryCode:
+          sale.CountryCode || sale["Country Code"] || sale.countryCode || "+1",
+        country: sale.Country || sale.country || "",
+        course:
+          sale.Course || sale.course || sale.Product || sale.product || "",
+        amount: parseFloat(
+          sale.Amount || sale.amount || sale.Price || sale.price || 0,
+        ),
+        currency: sale.Currency || sale.currency || "USD",
+        status: sale.Status || sale.status || "Pending",
+        paymentMethod:
+          sale.PaymentMethod ||
+          sale["Payment Method"] ||
+          sale.paymentMethod ||
+          "Unknown",
+        date:
+          sale.Date || sale.date
+            ? new Date(sale.Date || sale.date)
+            : new Date(),
+        remarks: sale.Remarks || sale.remarks || "",
+        // Set created by to the current user (admin)
+        createdBy: req.user.id,
+        salesPerson: req.user.id, // Default to current user, can be updated later
+      };
+    });
+
+    // Validate the mapped data
+    const validSales = mappedSales.filter(
+      (sale) =>
+        sale.customerName &&
+        sale.contactNumber &&
+        sale.course &&
+        sale.amount > 0,
+    );
+
+    if (validSales.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid sales found in the imported data",
+      });
+    }
+
+    console.log(
+      `Found ${validSales.length} valid sales out of ${sales.length}`,
+    );
+
+    // Insert the sales into the database
+    const results = await Sale.insertMany(validSales, {
+      ordered: false, // Continue processing even if some documents have errors
+    });
+
+    console.log(`Successfully imported ${results.length} sales`);
+
+    res.status(201).json({
+      success: true,
+      count: results.length,
+      data: results,
+      errorCount: sales.length - results.length,
+    });
+  } catch (err) {
+    console.error("Sales import error:", err);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};

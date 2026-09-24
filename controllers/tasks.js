@@ -1,0 +1,821 @@
+const Task = require("../models/Task");
+const User = require("../models/User");
+const Lead = require("../models/Lead");
+const Sale = require("../models/Sale");
+const PerformanceSummary = require("../models/PerformanceSummary");
+const { notifyAdmins } = require("../services/notificationService");
+const trackChanges = require("../utils/changeTracker");
+
+// @desc    Get all tasks
+// @route   GET /api/tasks?department=IT
+// @access  Private (Admin, IT Manager can see all IT tasks. Employees see their own.)
+exports.getTasks = async (req, res) => {
+  try {
+    let query;
+
+    // Build filter object
+    const filter = {};
+
+    // Support assignedTo filter from query params
+    if (req.query.assignedTo) {
+      filter.assignedTo = req.query.assignedTo;
+    }
+
+    // Support department filter from query params
+    if (req.query.department) {
+      filter.department = req.query.department;
+    }
+
+    // Support salesPerson filter
+    if (req.query.salesPerson) {
+      filter.salesPerson = req.query.salesPerson;
+    }
+
+    // Support date filter
+    if (req.query.date) {
+      const searchDate = new Date(req.query.date);
+      const startOfDay = new Date(searchDate.setHours(0, 0, 0, 0));
+      const endOfDay = new Date(searchDate.setHours(23, 59, 59, 999));
+      filter.examDate = { $gte: startOfDay, $lte: endOfDay };
+    }
+
+    if (req.user.role === "Admin") {
+      // Admin sees all filtered tasks
+      query = Task.find(filter)
+        .populate("assignedTo", "fullName")
+        .populate("assignedBy", "fullName")
+        .populate("customer", "name NAME fullName customerName email EMAIL")
+        .lean();
+    } else if (req.user.role === "IT Manager") {
+      // IT Manager sees all tasks in the IT department, applying filters
+      filter.department = "IT";
+      query = Task.find(filter)
+        .populate("assignedTo", "fullName")
+        .populate("assignedBy", "fullName")
+        .populate("customer", "name NAME fullName customerName email EMAIL")
+        .lean();
+    } else if (["IT Intern", "IT Permanent"].includes(req.user.role)) {
+      // IT Intern/Permanent see only their assigned IT tasks, applying filters
+      filter.assignedTo = req.user.id;
+      filter.department = "IT";
+      query = Task.find(filter)
+        .populate("assignedTo", "fullName")
+        .populate("assignedBy", "fullName")
+        .populate("customer", "name NAME fullName customerName email EMAIL")
+        .lean();
+    } else {
+      // Other employees (like Sales Person) see tasks assigned to them or where they are the salesPerson
+      // Using $or to allow seeing tasks they assigned or are responsible for
+      query = Task.find({
+        $and: [
+          filter,
+          { $or: [{ assignedTo: req.user.id }, { salesPerson: req.user.id }] },
+        ],
+      })
+        .populate("assignedTo", "fullName")
+        .populate("assignedBy", "fullName")
+        .populate("customer", "name NAME fullName customerName email EMAIL")
+        .lean();
+    }
+
+    const tasks = await query;
+
+    // Ensure assignedTo, assignedBy, and customer are properly populated in batches (Resolving N+1 queries)
+    const missingUserIds = new Set();
+    const missingSaleIds = new Set();
+
+    tasks.forEach(task => {
+      if (task.assignedTo && (typeof task.assignedTo === 'string' || !task.assignedTo.fullName)) {
+        const id = typeof task.assignedTo === 'object' ? (task.assignedTo._id || task.assignedTo) : task.assignedTo;
+        missingUserIds.add(id.toString());
+      }
+      if (task.assignedBy && (typeof task.assignedBy === 'string' || !task.assignedBy.fullName)) {
+        const id = typeof task.assignedBy === 'object' ? (task.assignedBy._id || task.assignedBy) : task.assignedBy;
+        missingUserIds.add(id.toString());
+      }
+      if (task.customer) {
+        const customerId = typeof task.customer === 'object' ? task.customer._id : task.customer;
+        if (typeof task.customer === 'string' || (!task.customer.name && !task.customer.NAME && !task.customer.fullName)) {
+          if (customerId) {
+            missingSaleIds.add(customerId.toString());
+          }
+        }
+      }
+    });
+
+    const usersMap = new Map();
+    const salesMap = new Map();
+
+    const fetchPromises = [];
+    if (missingUserIds.size > 0) {
+      fetchPromises.push(
+        User.find({ _id: { $in: Array.from(missingUserIds) } })
+          .select("fullName")
+          .lean()
+          .then(users => {
+            users.forEach(u => usersMap.set(u._id.toString(), u));
+          })
+      );
+    }
+    if (missingSaleIds.size > 0) {
+      fetchPromises.push(
+        Sale.find({ _id: { $in: Array.from(missingSaleIds) } })
+          .lean()
+          .then(sales => {
+            sales.forEach(s => salesMap.set(s._id.toString(), s));
+          })
+      );
+    }
+
+    if (fetchPromises.length > 0) {
+      await Promise.all(fetchPromises);
+    }
+
+    const tasksWithUsers = tasks.map((task) => {
+      const taskObj = task;
+
+      // Handle assignedTo
+      if (taskObj.assignedTo) {
+        if (typeof taskObj.assignedTo === "string" || !taskObj.assignedTo.fullName) {
+          const userId = (typeof taskObj.assignedTo === "object" ? (taskObj.assignedTo._id || taskObj.assignedTo) : taskObj.assignedTo).toString();
+          const user = usersMap.get(userId);
+          taskObj.assignedTo = user ? {
+            _id: user._id.toString(),
+            fullName: user.fullName,
+          } : null;
+        } else if (taskObj.assignedTo._id) {
+          taskObj.assignedTo._id = taskObj.assignedTo._id.toString();
+        }
+      }
+
+      // Handle assignedBy
+      if (taskObj.assignedBy) {
+        if (typeof taskObj.assignedBy === "string" || !taskObj.assignedBy.fullName) {
+          const userId = (typeof taskObj.assignedBy === "object" ? (taskObj.assignedBy._id || taskObj.assignedBy) : taskObj.assignedBy).toString();
+          const user = usersMap.get(userId);
+          taskObj.assignedBy = user ? {
+            _id: user._id.toString(),
+            fullName: user.fullName,
+          } : null;
+        } else if (taskObj.assignedBy._id) {
+          taskObj.assignedBy._id = taskObj.assignedBy._id.toString();
+        }
+      }
+
+      // Handle customer population - if Lead populate failed, try Sale
+      if (taskObj.customer) {
+        const customerId = (typeof taskObj.customer === "object" ? taskObj.customer._id : taskObj.customer).toString();
+        if (typeof taskObj.customer === "string" || (!taskObj.customer.name && !taskObj.customer.NAME && !taskObj.customer.fullName)) {
+          const sale = salesMap.get(customerId);
+          if (sale) {
+            taskObj.customer = {
+              _id: sale._id,
+              name: sale.customerName,
+              email: sale.email,
+              phone: sale.contactNumber,
+              isReferenceSale: true
+            };
+          }
+        }
+      }
+
+      return taskObj;
+    });
+
+    res.status(200).json({
+      success: true,
+      count: tasksWithUsers.length,
+      data: tasksWithUsers,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+// @desc    Create a task
+// @route   POST /api/tasks
+// @access  Private (Admin, IT Manager)
+exports.createTask = async (req, res) => {
+  try {
+    req.body.assignedBy = req.user.id;
+
+    // an admin can create a task for any department, but an IT manager can only create IT tasks
+    if (req.user.role === "IT Manager") {
+      req.body.department = "IT";
+    }
+
+    const task = await Task.create(req.body);
+
+    // Fetch the populated task so we can access the assigner's name
+    const populatedTask = await Task.findById(task._id).populate("assignedBy", "fullName");
+
+    // Send instant notification to the assigned user
+    try {
+      const io = req.app.get("io");
+      if (io && task.assignedTo) {
+        const assignedToId = task.assignedTo.toString();
+        const assignerName = populatedTask.assignedBy ? populatedTask.assignedBy.fullName : "A Manager";
+
+        // Emit taskAssigned event to the assigned employee's room (room = user-${userId})
+        io.to(`user-${assignedToId}`).emit("taskAssigned", {
+          taskId: task._id.toString(),
+          taskTitle: task.title,
+          assignedBy: assignerName,
+          assignedAt: task.createdAt || Date.now()
+        });
+
+        // Debug: How many sockets are in the room?
+        const room = io.sockets.adapter.rooms.get(`user-${assignedToId}`);
+        const socketsInRoom = room ? room.size : 0;
+        console.log(`📋 taskAssigned emitted to room "user-${assignedToId}" — ${socketsInRoom} socket(s) in room`);
+      }
+    } catch (notifyError) {
+      console.error("Error sending task assignment notification:", notifyError);
+      // Don't fail the request if notification tracking fails
+    }
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "TASK_CREATED",
+      message: `New Task: "${task.title}" created by ${populatedTask.assignedBy?.fullName || 'Manager'} for ${task.department} department.`,
+      taskId: task._id
+    });
+
+    res.status(201).json({
+      success: true,
+      data: task,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Update a task
+// @route   PUT /api/tasks/:id
+// @access  Private
+exports.updateTask = async (req, res) => {
+  try {
+    let task = await Task.findById(req.params.id)
+      .populate("assignedTo", "fullName")
+      .populate("assignedBy", "fullName");
+
+    if (!task) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
+    }
+
+    const oldTask = task.toObject();
+    const isAssignee =
+      task.assignedTo?._id?.toString() === req.user.id.toString() ||
+      task.assignedTo?.toString() === req.user.id.toString();
+    const isAssigner =
+      task.assignedBy?._id?.toString() === req.user.id.toString() ||
+      task.assignedBy?.toString() === req.user.id.toString();
+    const isSalesPerson =
+      task.salesPerson?._id?.toString() === req.user.id.toString() ||
+      task.salesPerson?.toString() === req.user.id.toString();
+    const isAdmin = req.user.role === "Admin";
+    const isManager =
+      req.user.role === "IT Manager" && task.department === "IT";
+
+    const previousStatus = task.status;
+    const previousAssignedTo = task.assignedTo?._id?.toString() || task.assignedTo?.toString();
+
+    // Update completed status if provided
+    if (req.body.completed !== undefined) {
+      // Prevent employee from resubmitting if already confirmed
+      if (previousStatus === "Manager Confirmed" && !isAdmin && !isManager && !isAssigner && !isSalesPerson) {
+        return res.status(403).json({ success: false, message: "Task is already confirmed and cannot be resubmitted." });
+      }
+
+      task.completed = req.body.completed;
+      if (task.completed) {
+        task.status = "Employee Completed";
+        task.completedAt = Date.now();
+      } else {
+        task.status = "In Progress";
+      }
+    }
+
+    // Determine authorization level and perform updates
+    if (isAdmin || isManager || isAssigner || isSalesPerson) {
+      // Manager/Admin/Assigner/SalesPerson actions (Full Access)
+      if (req.body.status) task.status = req.body.status;
+      if (req.body.title !== undefined) task.title = req.body.title;
+      if (req.body.description !== undefined) task.description = req.body.description;
+      if (req.body.assignedTo) task.assignedTo = req.body.assignedTo;
+      if (req.body.examDate !== undefined) task.examDate = req.body.examDate;
+      if (req.body.examDateTime !== undefined) task.examDateTime = req.body.examDateTime;
+      if (req.body.course !== undefined) task.course = req.body.course;
+      if (req.body.taskType !== undefined) task.taskType = req.body.taskType;
+      if (req.body.priority !== undefined) task.priority = req.body.priority;
+      if (req.body.department !== undefined) task.department = req.body.department;
+
+      // Handle customer / manualCustomer fields cleanly
+      if (req.body.customer !== undefined) {
+        task.customer = req.body.customer || undefined;
+        if (req.body.customer) {
+          task.manualCustomer = undefined;
+        }
+      }
+      if (req.body.manualCustomer !== undefined) {
+        task.manualCustomer = req.body.manualCustomer || undefined;
+        if (req.body.manualCustomer) {
+          task.customer = undefined;
+        }
+      }
+
+      if (task.status === "Manager Confirmed") task.confirmedAt = Date.now();
+    } else if (isAssignee) {
+      // Assignee actions (Status & Completion Only)
+      // Prevent assignee from changing status if confirmed
+      if (previousStatus === "Manager Confirmed") {
+        return res.status(403).json({ success: false, message: "Task is locked after manager confirmation." });
+      }
+
+      const desired = req.body.status;
+      const allowed = [
+        "In Progress",
+        "Partially Completed",
+        "Employee Completed",
+        "Not Completed",
+      ];
+      if (desired && allowed.includes(desired)) {
+        task.status = desired;
+        if (desired === "Employee Completed") {
+          task.completedAt = Date.now();
+          task.completed = true;
+        }
+      }
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update this task.",
+      });
+    }
+
+    task = await task.save();
+
+    // Repopulate after save
+    task = await Task.findById(task._id)
+      .populate("assignedTo", "fullName")
+      .populate("assignedBy", "fullName");
+
+    // Send notification to assignedBy user when task is completed
+    if (
+      task.status === "Employee Completed" &&
+      previousStatus !== "Employee Completed"
+    ) {
+      try {
+        const io = req.app.get("io");
+        if (io && task.assignedBy) {
+          const assignedById =
+            task.assignedBy._id?.toString() || task.assignedBy.toString();
+          const assignedToName = task.assignedTo?.fullName || "An employee";
+
+          // Emit task-completed event to the assigner
+          io.to(`user-${assignedById}`).emit("task-completed", {
+            taskId: task._id.toString(),
+            taskTitle: task.title,
+            completedBy: assignedToName,
+            completedByUserId: task.assignedTo?._id?.toString(),
+            completedAt: task.completedAt,
+            status: task.status,
+          });
+
+          console.log(
+            `📋 Task completion notification sent to user-${assignedById} for task: ${task.title}`,
+          );
+        }
+      } catch (notifyError) {
+        console.error(
+          "Error sending task completion notification:",
+          notifyError,
+        );
+        // Don't fail the request if notification fails
+      }
+    }
+
+    // Detailed Admin Notification about status/field changes
+    const fieldLabels = {
+      status: "Status",
+      title: "Title",
+      description: "Description",
+      assignedTo: "Assigned To",
+      priority: "Priority",
+      examDate: "Exam Date",
+      course: "Course"
+    };
+
+    const changes = trackChanges(oldTask, task.toObject(), fieldLabels);
+    
+    if (changes.length > 0) {
+      await notifyAdmins({
+        type: "TASK_UPDATED",
+        message: `${req.user.fullName} updated task "${task.title}". Changes: ${changes.join(", ")}`,
+        taskId: task._id
+      });
+    }
+
+    // Send instant notification if task is newly assigned/re-assigned to a user
+    if (req.body.assignedTo && req.body.assignedTo.toString() !== previousAssignedTo) {
+      try {
+        const io = req.app.get("io");
+        if (io && task.assignedTo) {
+          const assignedToId = task.assignedTo._id?.toString() || task.assignedTo.toString();
+          const assignerName = req.user.fullName || (task.assignedBy ? task.assignedBy.fullName : "A Manager");
+
+          io.to(`user-${assignedToId}`).emit("taskAssigned", {
+            taskId: task._id.toString(),
+            taskTitle: task.title,
+            assignedBy: assignerName,
+            assignedAt: Date.now()
+          });
+
+          console.log(
+            `📋 Task reassignment notification sent to user-${assignedToId} for task: ${task.title}`
+          );
+        }
+      } catch (notifyError) {
+        console.error("Error sending task reassignment notification:", notifyError);
+      }
+    }
+
+    res.status(200).json({ success: true, data: task });
+  } catch (error) {
+    console.error("Error updating task:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Server Error", error: error.message });
+  }
+};
+
+// @desc    Delete a task
+// @route   DELETE /api/tasks/:id
+// @access  Private (Admin, IT Manager)
+exports.deleteTask = async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
+    }
+
+    const isAdmin = req.user.role === "Admin";
+    const isManager =
+      req.user.role === "IT Manager" && task.department === "IT";
+
+    if (!isAdmin && !isManager) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to delete this task",
+      });
+    }
+
+    await Task.findByIdAndDelete(req.params.id);
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "TASK_DELETED",
+      message: `Task "${task.title}" was deleted by ${req.user.fullName}`,
+      deletedBy: req.user.id
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {},
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+// @desc    Log time to task
+// @route   POST /api/tasks/:id/time
+// @access  Private
+exports.logTime = async (req, res) => {
+  try {
+    const { hours, description, date } = req.body;
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
+    }
+
+    // Validate user can log time (assignee or admin/manager)
+    const isAssignee = task.assignedTo.toString() === req.user.id.toString();
+    const isAdmin = req.user.role === "Admin";
+    const isManager =
+      req.user.role === "IT Manager" && task.department === "IT";
+
+    if (!isAssignee && !isAdmin && !isManager) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to log time for this task",
+      });
+    }
+
+    if (!hours || hours <= 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Hours must be greater than 0" });
+    }
+
+    // Add time entry
+    const timeEntry = {
+      date: date ? new Date(date) : new Date(),
+      hours: parseFloat(hours),
+      description: description || "",
+      loggedBy: req.user.id,
+    };
+
+    task.timeEntries = task.timeEntries || [];
+    task.timeEntries.push(timeEntry);
+
+    // Update total logged hours
+    task.loggedHours = (task.loggedHours || 0) + parseFloat(hours);
+
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      data: task,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Update task estimated hours and story points
+// @route   PUT /api/tasks/:id/estimate
+// @access  Private (Admin, Manager)
+exports.updateEstimate = async (req, res) => {
+  try {
+    const { estimatedHours, storyPoints, priority } = req.body;
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
+    }
+
+    const isAdmin = req.user.role === "Admin";
+    const isManager =
+      req.user.role === "IT Manager" && task.department === "IT";
+
+    if (!isAdmin && !isManager) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update estimates",
+      });
+    }
+
+    if (estimatedHours !== undefined) task.estimatedHours = estimatedHours;
+    if (storyPoints !== undefined) task.storyPoints = storyPoints;
+    if (priority !== undefined) task.priority = priority;
+
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      data: task,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Add task dependency
+// @route   POST /api/tasks/:id/dependencies
+// @access  Private (Admin, Manager)
+exports.addDependency = async (req, res) => {
+  try {
+    const { dependsOnTaskId } = req.body;
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
+    }
+
+    const dependsOnTask = await Task.findById(dependsOnTaskId);
+    if (!dependsOnTask) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Dependency task not found" });
+    }
+
+    // Prevent circular dependencies
+    if (
+      dependsOnTask.dependencies &&
+      dependsOnTask.dependencies.includes(task._id)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Circular dependency detected" });
+    }
+
+    if (dependsOnTaskId === task._id.toString()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Task cannot depend on itself" });
+    }
+
+    task.dependencies = task.dependencies || [];
+    if (!task.dependencies.includes(dependsOnTaskId)) {
+      task.dependencies.push(dependsOnTaskId);
+    }
+
+    // Update blocking relationship
+    dependsOnTask.blocks = dependsOnTask.blocks || [];
+    if (!dependsOnTask.blocks.includes(task._id)) {
+      dependsOnTask.blocks.push(task._id);
+    }
+
+    await task.save();
+    await dependsOnTask.save();
+
+    res.status(200).json({
+      success: true,
+      data: task,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Remove task dependency
+// @route   DELETE /api/tasks/:id/dependencies/:dependsOnId
+// @access  Private (Admin, Manager)
+exports.removeDependency = async (req, res) => {
+  try {
+    const { id, dependsOnId } = req.params;
+    const task = await Task.findById(id);
+
+    if (!task) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
+    }
+
+    task.dependencies = (task.dependencies || []).filter(
+      (depId) => depId.toString() !== dependsOnId,
+    );
+
+    // Remove from blocking relationship
+    const dependsOnTask = await Task.findById(dependsOnId);
+    if (dependsOnTask) {
+      dependsOnTask.blocks = (dependsOnTask.blocks || []).filter(
+        (blockId) => blockId.toString() !== id,
+      );
+      await dependsOnTask.save();
+    }
+
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      data: task,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get all sales persons
+// @route   GET /api/tasks/sales-persons
+// @access  Private (Admin, Manager)
+exports.getSalesPersons = async (req, res) => {
+  try {
+    const salesPersons = await User.find({ role: "Sales Person" }).select(
+      "fullName email",
+    );
+
+    res.status(200).json({
+      success: true,
+      count: salesPersons.length,
+      data: salesPersons,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get employee impact metrics
+// @route   GET /api/tasks/employee-impact/:userId
+// @access  Private
+exports.getEmployeeImpact = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const role = req.query.role || "";
+
+    // Queries to run in parallel
+    const [tasks, leadsAssigned, leadPersonLeads, salesAsSalesPerson, leadPersonSales, performance] = await Promise.all([
+      Task.find({ assignedTo: userId }),
+      Lead.find({
+        $or: [
+          { assignedTo: userId },
+          { originalAssignedTo: userId }
+        ]
+      }),
+      Lead.find({ leadPerson: userId }),
+      Sale.find({ salesPerson: userId }),
+      Sale.find({ leadPerson: userId }),
+      PerformanceSummary.findOne({ employeeId: userId })
+    ]);
+
+    // Role-agnostic task metrics
+    const totalTasks = tasks.length;
+    const completedTasks = tasks.filter(t => t.status === "Manager Confirmed" || t.status === "Employee Completed").length;
+    const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    
+    // Average completion time (days)
+    const completionTimes = tasks
+      .filter(t => (t.completedAt || t.confirmedAt) && t.createdAt)
+      .map(t => (new Date(t.completedAt || t.confirmedAt) - new Date(t.createdAt)) / (1000 * 60 * 60 * 24));
+    
+    // Average days - if less than 1, we still want to show a decimal for better granularity in the chart if needed, 
+    // but for the "Impact" summary we'll keep it as rounded/fixed as before or improved.
+    const avgDaysRaw = completionTimes.length > 0 
+      ? completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length
+      : 0;
+    
+    const avgCompletionDays = avgDaysRaw.toFixed(1);
+
+    const highPriorityTasks = tasks.filter(t => t.priority === "High" || t.priority === "Critical").length;
+    const highPriorityCompleted = tasks.filter(t => (t.priority === "High" || t.priority === "Critical") && (t.status === "Manager Confirmed" || t.status === "Employee Completed")).length;
+
+    // Response object
+    const impact = {
+      role,
+      tasks: {
+        total: totalTasks,
+        completed: completedTasks,
+        rate: Math.round(completionRate),
+        avgDays: parseFloat(avgCompletionDays),
+        highPriority: {
+          total: highPriorityTasks,
+          completed: highPriorityCompleted
+        }
+      },
+      performance: performance ? {
+        rating: Math.round(performance.currentRating),
+        stars: performance.stars,
+        tier: performance.ratingTier,
+        streak: performance.streak
+      } : null
+    };
+
+    // Role specific logic
+    const roleLower = role.toLowerCase();
+    
+    if (roleLower.includes("sales")) {
+      const totalSales = salesAsSalesPerson.length;
+      const leads = leadsAssigned.length;
+      
+      // Calculate Yield: 1 sale per 10 leads is 100% target yield (1:10 ratio)
+      // If leads are 100, target sales is 10. If actual sales is 15, yield is 150%.
+      const targetSales = Math.ceil(leads / 10);
+      const yieldScore = targetSales > 0 ? Math.round((totalSales / targetSales) * 100) : (totalSales > 0 ? 100 : 0);
+
+      impact.sales = {
+        leadsAssigned: leads,
+        converted: totalSales,
+        conversionRate: leads > 0 ? Math.round((totalSales / leads) * 100) : 0,
+        yieldScore: Math.round(yieldScore), // Benchmark against 1:10 ratio
+        totalSalesCount: totalSales
+      };
+    }
+
+    if (roleLower.includes("lead person") || roleLower.includes("lead")) {
+      const totalLeadSales = leadPersonSales.length;
+      const leadsGenerated = leadPersonLeads.length;
+      
+      const targetSales = Math.ceil(leadsGenerated / 10);
+      const yieldScore = targetSales > 0 ? Math.round((totalLeadSales / targetSales) * 100) : (totalLeadSales > 0 ? 100 : 0);
+
+      impact.leadGeneration = {
+        leadsGenerated: leadsGenerated,
+        leadsConverted: totalLeadSales,
+        conversionRate: leadsGenerated > 0 ? Math.round((totalLeadSales / leadsGenerated) * 100) : 0,
+        yieldScore: Math.round(yieldScore),
+        totalSalesCount: totalLeadSales
+      };
+    }
+
+    res.status(200).json({
+      success: true,
+      data: impact
+    });
+  } catch (error) {
+    console.error("Error fetching impact metrics:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};

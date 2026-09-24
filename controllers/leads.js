@@ -1,0 +1,2409 @@
+const Lead = require("../models/Lead");
+const { decrypt, hashForSearch } = require("../utils/encryption");
+
+/**
+ * Helper to notify admins about detailed lead updates
+ */
+const notifyAdminOfLeadUpdate = async (req, oldLead, newLead) => {
+  try {
+    const notificationService = require("../services/notificationService");
+    
+    // Fields we want to track for changes
+    const trackedFields = {
+      name: "Name",
+      email: "Email",
+      phone: "Phone",
+      course: "Course",
+      status: "Status",
+      assignedTo: "Assigned To",
+      leadPerson: "Lead Person",
+      country: "Country",
+      feedback: "Feedback",
+      remarks: "Remarks",
+      client: "Client Remark"
+    };
+
+    let changes = [];
+    
+    // Get plain objects for comparison
+    const oldData = oldLead.toObject ? oldLead.toObject() : oldLead;
+    const newData = newLead.toObject ? newLead.toObject() : newLead;
+
+    for (const [field, label] of Object.entries(trackedFields)) {
+      let oldValue = oldData[field];
+      let newValue = newData[field];
+
+      // Special handling for ObjectIds/Populated fields
+      if (field === "assignedTo" || field === "leadPerson") {
+        const oldId = oldData[field]?._id || oldData[field];
+        const newId = newData[field]?._id || newData[field];
+        
+        if (String(oldId || "") !== String(newId || "")) {
+          const oldName = oldData[field]?.fullName || (oldId ? "ID: " + oldId : "None");
+          const newName = newData[field]?.fullName || (newId ? "ID: " + newId : "None");
+          changes.push(`${label}: ${oldName} -> ${newName}`);
+        }
+        continue;
+      }
+
+      // String comparison for most fields
+      if (String(oldValue || "") !== String(newValue || "")) {
+        changes.push(`${label}: ${oldValue || "N/A"} -> ${newValue || "N/A"}`);
+      }
+    }
+
+    if (changes.length > 0) {
+      console.log(`🔔 Detailed notification for lead ${newLead._id}:`, changes.join(", "));
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `${req.user.fullName} updated lead for ${newLead.name}. Changes: ${changes.join(", ")}`,
+        data: { leadId: newLead._id }
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error in notifyAdminOfLeadUpdate:", error);
+  }
+};
+
+// @desc    Get all leads
+// @route   GET /api/leads
+// @access  Private
+exports.getLeads = async (req, res) => {
+  try {
+    console.log("============= GET LEADS REQUEST =============");
+    console.log("User making request:", {
+      id: req.user._id,
+      idString: req.user._id.toString(),
+      role: req.user.role,
+      name: req.user.fullName,
+      email: req.user.email,
+    });
+    console.log("Query parameters:", req.query);
+
+    // Extract date filtering parameters from query
+    const { month, year, startDate, endDate } = req.query;
+
+    // Instead of using complex filtering, let's use direct MongoDB queries
+    let query;
+
+    // Different queries based on role
+    if (req.user.role === "Admin" || req.user.role === "Manager") {
+      // Admin and Manager see all leads
+      console.log("Admin/Manager role - fetching ALL leads");
+      query = Lead.find({});
+    } else if (req.user.role === "Branch Partner") {
+      console.log("Branch Partner role - fetching branch leads");
+      const User = require("../models/User");
+      const Employee = require("../models/Employee");
+
+      let branchIds = req.user.branchIds || [];
+      if (req.user.branchId && !branchIds.some(id => id.toString() === req.user.branchId.toString())) {
+        branchIds.push(req.user.branchId);
+      }
+      if (branchIds.length === 0) {
+        const emp = await Employee.findOne({ userId: req.user._id });
+        if (emp && emp.branchId) branchIds.push(emp.branchId);
+      }
+
+      const branchUsers = await User.find({
+        $or: [
+          { branchId: { $in: branchIds } },
+          { _id: req.user._id }
+        ]
+      }).select("_id");
+      const branchUserIds = branchUsers.map((u) => u._id);
+
+      query = Lead.find({
+        $or: [
+          { assignedTo: { $in: branchUserIds } },
+          { leadPerson: { $in: branchUserIds } },
+          { createdBy: { $in: branchUserIds } },
+          { branchId: { $in: branchIds } }
+        ]
+      });
+    } else if (req.user.role === "Lead Person") {
+      // Lead Person sees leads they created or leads assigned to them
+      console.log("Lead Person role - fetching created or assigned leads");
+      const userId = req.user._id;
+
+      // Query with direct ID comparison
+      query = Lead.find({
+        $or: [{ leadPerson: userId }, { assignedTo: userId }],
+      });
+    } else {
+      // Sales Person sees only leads assigned to them
+      console.log("Sales Person role - fetching assigned leads");
+      const userId = req.user._id;
+
+      // Query for assignedTo exact match
+      // Query for assignedTo exact match
+      query = Lead.find({ assignedTo: userId });
+    }
+
+    // Mobile/Name/Email Search
+    if (req.query.search) {
+      const searchVal = req.query.search.trim();
+      const searchRegex = new RegExp(searchVal, "i");
+      const searchHash = hashForSearch(searchVal);
+      
+      query = query.where({
+        $or: [
+          { name: searchRegex },
+          { emailHash: searchHash },
+          { phoneHash: searchHash },
+          { telegramIdHash: searchHash },
+        ],
+      });
+      console.log(`Searching for: ${searchVal} (Hash: ${searchHash})`);
+    }
+
+    // Filter by Source
+    if (req.query.source) {
+      query = query.where("source").equals(req.query.source);
+    }
+    
+    // Filter by Country
+    if (req.query.country) {
+      query = query.where("country").equals(req.query.country);
+    }
+
+    // Filter by Course
+    if (req.query.course) {
+      query = query.where("course").equals(req.query.course);
+    }
+    // Filter by Assigned To (only for Admin/Manager)
+    if (
+      (req.user.role === "Admin" || req.user.role === "Manager") &&
+      req.query.assignedTo
+    ) {
+      query = query.where("assignedTo").equals(req.query.assignedTo);
+    }
+    // Filter by Lead Person (only for Admin/Manager)
+    if (
+      (req.user.role === "Admin" || req.user.role === "Manager") &&
+      req.query.leadPerson
+    ) {
+      query = query.where("leadPerson").equals(req.query.leadPerson);
+    }
+
+    // Filter by Status
+    if (req.query.status) {
+      query = query.where("status").equals(req.query.status);
+    }
+
+    // Add date filtering if provided
+    if (month && year) {
+      console.log(`Filtering by month: ${month}, year: ${year}`);
+      const startOfMonth = new Date(parseInt(year), parseInt(month) - 1, 1);
+      const endOfMonth = new Date(
+        parseInt(year),
+        parseInt(month),
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
+
+      query = query.where("createdAt").gte(startOfMonth).lte(endOfMonth);
+      console.log(
+        `Date range: ${startOfMonth.toISOString()} to ${endOfMonth.toISOString()}`,
+      );
+    } else if (startDate && endDate) {
+      console.log(`Filtering by date range: ${startDate} to ${endDate}`);
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // Include the entire end date
+
+      query = query.where("createdAt").gte(start).lte(end);
+      console.log(`Date range: ${start.toISOString()} to ${end.toISOString()}`);
+    } else if (startDate) {
+      console.log(`Filtering from date: ${startDate}`);
+      const start = new Date(startDate);
+      query = query.where("createdAt").gte(start);
+    } else if (endDate) {
+      console.log(`Filtering until date: ${endDate}`);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      query = query.where("createdAt").lte(end);
+    }
+
+    // Sort by created date, newest first
+    query = query.sort({ createdAt: -1 });
+
+    // Get total count for pagination
+    const total = await Lead.countDocuments(query.getQuery());
+
+    // Pagination logic
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 50; // Default limit 50
+    const startIndex = (page - 1) * limit;
+    const endIndex = page * limit;
+
+    // Apply pagination
+    query = query.skip(startIndex).limit(limit);
+
+    // Populate relevant fields
+    query = query
+      .populate("assignedTo", "fullName email role")
+      .populate("leadPerson", "fullName email role");
+
+    // Execute the query
+    const leads = await query;
+
+    console.log(`Found ${leads.length} leads for page ${page}`);
+
+    // Pagination result
+    const pagination = {};
+
+    if (endIndex < total) {
+      pagination.next = {
+        page: page + 1,
+        limit,
+      };
+    }
+
+    if (startIndex > 0) {
+      pagination.prev = {
+        page: page - 1,
+        limit,
+      };
+    }
+
+    res.status(200).json({
+      success: true,
+      count: leads.length,
+      total,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      pagination,
+      data: leads,
+      filters: {
+        month: month || null,
+        year: year || null,
+        startDate: startDate || null,
+        endDate: endDate || null,
+      },
+    });
+  } catch (err) {
+    console.error("Error in getLeads:", err);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Get single lead
+// @route   GET /api/leads/:id
+// @access  Private
+exports.getLead = async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id)
+      .populate("assignedTo", "fullName email")
+      .populate("leadPerson", "fullName email")
+      .populate("createdBy", "fullName email");
+
+    console.log("Lead found:", lead ? lead._id : "None");
+
+    if (!lead) {
+      return res.status(404).json({
+        success: false,
+        message: `No lead found with id of ${req.params.id}`,
+      });
+    }
+
+    // Show detailed info for debugging
+    console.log("Lead details:");
+    console.log(`  - ID: ${lead._id}`);
+    console.log(`  - Name: ${lead.name}`);
+    console.log(
+      `  - AssignedTo ID: ${lead.assignedTo ? lead.assignedTo._id : "None"}`,
+    );
+    console.log(
+      `  - AssignedTo Name: ${lead.assignedTo ? lead.assignedTo.fullName : "None"}`,
+    );
+    console.log(`  - Current User ID: ${req.user._id}`);
+
+    const leadAssignedId = lead.assignedTo
+      ? (lead.assignedTo._id ? lead.assignedTo._id.toString() : lead.assignedTo.toString())
+      : null;
+    const userId = req.user._id.toString();
+    console.log(`  - String comparison: ${leadAssignedId === userId}`);
+
+    // Check if user is authorized to view this lead
+    if (
+      req.user.role !== "Admin" &&
+      req.user.role !== "Manager" &&
+      req.user.role !== "Branch Partner" &&
+      (!leadAssignedId || leadAssignedId !== userId) &&
+      !(
+        req.user.role === "Lead Person" &&
+        lead.leadPerson &&
+        lead.leadPerson._id.toString() === userId
+      )
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to access this lead",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: lead,
+    });
+  } catch (err) {
+    console.error("Error in getLead:", err);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Create new lead
+// @route   POST /api/leads
+// @access  Private
+exports.createLead = async (req, res) => {
+  try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Lead creation is not allowed.",
+      });
+    }
+    console.log("============= CREATE LEAD REQUEST =============");
+    console.log("Lead data submitted:", req.body);
+    console.log("User creating lead:", {
+      id: req.user._id,
+      role: req.user.role,
+      name: req.user.fullName,
+    });
+
+    // Validate required fields before processing
+    const isTelegramSource = req.body.SOURSE === "Telegram";
+    const requiredFields = [
+      "NAME",
+      "COURSE",
+      "CODE",
+      "COUNTRY",
+      "SALE PERSON",
+    ];
+    if (isTelegramSource) {
+      requiredFields.push("TELEGRAM_ID");
+    } else {
+      requiredFields.push("NUMBER", "E-MAIL");
+    }
+    const missingFields = requiredFields.filter((field) => !req.body[field]);
+
+    if (missingFields.length > 0) {
+      console.error("Missing required fields:", missingFields);
+      return res.status(400).json({
+        success: false,
+        message: `Missing required fields: ${missingFields.join(", ")}`,
+        missingFields: missingFields,
+      });
+    }
+
+    // Map the new field names to the database model field names
+    const leadData = {
+      name: req.body.NAME,
+      email: req.body["E-MAIL"] || req.body.email || "",
+      course: req.body.COURSE,
+      countryCode: req.body.CODE,
+      phone: req.body.NUMBER,
+      country: req.body.COUNTRY,
+      pseudoId: req.body["PSUDO ID"],
+      client: req.body["CLIENT REMARK"],
+      status: req.body.status || "Introduction",
+      source: req.body.SOURSE,
+      sourceLink: req.body["SOURCE LINK"],
+      googleFormLink: req.body.googleFormLink || "",
+      assignedTo: req.body["SALE PERSON"],
+      leadPerson: req.body["LEAD PERSON"] || req.body.leadPerson,
+      feedback: req.body.FEEDBACK || req.body.feedback,
+      remarks: req.body.REMARKS || req.body.remarks,
+      telegramId: req.body.TELEGRAM_ID || req.body.telegramId || "",
+      createdAt: req.body.DATE ? new Date(req.body.DATE) : Date.now(),
+      isRepeatCustomer: false, // Default value, will be updated if needed
+      previousCourses: [],
+      relatedLeads: [],
+    };
+
+    // Check if lead with this email already exists (No duplicates allowed)
+    if (leadData.email && leadData.email.trim() !== "") {
+      const existingLeads = await Lead.findByEmail(leadData.email.trim());
+      if (existingLeads.length > 0) {
+        console.error(`Attempt to create duplicate lead with email: ${leadData.email}`);
+        return res.status(400).json({
+          success: false,
+          message: `A lead with the email '${leadData.email}' already exists. Duplicate leads are not allowed.`,
+        });
+      }
+    }
+
+    // Check if lead with this Telegram ID already exists (No duplicates allowed)
+    if (leadData.telegramId && leadData.telegramId.trim() !== "") {
+      const existingLeads = await Lead.findByTelegramId(leadData.telegramId.trim());
+      if (existingLeads.length > 0) {
+        console.error(`Attempt to create duplicate lead with Telegram ID: ${leadData.telegramId}`);
+        return res.status(400).json({
+          success: false,
+          message: `A lead with the Telegram ID '${leadData.telegramId}' already exists. Duplicate leads are not allowed.`,
+        });
+      }
+    }
+
+    // Set createdBy to the current user
+    leadData.createdBy = req.user._id;
+
+    // If the user is a Lead Person, set them as the leadPerson
+    if (req.user.role === "Lead Person") {
+      leadData.leadPerson = req.user._id;
+      console.log("Setting leadPerson to current user", req.user._id);
+    }
+
+    // Critical: Handle assignedTo (Auto Round-Robin by default vs Manual override)
+    const isAutoAssign =
+      !leadData.assignedTo ||
+      leadData.assignedTo === "AUTO" ||
+      leadData.assignedTo === "ROUND_ROBIN" ||
+      leadData.assignedTo === "";
+
+    if (isAutoAssign) {
+      delete leadData.assignedTo;
+      leadData.assignmentMethod = "ROUND_ROBIN";
+    } else {
+      leadData.assignmentMethod = "MANUAL";
+      leadData.originalAssignedTo = leadData.assignedTo;
+      leadData.assignmentHistory = [
+        {
+          assignedTo: leadData.assignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now(),
+          assignmentMethod: "MANUAL",
+          note: `Manually assigned by ${req.user.fullName}`,
+        },
+      ];
+    }
+
+    // Check if this is a repeat customer by phone number or email
+    let previousLeads = [];
+    let isRepeatCustomer = false;
+
+    // Only check if either phone or email is provided
+    if (leadData.phone || (leadData.email && leadData.email.trim() !== "")) {
+      // Build the query to find potential matches
+      const matchQuery = { $or: [] };
+
+      // Add phone number condition if provided
+      if (leadData.phone) {
+        matchQuery.$or.push({ phone: leadData.phone });
+      }
+
+      // Add email condition if provided and not empty
+      if (leadData.email && leadData.email.trim() !== "") {
+        matchQuery.$or.push({ email: leadData.email });
+      }
+
+      // Only run the query if we have conditions
+      if (matchQuery.$or.length > 0) {
+        console.log("Checking for repeat customer with query:", matchQuery);
+        previousLeads = await Lead.find(matchQuery).select(
+          "_id name course createdAt",
+        );
+
+        // If we found previous leads with the same email or phone
+        if (previousLeads.length > 0) {
+          isRepeatCustomer = true;
+
+          // Extract previous courses from the found leads
+          const previousCourses = previousLeads
+            .map((lead) => lead.course)
+            .filter((course) => course !== leadData.course); // Exclude current course
+
+          // Extract the IDs of related leads
+          const relatedLeadIds = previousLeads.map((lead) => lead._id);
+
+          // Update the lead data
+          leadData.isRepeatCustomer = true;
+          leadData.previousCourses = [...new Set(previousCourses)]; // Remove duplicates
+          leadData.relatedLeads = relatedLeadIds;
+
+          console.log(
+            `This is a repeat customer! Found ${previousLeads.length} previous leads`,
+          );
+          console.log("Previous courses:", leadData.previousCourses);
+        }
+      }
+    }
+
+    // Make sure creation timestamp is set
+    leadData.updatedAt = Date.now();
+
+    const lead = await Lead.create(leadData);
+
+    // If auto-assigned, trigger Round-Robin instant assignment
+    if (isAutoAssign) {
+      try {
+        const leadAssignmentService = require("../services/leadAssignmentService");
+        await leadAssignmentService.assignSingleLeadRoundRobin(lead, req.user);
+      } catch (assignError) {
+        console.error("Auto assign error in createLead:", assignError);
+      }
+    }
+
+    // Trigger workflows for lead_created
+    try {
+      const workflowService = require("../services/workflowService");
+      await workflowService.executeWorkflows("lead_created", {
+        ...lead.toObject(),
+        leadId: lead._id,
+      });
+    } catch (workflowError) {
+      console.error("Workflow execution error (non-blocking):", workflowError);
+    }
+
+    // REAL-TIME PERFORMANCE UPDATE
+    // Calculate performance for assignedTo and leadPerson immediately
+    try {
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
+      const today = new Date();
+
+      // Update for assigned sales person
+      if (lead.assignedTo) {
+        console.log(
+          `⚡️ Triggering real-time performance update for assignedTo (created): ${lead.assignedTo}`,
+        );
+        queuePerformanceCalculation(
+          lead.assignedTo,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${lead.assignedTo}:`,
+            err.message,
+          ),
+        );
+      }
+
+      // Update for lead person
+      if (lead.leadPerson) {
+        console.log(
+          `⚡️ Triggering real-time performance update for leadPerson (created): ${lead.leadPerson}`,
+        );
+        queuePerformanceCalculation(
+          lead.leadPerson,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${lead.leadPerson}:`,
+            err.message,
+          ),
+        );
+      }
+    } catch (perfError) {
+      console.error("Performance update error (non-blocking):", perfError);
+    }
+
+    // Emit Socket.IO event for Real-Time Notification to Assigned User
+    try {
+      const io = req.app.get("io");
+      const leadAssignedId = lead.assignedTo
+        ? (lead.assignedTo._id ? lead.assignedTo._id.toString() : lead.assignedTo.toString())
+        : null;
+      if (io && leadAssignedId && leadAssignedId !== req.user._id.toString()) {
+        const assignedToId = leadAssignedId;
+        
+        io.to(`user-${assignedToId}`).emit("leadAssigned", {
+          leadId: lead._id,
+          leadName: lead.name,
+          course: lead.course,
+          assignedBy: req.user.fullName,
+          assignedById: req.user._id,
+          assignmentType: "new",
+        });
+        console.log(`📡 Emitted leadAssigned event to user-${assignedToId}`);
+      }
+    } catch (socketErr) {
+      console.error("Socket emission error (non-blocking):", socketErr);
+    }
+
+    // Notify all admins
+    try {
+      const notificationService = require("../services/notificationService");
+        await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `New lead created by ${req.user.fullName} for customer ${lead.name}. Course: ${lead.course}`,
+        data: { leadId: lead._id }
+        });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: lead,
+    });
+  } catch (err) {
+    console.error("Error creating lead:", err);
+
+    // Handle duplicate key errors (commonly for email/telegram)
+    if (err.code === 11000 && err.keyPattern) {
+      const field = Object.keys(err.keyPattern)[0];
+      console.error(`Duplicate key error for field: ${field}`);
+      return res.status(400).json({
+        success: false,
+        message: `A lead with this ${field === 'emailHash' ? 'email' : field === 'telegramIdHash' ? 'Telegram ID' : field} already exists. Duplicate leads are not allowed.`,
+      });
+    }
+
+    // Provide more detailed error messages for common validation errors
+    if (err.name === "ValidationError") {
+      const validationErrors = Object.keys(err.errors).map((field) => ({
+        field: field,
+        message: err.errors[field].message,
+      }));
+
+      return res.status(400).json({
+        success: false,
+        message:
+          "Validation failed: " +
+          validationErrors.map((e) => e.message).join(", "),
+        errors: validationErrors,
+      });
+    }
+
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Update lead
+// @route   PUT /api/leads/:id
+// @access  Private
+exports.updateLead = async (req, res) => {
+  try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Lead update is not allowed.",
+      });
+    }
+    console.log("============= UPDATE LEAD REQUEST =============");
+    console.log("User updating lead:", {
+      id: req.user._id,
+      role: req.user.role,
+      name: req.user.fullName,
+    });
+    console.log("Update data:", req.body);
+
+    let lead = await Lead.findById(req.params.id).populate("assignedTo leadPerson", "fullName");
+
+    if (!lead) {
+      return res.status(404).json({
+        success: false,
+        message: `No lead found with id of ${req.params.id}`,
+      });
+    }
+
+    console.log("Found lead:", {
+      id: lead._id,
+      name: lead.name,
+      assignedTo: lead.assignedTo,
+    });
+
+    const oldLead = lead.toObject(); // Capture old state (decrypted)
+    const originalStatus = lead.status;
+
+    const leadAssignedId = lead.assignedTo
+      ? (lead.assignedTo._id ? lead.assignedTo._id.toString() : lead.assignedTo.toString())
+      : null;
+    const userId = req.user._id.toString();
+
+    // Check if user is authorized to update this lead
+    if (
+      req.user.role !== "Admin" &&
+      req.user.role !== "Manager" &&
+      req.user.role !== "Lead Person" &&
+      (!leadAssignedId || leadAssignedId !== userId)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update this lead",
+      });
+    }
+
+    // For Sales Persons / Team Leaders, allow updating status, feedback, remarks, and client remarks
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+      console.log("Sales Person/TL is updating lead:", req.body);
+
+      const updateData = {
+        updatedAt: Date.now(),
+      };
+
+      if (req.body.status !== undefined) updateData.status = req.body.status;
+      if (req.body.feedback !== undefined) updateData.feedback = req.body.feedback;
+      if (req.body.FEEDBACK !== undefined) updateData.feedback = req.body.FEEDBACK;
+      if (req.body.remarks !== undefined) updateData.remarks = req.body.remarks;
+      if (req.body.REMARKS !== undefined) updateData.remarks = req.body.REMARKS;
+      if (req.body.client !== undefined) updateData.client = req.body.client;
+      if (req.body["CLIENT REMARK"] !== undefined) updateData.client = req.body["CLIENT REMARK"];
+
+      lead = await Lead.findByIdAndUpdate(req.params.id, updateData, {
+        new: true,
+        runValidators: true,
+      }).populate("assignedTo leadPerson", "fullName");
+
+      // Detailed Admin Notification
+      await notifyAdminOfLeadUpdate(req, oldLead, lead);
+
+      return res.status(200).json({
+        success: true,
+        data: lead,
+      });
+    }
+
+    // For Lead Person, Manager and Admin, allow full updates
+    // Map the new field names to the database model field names
+    const updatedData = {
+      updatedAt: Date.now(),
+    };
+
+    // explicit mapping of frontend keys to db keys
+    const keyMap = {
+      // Legacy UpperCase Keys (from LeadForm)
+      NAME: "name",
+      "E-MAIL": "email",
+      COURSE: "course",
+      CODE: "countryCode",
+      NUMBER: "phone",
+      COUNTRY: "country",
+      "PSUDO ID": "pseudoId",
+      "CLIENT REMARK": "client",
+      SOURSE: "source",
+      "SOURCE LINK": "sourceLink",
+      "SALE PERSON": "assignedTo",
+      "LEAD PERSON": "leadPerson",
+      FEEDBACK: "feedback",
+      REMARKS: "remarks",
+      TELEGRAM_ID: "telegramId",
+
+      // Standard Keys (from other UI components)
+      name: "name",
+      email: "email",
+      course: "course",
+      countryCode: "countryCode",
+      phone: "phone",
+      country: "country",
+      pseudoId: "pseudoId",
+      client: "client",
+      source: "source",
+      sourceLink: "sourceLink",
+      googleFormLink: "googleFormLink",
+      assignedTo: "assignedTo",
+      leadPerson: "leadPerson",
+      feedback: "feedback",
+      telegramId: "telegramId",
+      // Date Mapping
+      customCreatedAt: "createdAt",
+      DATE: "createdAt",
+      createdAt: "createdAt"
+    };
+
+    // 1. Map fields from keys if present
+    Object.keys(keyMap).forEach((frontendKey) => {
+      if (req.body[frontendKey] !== undefined) {
+        updatedData[keyMap[frontendKey]] = req.body[frontendKey];
+      }
+    });
+
+    // 2. Handle direct status update (lowercase key from Kanban/Form)
+    if (req.body.status !== undefined) {
+      updatedData.status = req.body.status;
+    }
+
+    // 3. Handle email specifically if it was passed as empty string (to clear it)
+    // The loop above handles it.
+
+    const finalUpdateData = updatedData;
+
+    // Check if the email is being updated and if it matches another existing lead
+    const newEmail = finalUpdateData.email;
+    if (newEmail !== undefined && newEmail !== null && newEmail.trim() !== "") {
+      const existingLeads = await Lead.findByEmail(newEmail.trim());
+      const isDuplicate = existingLeads.some(
+        (existing) => existing._id.toString() !== lead._id.toString()
+      );
+      if (isDuplicate) {
+        console.error(`Attempt to update lead ${lead._id} to duplicate email: ${newEmail}`);
+        return res.status(400).json({
+          success: false,
+          message: `A lead with the email '${newEmail}' already exists. Duplicate leads are not allowed.`,
+        });
+      }
+    }
+
+    // Check if the Telegram ID is being updated and if it matches another existing lead
+    const newTelegramId = finalUpdateData.telegramId;
+    if (newTelegramId !== undefined && newTelegramId !== null && newTelegramId.trim() !== "") {
+      const existingLeads = await Lead.findByTelegramId(newTelegramId.trim());
+      const isDuplicate = existingLeads.some(
+        (existing) => existing._id.toString() !== lead._id.toString()
+      );
+      if (isDuplicate) {
+        console.error(`Attempt to update lead ${lead._id} to duplicate Telegram ID: ${newTelegramId}`);
+        return res.status(400).json({
+          success: false,
+          message: `A lead with the Telegram ID '${newTelegramId}' already exists. Duplicate leads are not allowed.`,
+        });
+      }
+    }
+
+    // Track assignment history & handle Round-Robin vs Manual override if assignedTo changes
+    let triggerAutoAssignRR = false;
+    if (finalUpdateData.assignedTo !== undefined && finalUpdateData.assignedTo !== null) {
+      if (finalUpdateData.assignedTo === "AUTO" || finalUpdateData.assignedTo === "ROUND_ROBIN") {
+        triggerAutoAssignRR = true;
+        delete finalUpdateData.assignedTo;
+      } else if (finalUpdateData.assignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")) {
+        lead.assignmentMethod = "MANUAL";
+
+        if (!lead.originalAssignedTo && lead.assignedTo) {
+          lead.originalAssignedTo = lead.assignedTo;
+        }
+
+        if (!lead.assignmentHistory) {
+          lead.assignmentHistory = [];
+        }
+
+        if (lead.assignmentHistory.length > 0) {
+          const lastIndex = lead.assignmentHistory.length - 1;
+          if (!lead.assignmentHistory[lastIndex].unassignedAt) {
+            lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
+          }
+        }
+
+        lead.assignmentHistory.push({
+          assignedTo: finalUpdateData.assignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now(),
+          assignmentMethod: "MANUAL",
+          note: `Manually updated assignment by ${req.user.fullName}`,
+        });
+      }
+    }
+
+    // Apply updates directly to the Mongoose document instance
+    Object.assign(lead, finalUpdateData);
+
+    // Save lead (triggers pre-save hooks for encryption and search hashes)
+    await lead.save({ validateModifiedOnly: true });
+
+    if (triggerAutoAssignRR) {
+      try {
+        const leadAssignmentService = require("../services/leadAssignmentService");
+        await leadAssignmentService.assignSingleLeadRoundRobin(lead, req.user);
+      } catch (rrErr) {
+        console.error("Error running single lead Round-Robin on update:", rrErr);
+      }
+    }
+
+    // Re-retrieve to populate assignedTo, leadPerson, createdBy fields
+    lead = await Lead.findById(lead._id).populate("assignedTo leadPerson createdBy", "fullName email");
+
+    // Detailed Admin Notification
+    await notifyAdminOfLeadUpdate(req, oldLead, lead);
+
+    // Trigger workflows for lead_status_changed if status was updated
+    if (req.body.status && req.body.status !== lead.status) {
+      try {
+        const workflowService = require("../services/workflowService");
+        await workflowService.executeWorkflows("lead_status_changed", {
+          ...lead.toObject(),
+          leadId: lead._id,
+          oldStatus: lead.status,
+          newStatus: req.body.status,
+        });
+      } catch (workflowError) {
+        console.error(
+          "Workflow execution error (non-blocking):",
+          workflowError,
+        );
+      }
+    }
+
+    // REAL-TIME PERFORMANCE UPDATE
+    // Calculate performance for assignedTo and leadPerson
+    try {
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
+      const today = new Date();
+
+      // Update for assigned sales person
+      if (lead.assignedTo) {
+        const assignedToId = lead.assignedTo._id || lead.assignedTo;
+        console.log(
+          `⚡️ Triggering real-time performance update for assignedTo: ${assignedToId}`,
+        );
+        queuePerformanceCalculation(
+          assignedToId,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${assignedToId}:`,
+            err.message,
+          ),
+        );
+      }
+
+      // Detailed notification logic moved to notifyAdminOfLeadUpdate helper
+
+      // Update for lead person
+      if (lead.leadPerson) {
+        const leadPersonId = lead.leadPerson._id || lead.leadPerson;
+        console.log(
+          `⚡️ Triggering real-time performance update for leadPerson: ${leadPersonId}`,
+        );
+        queuePerformanceCalculation(
+          leadPersonId,
+          today,
+        ).catch((err) =>
+          console.error(
+            `Error updating performance for ${leadPersonId}:`,
+            err.message,
+          ),
+        );
+      }
+    } catch (perfError) {
+      console.error("Performance update error (non-blocking):", perfError);
+    }
+
+    // Emit Socket.IO event if the lead was reassigned to someone else
+    try {
+      const io = req.app.get("io");
+      if (io && req.body["SALE PERSON"] && lead.assignedTo) {
+        const newAssignedTo = lead.assignedTo._id ? lead.assignedTo._id.toString() : lead.assignedTo.toString();
+        // Check if assignedTo actually changed (if we had access to old Lead state) or just emit if it's not the updater
+        if (newAssignedTo !== req.user._id.toString()) {
+          io.to(`user-${newAssignedTo}`).emit("leadAssigned", {
+            leadId: lead._id,
+            leadName: lead.name,
+            course: lead.course,
+            assignedBy: req.user.fullName,
+            assignedById: req.user._id,
+            assignmentType: "transfer"
+          });
+          console.log(`📡 Emitted leadAssigned (transfer) event to user-${newAssignedTo}`);
+        }
+      }
+    } catch (socketErr) {
+      console.error("Socket emission error (non-blocking):", socketErr);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: lead,
+    });
+  } catch (err) {
+    console.error("Error updating lead:", err);
+
+    // Handle duplicate key errors (commonly for email/telegram)
+    if (err.code === 11000 && err.keyPattern) {
+      const field = Object.keys(err.keyPattern)[0];
+      console.error(`Duplicate key error for field: ${field}`);
+      return res.status(400).json({
+        success: false,
+        message: `A lead with this ${field === 'emailHash' ? 'email' : field === 'telegramIdHash' ? 'Telegram ID' : field} already exists. Duplicate leads are not allowed.`,
+      });
+    }
+
+    // Handle Mongoose validation errors
+    if (err.name === "ValidationError") {
+      const validationErrors = Object.keys(err.errors).map((field) => ({
+        field: field,
+        message: err.errors[field].message,
+      }));
+
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed: " + validationErrors.map((e) => e.message).join(", "),
+        errors: validationErrors,
+      });
+    }
+
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Delete lead
+// @route   DELETE /api/leads/:id
+// @access  Private
+exports.deleteLead = async (req, res) => {
+  try {
+    if (req.user.role === "Branch Partner") {
+      return res.status(403).json({
+        success: false,
+        message: "Branch Partner role has view-only access. Lead deletion is not allowed.",
+      });
+    }
+    const lead = await Lead.findById(req.params.id);
+
+    if (!lead) {
+      return res.status(404).json({
+        success: false,
+        message: `No lead found with id of ${req.params.id}`,
+      });
+    }
+
+    // Check if user is authorized to delete this lead
+    if (req.user.role !== "Admin" && req.user.role !== "Manager") {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to delete leads",
+      });
+    }
+
+    await lead.deleteOne();
+
+    // Notify all admins of the delete
+    try {
+      const notificationService = require("../services/notificationService");
+      await notificationService.notifyAdmins({
+        type: "ACTIVITY",
+        message: `Lead ${lead.name} was deleted by ${req.user.fullName}. Course: ${lead.course || "N/A"}`,
+        data: { leadId: lead._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {},
+    });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Get leads assigned to sales person
+// @route   GET /api/leads/assigned
+// @access  Private (Sales Person only)
+exports.getAssignedLeads = async (req, res) => {
+  try {
+    // Verify the user is a Sales Person
+    if (req.user.role !== "Sales Person") {
+      return res.status(403).json({
+        success: false,
+        message: "Only Sales Persons can access their assigned leads",
+      });
+    }
+
+    console.log("============= GET ASSIGNED LEADS REQUEST =============");
+    console.log("Sales Person:", req.user.fullName);
+    console.log("Query parameters:", req.query);
+
+    // Extract date filtering parameters from query
+    const { month, year, startDate, endDate } = req.query;
+
+    let query = Lead.find({
+      $or: [
+        { assignedTo: req.user._id },
+        { "assignmentHistory.assignedTo": req.user._id }
+      ]
+    });
+
+    // Add date filtering if provided
+    if (month && year) {
+      console.log(`Filtering by month: ${month}, year: ${year}`);
+      const startOfMonth = new Date(parseInt(year), parseInt(month) - 1, 1);
+      const endOfMonth = new Date(
+        parseInt(year),
+        parseInt(month),
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
+
+      query = query.where("createdAt").gte(startOfMonth).lte(endOfMonth);
+      console.log(
+        `Date range: ${startOfMonth.toISOString()} to ${endOfMonth.toISOString()}`,
+      );
+    } else if (startDate && endDate) {
+      console.log(`Filtering by date range: ${startDate} to ${endDate}`);
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // Include the entire end date
+
+      query = query.where("createdAt").gte(start).lte(end);
+      console.log(`Date range: ${start.toISOString()} to ${end.toISOString()}`);
+    } else if (startDate) {
+      console.log(`Filtering from date: ${startDate}`);
+      const start = new Date(startDate);
+      query = query.where("createdAt").gte(start);
+    } else if (endDate) {
+      console.log(`Filtering until date: ${endDate}`);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      query = query.where("createdAt").lte(end);
+    }
+
+    // Get total count before pagination
+    const totalCount = await query.clone().countDocuments();
+    console.log(`Total assigned leads for ${req.user.fullName}: ${totalCount}`);
+
+    // OPTIMIZATION: Add pagination and limit results
+    // If no limit is specified, fetch all leads (for dashboard views)
+    // Otherwise use pagination for list views
+    const page = parseInt(req.query.page) || 1;
+    const limitParam = req.query.limit;
+    const limit = limitParam ? parseInt(limitParam) : totalCount; // Fetch all if no limit specified
+    const skip = (page - 1) * limit;
+
+    const leads = await query
+      .populate("leadPerson", "fullName email")
+      .populate("createdBy", "fullName email")
+      .populate("assignedTo", "fullName email")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(); // OPTIMIZATION: Use lean() for faster queries
+
+    // CRITICAL FIX: Manually decrypt PII fields because .lean() bypasses Mongoose toJSON transform
+    leads.forEach((lead) => {
+      try {
+        if (lead.email) lead.email = decrypt(lead.email);
+        if (lead.phone) lead.phone = decrypt(lead.phone);
+        if (lead.telegramId) lead.telegramId = decrypt(lead.telegramId);
+      } catch (error) {
+        console.error(`Failed to decrypt lead ${lead._id}:`, error.message);
+        // Keep original encrypted value if decryption fails
+      }
+    });
+
+    console.log(
+      `Found ${leads.length} assigned leads for ${req.user.fullName} (showing ${skip + 1}-${skip + leads.length} of ${totalCount})`,
+    );
+
+    // Group leads by month/year for better organization
+    const leadsByMonth = {};
+    leads.forEach((lead) => {
+      const date = new Date(lead.createdAt);
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+      if (!leadsByMonth[monthKey]) {
+        leadsByMonth[monthKey] = [];
+      }
+      leadsByMonth[monthKey].push(lead);
+    });
+
+    console.log("Leads grouped by month:");
+    Object.keys(leadsByMonth)
+      .sort()
+      .forEach((month) => {
+        console.log(`- ${month}: ${leadsByMonth[month].length} leads`);
+      });
+
+    console.log("==============================================");
+
+    res.status(200).json({
+      success: true,
+      count: leads.length,
+      total: totalCount, // Add total count
+      data: leads,
+      groupedByMonth: leadsByMonth,
+      pagination: {
+        page: page,
+        limit: limit,
+        total: totalCount,
+        pages: limit > 0 ? Math.ceil(totalCount / limit) : 1,
+      },
+      filters: {
+        month: month || null,
+        year: year || null,
+        startDate: startDate || null,
+        endDate: endDate || null,
+      },
+    });
+  } catch (err) {
+    console.error("Error fetching assigned leads:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Update lead feedback
+// @route   PUT /api/leads/:id/feedback
+// @access  Private (Sales Person, Lead Person, Manager, Admin)
+exports.updateFeedback = async (req, res) => {
+  try {
+    const { feedback } = req.body;
+
+    if (!feedback) {
+      return res.status(400).json({
+        success: false,
+        message: "Feedback field is required",
+      });
+    }
+
+    let lead = await Lead.findById(req.params.id);
+
+    if (!lead) {
+      return res.status(404).json({
+        success: false,
+        message: `No lead found with id of ${req.params.id}`,
+      });
+    }
+
+    const leadAssignedId = lead.assignedTo ? lead.assignedTo.toString() : null;
+    const userId = req.user._id.toString();
+
+    // Check if user is authorized to update feedback for this lead
+    if (
+      req.user.role !== "Admin" &&
+      req.user.role !== "Manager" &&
+      (!leadAssignedId || leadAssignedId !== userId) &&
+      !(
+        req.user.role === "Lead Person" &&
+        lead.leadPerson &&
+        lead.leadPerson.toString() === userId
+      )
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update feedback for this lead",
+      });
+    }
+
+    const oldLead = lead.toObject();
+
+    // Update only the feedback field and updatedAt
+    lead = await Lead.findByIdAndUpdate(
+      req.params.id,
+      {
+        feedback,
+        updatedAt: Date.now(),
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
+
+    // Detailed Admin Notification
+    await notifyAdminOfLeadUpdate(req, oldLead, lead);
+
+    res.status(200).json({
+      success: true,
+      data: lead,
+    });
+  } catch (err) {
+    console.error("Error updating feedback:", err);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Import leads from CSV (Google Sheets)
+// @route   POST /api/leads/import
+// @access  Private (Admin, Manager, Lead Person)
+exports.importLeads = async (req, res) => {
+  try {
+    console.log("=== IMPORT LEADS REQUEST ===");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("User:", req.user.fullName, req.user.role);
+
+    // Handle both direct leads array and nested data structure
+    let leads = req.body.leads;
+    if (!leads && req.body.data && req.body.data.leads) {
+      leads = req.body.data.leads;
+      console.log("Found leads in nested data structure");
+    }
+
+    if (!leads) {
+      console.log("No leads field found in request body");
+      return res.status(400).json({
+        success: false,
+        message: "No leads field provided in request body",
+      });
+    }
+
+    if (!Array.isArray(leads)) {
+      console.log("Leads is not an array:", typeof leads);
+      return res.status(400).json({
+        success: false,
+        message: "Leads must be an array",
+      });
+    }
+
+    if (leads.length === 0) {
+      console.log("Leads array is empty");
+      return res.status(400).json({
+        success: false,
+        message: "Leads array is empty",
+      });
+    }
+
+    console.log(
+      `Importing ${leads.length} leads from CSV by ${req.user.fullName} (${req.user.role})...`,
+    );
+    console.log("First lead sample:", JSON.stringify(leads[0], null, 2));
+
+    // Map Google Sheets column names to our database fields
+    const mappedLeads = leads.map((lead, index) => {
+      console.log(`Processing lead ${index + 1}:`, lead);
+
+      const leadData = {
+        name: lead.Name || lead.name || lead.NAME || "",
+        email: lead.Email || lead.email || lead.EMAIL || "",
+        course: lead.Course || lead.course || lead.COURSE || "",
+        countryCode:
+          lead.CountryCode ||
+          lead["Country Code"] ||
+          lead.countryCode ||
+          lead.COUNTRYCODE ||
+          "+1",
+        phone:
+          lead.Phone ||
+          lead.phone ||
+          lead.PHONE ||
+          lead.Number ||
+          lead.number ||
+          lead.NUMBER ||
+          "",
+        country: lead.Country || lead.country || lead.COUNTRY || "",
+        pseudoId:
+          lead.PseudoId ||
+          lead.pseudoId ||
+          lead.ID ||
+          lead.id ||
+          lead.PSEUDOID ||
+          "",
+        company: lead.Company || lead.company || lead.COMPANY || "",
+        client: lead.Client || lead.client || lead.CLIENT || "",
+        status: lead.Status || lead.status || lead.STATUS || "Introduction", // Default to Introduction stage
+        source: lead.Source || lead.source || lead.SOURCE || "",
+        sourceLink:
+          lead.SourceLink ||
+          lead["Source Link"] ||
+          lead.sourceLink ||
+          lead.SOURCELINK ||
+          "",
+        remarks: lead.Remarks || lead.remarks || lead.REMARKS || "",
+        feedback: lead.Feedback || lead.feedback || lead.FEEDBACK || "",
+        createdBy: req.user.id,
+        // Set the createdAt date from CSV DATE field if available
+        createdAt: (() => {
+          if (lead.DATE || lead.Date || lead.date) {
+            const dateStr = lead.DATE || lead.Date || lead.date;
+            console.log(`Processing date: "${dateStr}"`);
+
+            // Function to parse DD-MM-YYYY format
+            const parseDDMMYYYY = (str) => {
+              const ddmmyyyyPattern = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/;
+              const match = str.match(ddmmyyyyPattern);
+              if (match) {
+                const [, day, month, year] = match;
+                // Create date in YYYY-MM-DD format for proper parsing
+                const isoFormat = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+                console.log(
+                  `Detected DD-MM-YYYY format: "${str}" -> "${isoFormat}"`,
+                );
+                return new Date(isoFormat);
+              }
+              return null;
+            };
+
+            // Try DD-MM-YYYY format first
+            let parsedDate = parseDDMMYYYY(dateStr);
+
+            if (parsedDate && !isNaN(parsedDate.getTime())) {
+              console.log(
+                `Successfully parsed DD-MM-YYYY format: ${parsedDate.toISOString()}`,
+              );
+              return parsedDate;
+            }
+
+            // Try to parse the date directly (for YYYY-MM-DD and other standard formats)
+            parsedDate = new Date(dateStr);
+
+            // If the date is invalid, try different formats
+            if (isNaN(parsedDate.getTime())) {
+              console.log(
+                `Invalid date format: "${dateStr}", trying alternative formats`,
+              );
+
+              // Try common date formats
+              const formats = [
+                dateStr.replace(/\//g, "-"), // Convert slashes to dashes
+                dateStr.replace(/-/g, "/"), // Convert dashes to slashes
+              ];
+
+              for (const format of formats) {
+                parsedDate = new Date(format);
+                if (!isNaN(parsedDate.getTime())) {
+                  console.log(`Successfully parsed with format: ${format}`);
+                  break;
+                }
+              }
+
+              // If still invalid, use current date
+              if (isNaN(parsedDate.getTime())) {
+                console.log(
+                  `All date formats failed for "${dateStr}", using current date`,
+                );
+                parsedDate = new Date();
+              }
+            }
+
+            console.log(
+              `Final parsed date: ${parsedDate.toISOString()} (${parsedDate.toString()})`,
+            );
+            return parsedDate;
+          } else {
+            console.log("No date field found, using current date");
+            return new Date();
+          }
+        })(),
+        updatedAt: new Date(),
+      };
+
+      // FIXED: Look for Lead Person in CSV data FIRST, regardless of who is importing
+      if (
+        lead.LeadPerson ||
+        lead["Lead Person"] ||
+        lead.leadPerson ||
+        lead.LEADPERSON ||
+        lead["LEAD PERSON"]
+      ) {
+        const leadPersonName =
+          lead.LeadPerson ||
+          lead["Lead Person"] ||
+          lead.leadPerson ||
+          lead.LEADPERSON ||
+          lead["LEAD PERSON"];
+        leadData.leadPersonName = leadPersonName;
+        console.log(`Found Lead Person in CSV: "${leadPersonName}"`);
+      } else {
+        // If no Lead Person specified in CSV, default to the importing user (only if they are a Lead Person)
+        if (req.user.role === "Lead Person") {
+          leadData.leadPerson = req.user._id;
+          leadData.assignedTo = req.user._id; // Default assignment to Lead Person
+          console.log(
+            `No Lead Person in CSV, defaulting to importing user: ${req.user.fullName}`,
+          );
+        }
+      }
+
+      // Look for Sales Person assignment
+      if (
+        lead.SalesPerson ||
+        lead["Sales Person"] ||
+        lead.salesPerson ||
+        lead.assignedTo ||
+        lead.SALESPERSON ||
+        lead["SALES PERSON"]
+      ) {
+        const salesPersonName =
+          lead.SalesPerson ||
+          lead["Sales Person"] ||
+          lead.salesPerson ||
+          lead.assignedTo ||
+          lead.SALESPERSON ||
+          lead["SALES PERSON"];
+        leadData.assignedToName = salesPersonName;
+        console.log(`Found Sales Person in CSV: "${salesPersonName}"`);
+      }
+
+      console.log(`Mapped lead data:`, leadData);
+      return leadData;
+    });
+
+    console.log(`Mapped ${mappedLeads.length} leads`);
+
+    // FIXED: Look up and assign Lead Persons and Sales Persons by name for ALL imports
+    console.log("Looking up users for automatic assignment...");
+
+    // Get all users who could be Lead Persons or Sales Persons
+    const User = require("../models/User");
+    const allUsers = await User.find({
+      role: { $in: ["Lead Person", "Sales Person", "Admin", "Manager"] },
+    }).select("_id fullName email role");
+
+    console.log(
+      `Found ${allUsers.length} potential assignees:`,
+      allUsers.map((u) => `${u.fullName} (${u.role})`),
+    );
+
+    // Pre-index users by role and name for O(1) lookups
+    const leadPersons = allUsers.filter(u => u.role === "Lead Person");
+    const salesTeam = allUsers.filter(u => ["Sales Person", "Admin", "Manager"].includes(u.role));
+
+    const buildUserIndices = (users) => {
+      const exactMap = new Map();
+      const firstNameMap = new Map();
+      users.forEach(user => {
+        const lowerName = user.fullName.toLowerCase();
+        exactMap.set(lowerName, user);
+        
+        const firstName = lowerName.split(" ")[0];
+        if (firstName && !firstNameMap.has(firstName)) {
+          firstNameMap.set(firstName, user);
+        }
+      });
+      return { exactMap, firstNameMap, list: users };
+    };
+
+    const leadPersonIndices = buildUserIndices(leadPersons);
+    const salesTeamIndices = buildUserIndices(salesTeam);
+
+    const resolveUserByName = (searchName, indices) => {
+      if (!searchName) return null;
+      const cleanSearchName = searchName.trim().toLowerCase();
+
+      // 1. Try exact match (O(1))
+      let match = indices.exactMap.get(cleanSearchName);
+      if (match) return match;
+
+      // 2. Try partial contains match (O(U_role))
+      match = indices.list.find(user => {
+        const lowerName = user.fullName.toLowerCase();
+        return lowerName.includes(cleanSearchName) || cleanSearchName.includes(lowerName);
+      });
+      if (match) return match;
+
+      // 3. Try first name match (O(1))
+      const searchFirstName = cleanSearchName.split(" ")[0];
+      return indices.firstNameMap.get(searchFirstName) || null;
+    };
+
+    // Process each mapped lead to assign Lead Persons and Sales Persons
+    for (let leadData of mappedLeads) {
+      // Assign Lead Person if specified in CSV
+      if (leadData.leadPersonName) {
+        console.log(`\nLooking for Lead Person: "${leadData.leadPersonName}"`);
+
+        const matchingLeadPerson = resolveUserByName(leadData.leadPersonName, leadPersonIndices);
+
+        if (matchingLeadPerson) {
+          leadData.leadPerson = matchingLeadPerson._id;
+          console.log(
+            `✅ Lead Person assigned to: ${matchingLeadPerson.fullName}`,
+          );
+
+          // If no sales person specified, default assign to the Lead Person
+          if (!leadData.assignedToName) {
+            leadData.assignedTo = matchingLeadPerson._id;
+            console.log(`✅ Also assigned to Lead Person as default assignee`);
+          }
+        } else {
+          console.log(
+            `❌ No matching Lead Person found for "${leadData.leadPersonName}"`,
+          );
+          console.log(
+            "Available Lead Persons:",
+            leadPersons.map((u) => u.fullName).join(", "),
+          );
+
+          // Fallback to importing user if they are a Lead Person
+          if (req.user.role === "Lead Person") {
+            leadData.leadPerson = req.user._id;
+            leadData.assignedTo = req.user._id;
+            console.log(
+              `Fallback: Assigned to importing Lead Person: ${req.user.fullName}`,
+            );
+          }
+        }
+
+        // Remove the temporary name field
+        delete leadData.leadPersonName;
+      }
+
+      // Assign Sales Person if specified in CSV
+      if (leadData.assignedToName) {
+        console.log(`\nLooking for Sales Person: "${leadData.assignedToName}"`);
+
+        const matchingSalesPerson = resolveUserByName(leadData.assignedToName, salesTeamIndices);
+
+        if (matchingSalesPerson) {
+          leadData.assignedTo = matchingSalesPerson._id;
+          console.log(
+            `✅ Sales Person assigned to: ${matchingSalesPerson.fullName} (${matchingSalesPerson.role})`,
+          );
+        } else {
+          console.log(
+            `❌ No matching Sales Person found for "${leadData.assignedToName}"`,
+          );
+          console.log(
+            "Available Sales Persons:",
+            salesTeam.map((u) => u.fullName).join(", "),
+          );
+
+          // Keep existing assignment (Lead Person or importing user)
+          console.log(`Keeping existing assignment`);
+        }
+
+        // Remove the temporary name field
+        delete leadData.assignedToName;
+      }
+
+      // Initialize assignmentMethod, originalAssignedTo, and assignmentHistory for imported leads
+      if (leadData.assignedTo) {
+        leadData.assignmentMethod = "MANUAL";
+        leadData.originalAssignedTo = leadData.assignedTo;
+        leadData.assignmentHistory = [{
+          assignedTo: leadData.assignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now(),
+          assignmentMethod: "MANUAL",
+          note: "Manually assigned via CSV import"
+        }];
+      } else {
+        leadData.assignmentMethod = "ROUND_ROBIN";
+      }
+    }
+
+    // Validate the mapped data - make validation more flexible
+    const validLeads = mappedLeads.filter((lead, index) => {
+      const isValid = lead.name && (lead.phone || lead.email) && lead.course;
+      if (!isValid) {
+        console.log(`Lead ${index + 1} is invalid:`, {
+          name: lead.name,
+          phone: lead.phone,
+          email: lead.email,
+          course: lead.course,
+          hasName: !!lead.name,
+          hasContact: !!(lead.phone || lead.email),
+          hasCourse: !!lead.course,
+        });
+      }
+      return isValid;
+    });
+
+    console.log(
+      `Found ${validLeads.length} valid leads out of ${mappedLeads.length}`,
+    );
+
+    if (validLeads.length === 0) {
+      console.log("No valid leads found");
+      return res.status(400).json({
+        success: false,
+        message:
+          "No valid leads found in the imported data. Required fields: Name, Phone/Email, Course",
+        details:
+          "Make sure your CSV has columns for Name, Phone (or Email), and Course",
+      });
+    }
+
+    // Insert the leads into the database
+    console.log("Attempting to insert leads into database...");
+    const results = await Lead.insertMany(validLeads, {
+      ordered: false, // Continue processing even if some documents have errors
+    });
+
+    console.log(`Successfully imported ${results.length} leads`);
+
+    // Run Round-Robin distribution for unassigned imported leads
+    const unassignedLeads = results.filter((l) => !l.assignedTo || l.assignmentMethod === "ROUND_ROBIN");
+    if (unassignedLeads.length > 0) {
+      try {
+        const leadAssignmentService = require("../services/leadAssignmentService");
+        console.log(`🔄 Running Round-Robin distribution for ${unassignedLeads.length} imported lead(s)...`);
+        await leadAssignmentService.distributeLeadsBatchRoundRobin(unassignedLeads, req.user);
+      } catch (rrError) {
+        console.error("Error during CSV import Round-Robin assignment:", rrError);
+      }
+    }
+
+    // Log assignment info for debugging
+    if (req.user.role === "Lead Person") {
+      console.log(
+        `All imported leads assigned to Lead Person: ${req.user.fullName}`,
+      );
+
+      // Count how many were auto-assigned to sales persons
+      const autoAssigned = results.filter(
+        (lead) =>
+          lead.assignedTo &&
+          lead.assignedTo.toString() !== req.user._id.toString(),
+      ).length;
+
+      if (autoAssigned > 0) {
+        console.log(
+          `${autoAssigned} leads were automatically assigned to sales persons from CSV data`,
+        );
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      count: results.length,
+      data: results,
+      message: `Successfully imported ${results.length} leads. ${
+        req.user.role === "Lead Person"
+          ? "Leads with sales person names in CSV were automatically assigned. Others assigned to you as Lead Person."
+          : ""
+      }`,
+      skipped: mappedLeads.length - results.length,
+    });
+  } catch (err) {
+    console.error("Lead import error:", err);
+    console.error("Error stack:", err.stack);
+    res.status(400).json({
+      success: false,
+      message: err.message || "Import failed",
+      error: process.env.NODE_ENV === "development" ? err.stack : undefined,
+    });
+  }
+};
+
+// @desc    Get all customer leads (including reference sales)
+// @route   GET /api/leads/customers
+// @access  Private (Sales Person only)
+exports.getAllCustomers = async (req, res) => {
+  try {
+    console.log(
+      "Getting all customers (leads + reference sales) for:",
+      req.user.fullName,
+    );
+
+    // 1. Get leads based on role
+    let leadsQuery;
+    if (req.user.role === "Admin" || req.user.role === "Manager") {
+      leadsQuery = Lead.find({});
+    } else {
+      leadsQuery = Lead.find({ assignedTo: req.user._id });
+    }
+
+    const leads = await leadsQuery
+      .populate("leadPerson", "fullName email")
+      .populate("createdBy", "fullName email")
+      .populate("assignedTo", "fullName email")
+      .sort({ createdAt: -1 });
+
+    console.log(`Found ${leads.length} leads`);
+
+    // 2. Get reference sales based on role
+    const Sale = require("../models/Sale");
+    let salesQuery;
+    if (req.user.role === "Admin" || req.user.role === "Manager") {
+      salesQuery = Sale.find({ isReference: true });
+    } else {
+      salesQuery = Sale.find({
+        salesPerson: req.user._id,
+        isReference: true,
+      });
+    }
+
+    const referenceSales = await salesQuery.sort({ date: -1 });
+
+    console.log(`Found ${referenceSales.length} reference sales`);
+
+    // 3. Convert reference sales to lead-like format
+    const referenceSalesAsLeads = referenceSales.map((sale) => {
+      return {
+        _id: sale._id, // Use the sale ID
+        name: sale.customerName,
+        email: sale.email,
+        phone: sale.contactNumber,
+        countryCode: sale.countryCode,
+        country: sale.country,
+        course: sale.course,
+        source: "Reference Sale",
+        status: sale.status,
+        assignedTo: sale.salesPerson,
+        leadPerson: sale.leadPerson,
+        createdBy: sale.createdBy,
+        createdAt: sale.date || sale.createdAt,
+        updatedAt: sale.updatedAt,
+        isReferenceSale: true, // Flag to indicate this is actually a reference sale
+      };
+    });
+
+    // 4. Combine both sets of data
+    const allCustomers = [...leads, ...referenceSalesAsLeads];
+
+    console.log(
+      `Returning ${allCustomers.length} total customers (${leads.length} leads + ${referenceSalesAsLeads.length} reference sales)`,
+    );
+
+    res.status(200).json({
+      success: true,
+      count: allCustomers.length,
+      data: allCustomers,
+    });
+  } catch (err) {
+    console.error("Error fetching all customers:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+// @desc    Get repeated customer information
+// @route   GET /api/leads/repeat-customers
+// @access  Private (Admin, Manager)
+exports.getRepeatCustomers = async (req, res) => {
+  try {
+    console.log("============= GET REPEAT CUSTOMERS =============");
+    console.log("User making request:", {
+      id: req.user._id,
+      role: req.user.role,
+      name: req.user.fullName,
+    });
+
+    // Only allow admin and manager to access this data
+    if (req.user.role !== "Admin" && req.user.role !== "Manager") {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to access repeat customer data",
+      });
+    }
+
+    // Find all leads marked as repeat customers
+    const repeatCustomers = await Lead.find({ isRepeatCustomer: true })
+      .populate("assignedTo", "fullName email")
+      .populate("leadPerson", "fullName email")
+      .populate("relatedLeads", "name course createdAt")
+      .sort({ createdAt: -1 });
+
+    // Group customers by contact info to find all unique customers
+    const uniqueCustomerMap = new Map();
+
+    repeatCustomers.forEach((lead) => {
+      // Create a unique key based on contact info
+      const key = `${lead.phone}|${lead.email}`;
+
+      if (!uniqueCustomerMap.has(key)) {
+        uniqueCustomerMap.set(key, {
+          customerInfo: {
+            name: lead.name,
+            email: lead.email,
+            phone: lead.phone,
+            countryCode: lead.countryCode,
+            country: lead.country,
+          },
+          leads: [],
+        });
+      }
+
+      // Add this lead and related leads to the customer's records
+      const customerData = uniqueCustomerMap.get(key);
+
+      // Add the current lead
+      customerData.leads.push({
+        _id: lead._id,
+        course: lead.course,
+        createdAt: lead.createdAt,
+        salesPerson: lead.assignedTo ? lead.assignedTo.fullName : "Unassigned",
+        previousCourses: lead.previousCourses,
+      });
+
+      // Add related leads if they're not already included
+      if (lead.relatedLeads && lead.relatedLeads.length > 0) {
+        lead.relatedLeads.forEach((relatedLead) => {
+          // Check if this related lead is already in the list
+          const alreadyIncluded = customerData.leads.some(
+            (l) => l._id.toString() === relatedLead._id.toString(),
+          );
+
+          if (!alreadyIncluded) {
+            customerData.leads.push({
+              _id: relatedLead._id,
+              course: relatedLead.course,
+              createdAt: relatedLead.createdAt,
+              salesPerson: "Unknown", // We don't have this info from the populated data
+            });
+          }
+        });
+      }
+
+      // Sort leads by date
+      customerData.leads.sort(
+        (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+      );
+    });
+
+    // Convert the map to an array
+    const uniqueCustomers = Array.from(uniqueCustomerMap.values());
+
+    // Calculate some statistics
+    const stats = {
+      totalRepeatCustomers: uniqueCustomers.length,
+      totalLeads: repeatCustomers.length,
+      averageCoursesPerCustomer:
+        uniqueCustomers.length > 0
+          ? (repeatCustomers.length / uniqueCustomers.length).toFixed(2)
+          : 0,
+    };
+
+    console.log(
+      `Found ${stats.totalRepeatCustomers} unique repeat customers with ${stats.totalLeads} total leads`,
+    );
+    console.log("==============================================");
+
+    res.status(200).json({
+      success: true,
+      stats,
+      data: uniqueCustomers,
+    });
+  } catch (err) {
+    console.error("Error getting repeat customers:", err);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Get lead statistics
+// @route   GET /api/leads/stats
+// @access  Private
+exports.getLeadStats = async (req, res) => {
+  try {
+    const filter = {};
+
+    // Role-based filtering
+    if (req.user.role === "Sales Person") {
+      filter.assignedTo = req.user._id;
+    } else if (req.user.role === "Lead Person") {
+      filter.$or = [
+        { leadPerson: req.user._id },
+        { assignedTo: req.user._id }
+      ];
+    } else if (req.user.role === "Branch Partner") {
+      const User = require("../models/User");
+      const Employee = require("../models/Employee");
+      let branchIds = req.user.branchIds || [];
+      if (req.user.branchId && !branchIds.some(id => id.toString() === req.user.branchId.toString())) {
+        branchIds.push(req.user.branchId);
+      }
+      if (branchIds.length === 0) {
+        const emp = await Employee.findOne({ userId: req.user._id });
+        if (emp && emp.branchId) branchIds.push(emp.branchId);
+      }
+      if (branchIds.length > 0) {
+        const branchUsers = await User.find({
+          $or: [
+            { branchId: { $in: branchIds } },
+            { _id: req.user._id }
+          ]
+        }).select("_id");
+        const branchUserIds = branchUsers.map((u) => u._id);
+        filter.$or = [
+          { assignedTo: { $in: branchUserIds } },
+          { leadPerson: { $in: branchUserIds } },
+          { branchId: { $in: branchIds } }
+        ];
+      }
+    }
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const stats = await Lead.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          assignedToday: {
+            $sum: {
+              $cond: [
+                { $gte: ["$createdAt", startOfToday] },
+                1,
+                0
+              ]
+            }
+          },
+          new: { $sum: { $cond: [{ $eq: ["$status", "New"] }, 1, 0] } },
+          contacted: {
+            $sum: { $cond: [{ $eq: ["$status", "Contacted"] }, 1, 0] },
+          },
+          interested: {
+            $sum: { $cond: [{ $eq: ["$status", "Interested"] }, 1, 0] },
+          },
+          qualified: {
+            $sum: { $cond: [{ $eq: ["$status", "Qualified"] }, 1, 0] },
+          },
+          converted: {
+            $sum: { $cond: [{ $eq: ["$status", "Converted"] }, 1, 0] },
+          },
+          lost: { $sum: { $cond: [{ $eq: ["$status", "Lost"] }, 1, 0] } },
+        },
+      },
+    ]);
+
+    const sourceStats = await Lead.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$source",
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { count: -1 } },
+    ]);
+
+    const result = {
+      overview: stats[0] || {
+        total: 0,
+        assignedToday: 0,
+        new: 0,
+        contacted: 0,
+        interested: 0,
+        qualified: 0,
+        converted: 0,
+        lost: 0,
+      },
+      sources: sourceStats,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Error getting lead stats:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+// @desc    Bulk Update leads
+// @route   PUT /api/leads/bulk-update
+// @access  Private (Admin, Manager, Lead Person)
+exports.bulkUpdateLeads = async (req, res) => {
+  try {
+    const { leadIds, updateData } = req.body;
+
+    if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an array of lead IDs",
+      });
+    }
+
+    if (!updateData || Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide data to update",
+      });
+    }
+
+    // Sanitize updateData - only allow specific fields for bulk update
+    const allowedFields = ["status", "assignedTo", "leadPerson"];
+    const sanitizedData = {};
+    allowedFields.forEach((field) => {
+      if (updateData[field] !== undefined && updateData[field] !== null && updateData[field] !== "") {
+        sanitizedData[field] = updateData[field];
+      }
+    });
+
+    if (Object.keys(sanitizedData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields provided for bulk update",
+      });
+    }
+
+    sanitizedData.updatedAt = Date.now();
+
+    const leads = await Lead.find({ _id: { $in: leadIds } });
+    let modifiedCount = 0;
+    const uniqueUserIds = new Set();
+
+    if (sanitizedData.assignedTo) uniqueUserIds.add(sanitizedData.assignedTo.toString());
+    if (sanitizedData.leadPerson) uniqueUserIds.add(sanitizedData.leadPerson.toString());
+
+    for (const lead of leads) {
+      let changed = false;
+      
+      if (sanitizedData.status !== undefined && lead.status !== sanitizedData.status) {
+        lead.status = sanitizedData.status;
+        changed = true;
+      }
+      
+      if (sanitizedData.assignedTo !== undefined && sanitizedData.assignedTo !== null && sanitizedData.assignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")) {
+        // Collect old assignee for performance recalculation
+        if (lead.assignedTo) {
+          uniqueUserIds.add(lead.assignedTo.toString());
+        }
+
+        // Track history
+        if (!lead.originalAssignedTo && lead.assignedTo) {
+          lead.originalAssignedTo = lead.assignedTo;
+        }
+        
+        if (!lead.assignmentHistory) {
+          lead.assignmentHistory = [];
+        }
+
+        if (lead.assignmentHistory.length > 0) {
+          const lastIndex = lead.assignmentHistory.length - 1;
+          if (!lead.assignmentHistory[lastIndex].unassignedAt) {
+            lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
+          }
+        }
+        
+        lead.assignmentHistory.push({
+          assignedTo: sanitizedData.assignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now()
+        });
+        
+        lead.assignedTo = sanitizedData.assignedTo;
+        changed = true;
+      }
+      
+      if (sanitizedData.leadPerson !== undefined && sanitizedData.leadPerson !== null && sanitizedData.leadPerson.toString() !== (lead.leadPerson ? lead.leadPerson.toString() : "")) {
+        lead.leadPerson = sanitizedData.leadPerson;
+        changed = true;
+      }
+      
+      if (changed) {
+        lead.updatedAt = Date.now();
+        await lead.save({ validateModifiedOnly: true });
+        modifiedCount++;
+      }
+    }
+
+    // Trigger performance updates for affected users
+    if (uniqueUserIds.size > 0) {
+      const { queuePerformanceCalculation } = require("../services/performanceQueue");
+      const today = new Date();
+      
+      uniqueUserIds.forEach(userId => {
+        queuePerformanceCalculation(userId, today)
+          .catch(err => console.error(`Bulk perf update error for ${userId}:`, err.message));
+      });
+    }
+
+    // Emit Socket.IO event for bulk assignment
+    if (sanitizedData.assignedTo && sanitizedData.assignedTo.toString() !== req.user._id.toString()) {
+      try {
+        const io = req.app.get("io");
+        if (io) {
+          const assignedToId = sanitizedData.assignedTo.toString();
+          io.to(`user-${assignedToId}`).emit("leadAssigned", {
+            leadId: "bulk",
+            leadName: `${modifiedCount} Leads`,
+            course: "Multiple Courses",
+            assignedBy: req.user.fullName,
+            assignedById: req.user._id,
+            assignmentType: "bulk",
+            count: modifiedCount
+          });
+          console.log(`📡 Emitted leadAssigned (bulk transfer) event to user-${assignedToId}`);
+        }
+      } catch (socketErr) {
+        console.error("Socket emission error in bulkUpdate (non-blocking):", socketErr);
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully updated ${modifiedCount} leads`,
+      count: modifiedCount,
+    });
+  } catch (err) {
+    console.error("Error in bulkUpdateLeads:", err);
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// @desc    Get preview of leads ready to be reverted to original sales persons
+// @route   POST /api/leads/restore-preview
+// @access  Private (Admin, Manager)
+exports.getRestorePreview = async (req, res) => {
+  try {
+    const { leadIds, revertAll, tempUserId, beforeDate } = req.body;
+    let filter = {};
+
+    if (leadIds && Array.isArray(leadIds) && leadIds.length > 0) {
+      filter._id = { $in: leadIds };
+    } else if (revertAll || tempUserId || beforeDate) {
+      if (tempUserId) {
+        filter.assignedTo = tempUserId;
+      }
+      if (beforeDate) {
+        filter.createdAt = { $lte: new Date(beforeDate) };
+      }
+    }
+
+    // Must have an originalAssignedTo that differs from current assignedTo
+    const leads = await Lead.find(filter)
+      .populate("assignedTo", "fullName name email")
+      .populate("originalAssignedTo", "fullName name email");
+
+    const revertableLeads = leads.filter(
+      (l) =>
+        l.originalAssignedTo &&
+        (l.assignedTo?._id || l.assignedTo)?.toString() !==
+          (l.originalAssignedTo?._id || l.originalAssignedTo)?.toString()
+    );
+
+    res.status(200).json({
+      success: true,
+      count: revertableLeads.length,
+      leads: revertableLeads.map((l) => ({
+        _id: l._id,
+        name: l.name,
+        course: l.course,
+        currentAssignedTo: l.assignedTo?.fullName || l.assignedTo?.name || "Unassigned",
+        originalAssignedTo: l.originalAssignedTo?.fullName || l.originalAssignedTo?.name || "Unknown",
+        createdAt: l.createdAt,
+      })),
+    });
+  } catch (err) {
+    console.error("Error in getRestorePreview:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch restore preview" });
+  }
+};
+
+// @desc    Restore leads to original assigned sales person
+// @route   PUT /api/leads/restore
+// @access  Private (Admin, Manager)
+exports.restoreLeads = async (req, res) => {
+  try {
+    const { leadIds, revertAll, tempUserId, beforeDate } = req.body;
+
+    let filter = {};
+    if (leadIds && Array.isArray(leadIds) && leadIds.length > 0) {
+      filter._id = { $in: leadIds };
+    } else if (revertAll || tempUserId || beforeDate) {
+      if (tempUserId) {
+        filter.assignedTo = tempUserId;
+      }
+      if (beforeDate) {
+        filter.createdAt = { $lte: new Date(beforeDate) };
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide leadIds or specify bulk revert criteria (revertAll / tempUserId / beforeDate)",
+      });
+    }
+
+    const leads = await Lead.find(filter);
+    let restoredCount = 0;
+    const uniqueUserIds = new Set();
+
+    for (const lead of leads) {
+      if (
+        lead.originalAssignedTo &&
+        lead.originalAssignedTo.toString() !== (lead.assignedTo ? lead.assignedTo.toString() : "")
+      ) {
+        const oldAssignedTo = lead.assignedTo;
+        lead.assignedTo = lead.originalAssignedTo;
+
+        // Track history cleanly
+        if (lead.assignmentHistory && lead.assignmentHistory.length > 0) {
+          const lastIndex = lead.assignmentHistory.length - 1;
+          if (!lead.assignmentHistory[lastIndex].unassignedAt) {
+            lead.assignmentHistory[lastIndex].unassignedAt = Date.now();
+          }
+        }
+
+        if (!lead.assignmentHistory) {
+          lead.assignmentHistory = [];
+        }
+
+        lead.assignmentHistory.push({
+          assignedTo: lead.originalAssignedTo,
+          assignedBy: req.user._id,
+          assignedAt: Date.now(),
+        });
+
+        await lead.save({ validateModifiedOnly: true });
+        restoredCount++;
+
+        if (oldAssignedTo) {
+          uniqueUserIds.add(oldAssignedTo.toString());
+        }
+        uniqueUserIds.add(lead.originalAssignedTo.toString());
+      }
+    }
+
+    // Trigger performance recalculation updates for affected users
+    if (uniqueUserIds.size > 0) {
+      try {
+        const { queuePerformanceCalculation } = require("../services/performanceQueue");
+        const today = new Date();
+        uniqueUserIds.forEach((userId) => {
+          queuePerformanceCalculation(userId, today).catch(() => {});
+        });
+      } catch (queueErr) {
+        console.warn("Performance queue update skipped:", queueErr.message);
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully reverted ${restoredCount} leads to their original sales persons`,
+      count: restoredCount,
+    });
+  } catch (err) {
+    console.error("Error in restoreLeads:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error restoring leads",
+    });
+  }
+};
+
+// @desc    Auto assign selected leads via Round-Robin
+// @route   POST /api/leads/auto-assign
+// @access  Private (Admin, Manager, Lead Person)
+exports.autoAssignLeads = async (req, res) => {
+  try {
+    const { leadIds } = req.body;
+    if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an array of lead IDs to auto-assign",
+      });
+    }
+
+    const leadAssignmentService = require("../services/leadAssignmentService");
+    const leads = await Lead.find({ _id: { $in: leadIds } });
+
+    const result = await leadAssignmentService.distributeLeadsBatchRoundRobin(leads, req.user);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully auto-assigned ${result.count} lead(s) via Round-Robin.`,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Auto assign leads error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to auto assign leads",
+    });
+  }
+};
+

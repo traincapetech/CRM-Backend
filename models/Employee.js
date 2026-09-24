@@ -1,0 +1,448 @@
+const mongoose = require("mongoose");
+const { encrypt, decrypt, isEncrypted } = require("../utils/encryption");
+
+const employeeSchema = new mongoose.Schema(
+  {
+    fullName: {
+      type: String,
+      required: [true, "Please add a full name"],
+      trim: true,
+    },
+    email: {
+      type: String,
+      required: [true, "Please add an email"],
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    officialEmail: {
+      type: String,
+      lowercase: true,
+      trim: true,
+    },
+    // PII Fields - encrypted at rest
+    phoneNumber: {
+      type: String,
+      trim: true,
+    },
+    whatsappNumber: {
+      type: String,
+      trim: true,
+    },
+    linkedInUrl: {
+      type: String,
+      trim: true,
+    },
+    currentAddress: {
+      type: String,
+      trim: true,
+    },
+    permanentAddress: {
+      type: String,
+      trim: true,
+    },
+    dateOfBirth: {
+      type: String, // Stored as encrypted string
+    },
+    joiningDate: {
+      type: Date,
+      default: Date.now,
+    },
+    exitDate: {
+      type: Date,
+    },
+    salary: {
+      type: Number,
+      min: 0,
+    },
+    status: {
+      type: String,
+      enum: [
+        "INVITED",
+        "ONBOARDING",
+        "ACTIVE",
+        "PROBATION",
+        "ON_LEAVE",
+        "PIP",
+        "NOTICE_PERIOD",
+        "EXITED",
+        "TERMINATED",
+        "INACTIVE",
+        "COMPLETED",
+        "EXTENDED",
+      ],
+      default: "ACTIVE",
+    },
+    employmentType: {
+      type: String,
+      enum: ["PERMANENT", "INTERN", "CONTRACT"],
+      default: "PERMANENT",
+    },
+    department: {
+      type: mongoose.Schema.ObjectId,
+      ref: "Department",
+      required: [true, "Please assign a department"],
+    },
+    branchId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "Branch",
+      default: null,
+    },
+    role: {
+      type: mongoose.Schema.ObjectId,
+      ref: "EmployeeRole",
+      required: [true, "Please assign a role"],
+    },
+    reportingManager: {
+      type: mongoose.Schema.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    hrId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "User",
+    },
+    // Educational Information
+    collegeName: {
+      type: String,
+      trim: true,
+    },
+    internshipDuration: {
+      type: Number, // in months
+    },
+    internshipStartDate: {
+      type: Date,
+    },
+    internshipEndDate: {
+      type: Date,
+    },
+    internshipExtensionEndDate: {
+      type: Date,
+    },
+    skills: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+    projectAssignments: [
+      {
+        projectName: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+        role: {
+          type: String,
+          trim: true,
+        },
+        startDate: {
+          type: Date,
+        },
+        endDate: {
+          type: Date,
+        },
+        status: {
+          type: String,
+          enum: ["ACTIVE", "COMPLETED", "ON_HOLD"],
+          default: "ACTIVE",
+        },
+      },
+    ],
+    // Document Storage (supporting both simple strings and detailed objects)
+    photograph: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    tenthMarksheet: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    twelfthMarksheet: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    bachelorDegree: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    postgraduateDegree: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    // Sensitive ID Documents - encrypted
+    aadharCard: {
+      type: String, // Encrypted
+    },
+    panCard: {
+      type: String, // Encrypted
+    },
+    pcc: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    signature: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    resume: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    offerLetter: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    // General documents object for additional flexibility
+    documents: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    // User account reference
+    userId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "User",
+    },
+
+    // Official Employee ID (e.g. TC-001, auto-incremented)
+    officialId: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+
+    // Biometric device mapping (empCode)
+    biometricCode: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+    biometricEnabled: {
+      type: Boolean,
+      default: false,
+    },
+
+    // Payment Details for Paytm Payouts
+    paymentMode: {
+      type: String,
+      enum: ["bank", "upi", null],
+      default: null,
+    },
+
+    // Bank Account Details (encrypted)
+    bankAccountNumber: {
+      type: String,
+      default: null,
+    },
+    ifscCode: {
+      type: String,
+      trim: true,
+      default: null,
+      uppercase: true,
+    },
+    accountHolderName: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
+    // UPI Details (encrypted)
+    upiId: {
+      type: String,
+      default: null,
+    },
+
+    // Paytm Integration Fields
+    paytmBeneficiaryId: {
+      type: String,
+      default: null,
+    },
+
+    // Payment Verification Status
+    paytmVerified: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  },
+);
+
+// PII fields to encrypt
+const PII_FIELDS = [
+  "phoneNumber",
+  "whatsappNumber",
+  "currentAddress",
+  "permanentAddress",
+  "dateOfBirth",
+  "aadharCard",
+  "panCard",
+  "bankAccountNumber",
+  "upiId",
+];
+
+// Encrypt PII fields before saving
+employeeSchema.pre("save", function (next) {
+  try {
+    for (const field of PII_FIELDS) {
+      if (this.isModified(field) && this[field]) {
+        // encrypt() already checks for double-encryption
+        this[field] = encrypt(this[field]);
+      }
+    }
+    next();
+  } catch (error) {
+    console.error("Error encrypting PII fields:", error);
+    return next(error);
+  }
+});
+
+// Helper function to encrypt fields in update operations
+const encryptUpdateFields = function (next) {
+  try {
+    const update = this.getUpdate();
+    if (!update) return next();
+
+    // Handle $set operator
+    if (update.$set) {
+      for (const field of PII_FIELDS) {
+        if (update.$set[field]) {
+          update.$set[field] = encrypt(update.$set[field]);
+        }
+      }
+    }
+
+    // Handle $setOnInsert operator
+    if (update.$setOnInsert) {
+      for (const field of PII_FIELDS) {
+        if (update.$setOnInsert[field]) {
+          update.$setOnInsert[field] = encrypt(update.$setOnInsert[field]);
+        }
+      }
+    }
+
+    // Handle direct field updates (without $set - discouraged but possible)
+    for (const field of PII_FIELDS) {
+      if (update[field] && typeof update[field] !== 'object') {
+        update[field] = encrypt(update[field]);
+      }
+    }
+
+    next();
+  } catch (error) {
+    console.error("Error encrypting fields in update:", error);
+    next(error);
+  }
+};
+
+// Encrypt PII fields before updating
+employeeSchema.pre("findOneAndUpdate", encryptUpdateFields);
+employeeSchema.pre("updateOne", encryptUpdateFields);
+employeeSchema.pre("updateMany", encryptUpdateFields);
+
+// Decrypt all PII fields for authorized access
+employeeSchema.methods.getDecryptedPII = function () {
+  const decrypted = {};
+  for (const field of PII_FIELDS) {
+    if (this[field]) {
+      try {
+        decrypted[field] = decrypt(this[field]);
+      } catch (error) {
+        console.error(`Error decrypting ${field}:`, error);
+        decrypted[field] = null;
+      }
+    }
+  }
+  return decrypted;
+};
+
+// Decrypt bank account number (legacy method for backward compatibility)
+employeeSchema.methods.getDecryptedBankAccount = function () {
+  if (!this.bankAccountNumber) return null;
+  try {
+    return decrypt(this.bankAccountNumber);
+  } catch (error) {
+    console.error("Error decrypting bank account number:", error);
+    return null;
+  }
+};
+
+// Populate department, role, reportingManager, and hrId on find
+employeeSchema.pre(/^find/, function (next) {
+  this.populate({
+    path: "department",
+    select: "name description",
+  })
+    .populate({
+      path: "role",
+      select: "name description",
+    })
+    .populate({
+      path: "reportingManager",
+      select: "fullName email role profilePicture",
+    })
+    .populate({
+      path: "hrId",
+      select: "fullName email",
+    })
+    .populate({
+      path: "branchId",
+      select: "name code city state status",
+    });
+  next();
+});
+
+// Ensure biometric & official IDs are unique when provided
+employeeSchema.index({ biometricCode: 1 }, { unique: true, sparse: true });
+employeeSchema.index({ officialId: 1 }, { unique: true, sparse: true });
+
+// Auto-increment Official ID generator
+employeeSchema.statics.generateNextOfficialId = async function () {
+  const employees = await this.find({ officialId: { $exists: true, $ne: "" } }).select("officialId");
+
+  let maxNum = 0;
+  let prefix = "TC-";
+  let padLength = 3;
+
+  for (const emp of employees) {
+    if (!emp.officialId) continue;
+    const match = emp.officialId.trim().match(/^(.*?)(?:-(\d+)|\b(\d+))$/);
+    if (match) {
+      const pfx = match[1];
+      const numStr = match[2] || match[3];
+      const num = parseInt(numStr, 10);
+      if (!isNaN(num) && num > maxNum) {
+        maxNum = num;
+        if (pfx) prefix = pfx.endsWith("-") ? pfx : `${pfx}-`;
+        padLength = Math.max(padLength, numStr.length);
+      }
+    }
+  }
+
+  if (maxNum === 0) {
+    const totalCount = await this.countDocuments();
+    maxNum = totalCount;
+  }
+
+  const nextNum = maxNum + 1;
+  const formattedNum = String(nextNum).padStart(padLength, "0");
+  return `${prefix}${formattedNum}`;
+};
+
+// Self-healing startup migration to auto-assign Official IDs
+employeeSchema.statics.autoAssignMissingOfficialIds = async function () {
+  try {
+    const unassigned = await this.find({
+      $or: [{ officialId: { $exists: false } }, { officialId: "" }, { officialId: null }]
+    }).sort({ createdAt: 1 });
+
+    if (unassigned.length === 0) return;
+
+    console.log(`🆔 Auto-assigning Official IDs to ${unassigned.length} employee record(s)...`);
+    for (const emp of unassigned) {
+      const nextId = await this.generateNextOfficialId();
+      await this.updateOne({ _id: emp._id }, { $set: { officialId: nextId } });
+      console.log(`✅ Assigned Official ID ${nextId} to ${emp.fullName}`);
+    }
+  } catch (err) {
+    console.error("Error auto-assigning Official IDs:", err.message);
+  }
+};
+
+module.exports = mongoose.model("Employee", employeeSchema);

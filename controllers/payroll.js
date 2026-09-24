@@ -1,0 +1,1936 @@
+const Payroll = require("../models/Payroll");
+const Employee = require("../models/Employee");
+const PayoutAuditLog = require("../models/PayoutAuditLog");
+const { notifyAdmins } = require("../services/notificationService");
+const trackChanges = require("../utils/changeTracker");
+const Attendance = require("../models/Attendance");
+const Expense = require("../models/Expense"); // Added Expense model
+const PDFDocument = require("pdfkit");
+const fs = require("fs");
+const path = require("path");
+const Holiday = require("../models/Holiday"); // Added Holiday model
+
+// Helper function to calculate attendance stats from stored records for a month
+const calculateAttendanceForMonth = async (employeeId, month, year) => {
+  try {
+    const employee = await Employee.findById(employeeId);
+    if (!employee) throw new Error("Employee not found");
+
+    // Date range for the month
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0); // Last day of month
+    const daysInMonth = endDate.getDate();
+    
+    // Fetch all attendance records for the month
+    const attendanceRecords = await Attendance.find({
+      employeeId: employee._id,
+      date: { $gte: startDate, $lte: endDate }
+    }).sort({ date: 1 });
+
+    // Fetch holidays for the month
+    const holidays = await Holiday.find({
+      date: { $gte: startDate, $lte: endDate }
+    });
+    const holidayDates = new Set(holidays.map(h => h.date.toISOString().split('T')[0]));
+
+    // Accurate calculation based on each day of the month
+    let presentDays = 0;
+    let absentDays = 0;
+    let halfDays = 0;
+    let overtimeHours = 0;
+
+    // Helper for local-safe date key to avoid timezone shifts
+    const toLocaleISOString = (date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+
+    // Pre-index attendance records in a Map by their date key for O(1) lookups
+    const attendanceMap = new Map();
+    attendanceRecords.forEach(record => {
+      if (record && record.date) {
+        attendanceMap.set(toLocaleISOString(record.date), record);
+      }
+    });
+
+    // Loop through each day of the month
+    for (let d = 1; d <= daysInMonth; d++) {
+      const currentDay = new Date(year, month - 1, d);
+      const dateKey = toLocaleISOString(currentDay);
+      const dayOfWeek = currentDay.getDay(); // 0 is Sunday, 6 is Saturday
+      
+      const record = attendanceMap.get(dateKey);
+
+      // Rule Analysis:
+      // 1. Is it a holiday?
+      const isHoliday = holidayDates.has(dateKey);
+      
+      // 2. Is it a weekend?
+      let isWeekend = false;
+      if (employee.employmentType === 'INTERN') {
+        isWeekend = (dayOfWeek === 0 || dayOfWeek === 6); // Sun or Sat
+      } else {
+        isWeekend = (dayOfWeek === 0); // Only Sun
+      }
+
+      if (record) {
+        if (record.status === 'HALF_DAY') {
+          halfDays++;
+        } else if (['PRESENT', 'LATE', 'EARLY_LEAVE'].includes(record.status)) {
+          presentDays++;
+          if (record.overtimeHours) {
+            overtimeHours += record.overtimeHours;
+          }
+        } else if (record.status === 'ABSENT') {
+          if (!isWeekend && !isHoliday) {
+            absentDays++;
+          }
+        }
+      } else {
+        // No record exists. 
+        if (!isWeekend && !isHoliday) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (currentDay < today) {
+            absentDays++;
+          }
+        }
+      }
+    }
+
+    // The user wants to save:
+    // Present Days = 30 - (Absent + 0.5 * Half)
+    // Total Working Days = 30
+    const calculatedPresentDays = 30 - (absentDays || 0) - (0.5 * (halfDays || 0));
+
+    return {
+      presentDays: Math.max(0, calculatedPresentDays),
+      absentDays,
+      halfDays,
+      workingDays: 30, // Force to 30
+      overtimeHours: Math.round(overtimeHours * 100) / 100,
+      totalRecords: attendanceRecords.length,
+    };
+  } catch (error) {
+    console.error("Error calculating attendance for month:", error);
+    return {
+      presentDays: 0,
+      absentDays: 0,
+      halfDays: 0,
+      overtimeHours: 0,
+      workingDays: 30,
+      totalRecords: 0,
+    };
+  }
+};
+
+// @desc    Generate payroll for a specific month
+// @route   POST /api/payroll/generate
+// @access  Private (Admin/HR/Manager)
+exports.generatePayroll = async (req, res) => {
+  try {
+    // Check authorization
+    if (!["Admin", "HR", "Manager"].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to generate payroll",
+      });
+    }
+
+    const { employeeId, month, year, isCustomPayee, customPayeeName } = req.body;
+
+    // Validate input
+    if ((!employeeId && !isCustomPayee) || !month || !year) {
+      return res.status(400).json({
+        success: false,
+        message: "Employee ID (or Custom Payee), month, and year are required",
+      });
+    }
+
+    if (isCustomPayee && !customPayeeName) {
+      return res.status(400).json({
+        success: false,
+        message: "Custom Payee Name is required",
+      });
+    }
+
+    // Check if payroll already exists
+    let existingQuery = { month, year };
+    if (isCustomPayee) {
+      existingQuery.isCustomPayee = true;
+      existingQuery.customPayeeName = customPayeeName;
+    } else {
+      existingQuery.employeeId = employeeId;
+    }
+
+    const existingPayroll = await Payroll.findOne(existingQuery);
+
+    if (existingPayroll) {
+      return res.status(400).json({
+        success: false,
+        message: "Payroll already exists for this month",
+      });
+    }
+
+    let employee = null;
+    let attendanceStats = null;
+    let approvedExpenses = [];
+    let advanceUpdates = [];
+    let totalAdvanceDeduction = 0;
+    let totalReimbursements = 0;
+
+    if (!isCustomPayee) {
+      // Get employee details and ensure we have their userId
+      employee = await Employee.findById(employeeId).populate("userId");
+      if (!employee) {
+        return res.status(404).json({
+          success: false,
+          message: "Employee not found",
+        });
+      }
+
+      if (!employee.userId) {
+        return res.status(400).json({
+          success: false,
+          message: "Employee record does not have an associated user account",
+        });
+      }
+
+      // Calculate attendance stats from stored attendance records if requested
+      if (req.body.calculateFromAttendance !== false) {
+        attendanceStats = await calculateAttendanceForMonth(
+          employeeId,
+          month,
+          year,
+        );
+        console.log("📊 Attendance stats calculated:", attendanceStats);
+      }
+
+      // Calculate Expenses
+      // Fetch all APPROVED and UNPAID expenses for this employee up to the end of the payroll month
+      const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+
+      approvedExpenses = await Expense.find({
+        employeeId: employee._id,
+        status: "APPROVED",
+        payrollId: null,
+        date: { $lte: endDate },
+      });
+
+      totalReimbursements = approvedExpenses.reduce(
+        (sum, exp) => sum + exp.amount,
+        0,
+      );
+
+      // ===== SALARY ADVANCE DEDUCTION INTEGRATION =====
+      const EmployeeAdvance = require("../models/EmployeeAdvance");
+      const activeAdvances = await EmployeeAdvance.find({
+        employeeId: employee._id,
+        status: "active",
+        remainingAmount: { $gt: 0 },
+      });
+
+      if (activeAdvances.length > 0) {
+        for (const advance of activeAdvances) {
+          let deductionForThisAdvance = 0;
+
+          if (advance.deductionType === "full") {
+            deductionForThisAdvance = advance.remainingAmount;
+          } else {
+            // partial - deduct the monthly amount, capped at remaining
+            deductionForThisAdvance = Math.min(
+              advance.deductionAmountPerMonth || 0,
+              advance.remainingAmount,
+            );
+          }
+
+          if (deductionForThisAdvance > 0) {
+            totalAdvanceDeduction += deductionForThisAdvance;
+            advanceUpdates.push({
+              advance,
+              deductionAmount: deductionForThisAdvance,
+            });
+          }
+        }
+      }
+      // ===== END SALARY ADVANCE DEDUCTION INTEGRATION =====
+    }
+
+    // Create payroll record
+    const payrollData = {
+      ...req.body,
+    };
+
+    if (isCustomPayee) {
+      payrollData.isCustomPayee = true;
+      payrollData.customPayeeName = customPayeeName;
+      delete payrollData.employeeId;
+      delete payrollData.userId;
+    } else {
+      payrollData.employeeId = employee._id;
+      payrollData.userId = employee.userId._id; // Make sure to set the userId from the employee record
+      
+      if (attendanceStats) {
+        payrollData.presentDays = attendanceStats.presentDays;
+        payrollData.absentDays = attendanceStats.absentDays;
+        payrollData.halfDays = attendanceStats.halfDays;
+        payrollData.overtimeHours = attendanceStats.overtimeHours;
+        payrollData.daysPresent = attendanceStats.presentDays + attendanceStats.halfDays * 0.5;
+        payrollData.workingDays = attendanceStats.workingDays;
+      }
+
+      if (totalReimbursements > 0) {
+        payrollData.reimbursements = totalReimbursements;
+      }
+      if (totalAdvanceDeduction > 0) {
+        payrollData.advanceDeduction = totalAdvanceDeduction;
+      }
+    }
+
+    // Auto-calculate salary if baseSalary and daysPresent are available and NO calculatedSalary is manually provided
+    if (payrollData.baseSalary && payrollData.daysPresent && !payrollData.calculatedSalary) {
+      const working = payrollData.workingDays || 30; // default to 30 to prevent division by 0
+      payrollData.calculatedSalary = (payrollData.baseSalary / working) * payrollData.daysPresent;
+    }
+
+    const payroll = await Payroll.create(payrollData);
+
+    // Link expenses to this payroll
+    if (approvedExpenses.length > 0) {
+      await Expense.updateMany(
+        { _id: { $in: approvedExpenses.map((e) => e._id) } },
+        {
+          $set: {
+            payrollId: payroll._id,
+            status: "PAID", // Or keep as APPROVED and change to PAID when payroll is paid?
+            // Plan says: Link these expenses to the new Payroll ID.
+            // When payroll is DELETED, we unlink.
+            // Let's mark as PAID for now to prevent double inclusion, or rely on payrollId !== null.
+            // The plan says "Fetch all `APPROVED` & `UNPAID` expenses".
+            // Let's set status to PAID.
+          },
+        },
+      );
+      console.log("🔗 Linked expenses to payroll");
+    }
+
+    // Update advance records after payroll creation in parallel
+    if (advanceUpdates.length > 0) {
+      await Promise.all(
+        advanceUpdates.map(async ({ advance, deductionAmount }) => {
+          advance.remainingAmount -= deductionAmount;
+          if (advance.remainingAmount <= 0) {
+            advance.remainingAmount = 0;
+            advance.status = "completed";
+          }
+          advance.deductionHistory.push({
+            month: parseInt(month),
+            year: parseInt(year),
+            deductedAmount: deductionAmount,
+            deductedBy: req.user.id,
+            payrollId: payroll._id,
+            deductedAt: new Date(),
+          });
+          return advance.save();
+        })
+      );
+      console.log(`🏦 Updated ${advanceUpdates.length} advance record(s)`);
+    }
+
+    await payroll.save();
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "PAYROLL_GENERATED",
+      message: `Payroll Generated: ${isCustomPayee ? customPayeeName : employee.fullName} for ${payroll.monthName} ${payroll.year} by ${req.user.fullName}`,
+      payrollId: payroll._id
+    });
+
+    res.status(201).json({
+      success: true,
+      data: payroll,
+      message: "Payroll generated successfully",
+    });
+  } catch (error) {
+    console.error("Generate payroll error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during payroll generation",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get payroll records
+// @route   GET /api/payroll
+// @access  Private
+exports.getPayroll = async (req, res) => {
+  try {
+    const { month, year, employeeId } = req.query;
+    let query = {};
+
+    // Build query based on filters
+    if (month) query.month = parseInt(month);
+    if (year) query.year = parseInt(year);
+
+    // Find the employee record for the current user
+    const employee = await Employee.findOne({ userId: req.user.id })
+      .populate("department")
+      .populate("role");
+
+    console.log("User details:", {
+      userId: req.user.id,
+      userRole: req.user.role,
+      employeeId: employee?._id,
+      email: req.user.email,
+      name: req.user.fullName,
+    });
+
+    // If employee ID is provided in query, use that
+    if (employeeId) {
+      query.employeeId = employeeId;
+    }
+    // Otherwise, if user is not admin/HR/manager, only show their own payroll
+    else if (!["Admin", "HR", "Manager"].includes(req.user.role)) {
+      if (employee) {
+        // Use both employeeId and userId to ensure we catch all records
+        query.$or = [{ employeeId: employee._id }, { userId: req.user.id }];
+      } else {
+        // Try to find or create employee record
+        try {
+          const Department = require("../models/Department");
+          const EmployeeRole = require("../models/EmployeeRole");
+
+          // Get or create default department
+          let department = await Department.findOne({ name: "General" });
+          if (!department) {
+            department = await Department.create({
+              name: "General",
+              description: "Default department",
+            });
+          }
+
+          // Get or create default role
+          let role = await EmployeeRole.findOne({ name: req.user.role });
+          if (!role) {
+            role = await EmployeeRole.create({
+              name: req.user.role,
+              description: `Default role for ${req.user.role}`,
+            });
+          }
+
+          // Create employee record
+          const newEmployee = await Employee.create({
+            userId: req.user.id,
+            fullName: req.user.fullName,
+            email: req.user.email,
+            department: department._id,
+            role: role._id,
+            status: "ACTIVE",
+          });
+
+          console.log("Created new employee record:", newEmployee._id);
+          query.$or = [
+            { employeeId: newEmployee._id },
+            { userId: req.user.id },
+          ];
+        } catch (error) {
+          console.error("Error creating employee record:", error);
+          query.userId = req.user.id;
+        }
+      }
+    }
+
+    console.log("Final query:", JSON.stringify(query, null, 2));
+
+    // Fetch payroll records with populated employee and user details
+    const payrolls = await Payroll.find(query)
+      .populate({
+        path: "employeeId",
+        select: "fullName email department role phoneNumber userId",
+        populate: [
+          { path: "department", select: "name" },
+          { path: "role", select: "name" },
+        ],
+      })
+      .populate("userId", "fullName email")
+      .populate("auditLogs.changedBy", "fullName")
+      .sort({ year: -1, month: -1 });
+
+    console.log(
+      "Found payrolls:",
+      payrolls.map((p) => ({
+        id: p._id,
+        month: p.month,
+        year: p.year,
+        status: p.status,
+        employeeId: p.employeeId?._id,
+        userId: p.userId?._id,
+        netSalary: p.netSalary,
+      })),
+    );
+
+    // Transform payroll data
+    const transformedPayrolls = payrolls.map((p) => {
+      const payrollObj = p.toObject();
+      return {
+        ...payrollObj,
+        monthName: [
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ][p.month - 1],
+        // Include these fields to help with debugging
+        _employeeMatch: employee
+          ? employee._id.equals(p.employeeId?._id)
+          : false,
+        _userMatch:
+          req.user.id === (p.userId?._id?.toString() || p.userId?.toString()),
+      };
+    });
+
+    return res.json({
+      success: true,
+      count: transformedPayrolls.length,
+      data: transformedPayrolls,
+      debug: {
+        userRole: req.user.role,
+        employeeId: employee?._id,
+        userId: req.user.id,
+        query: query,
+      },
+    });
+  } catch (error) {
+    console.error("Error in getPayroll:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching payroll records",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Update payroll
+// @route   PUT /api/payroll/:id
+// @access  Private (Admin/HR/Manager)
+exports.updatePayroll = async (req, res) => {
+  try {
+    // Check authorization
+    if (!["Admin", "HR", "Manager"].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update payroll",
+      });
+    }
+
+    const payroll = await Payroll.findById(req.params.id).populate("employeeId userId", "fullName");
+    if (!payroll) {
+      return res.status(404).json({
+        success: false,
+        message: "Payroll record not found",
+      });
+    }
+
+    const oldPayroll = payroll.toObject();
+
+    // Update allowed fields
+    const allowedFields = [
+      "baseSalary",
+      "daysPresent",
+      "calculatedSalary",
+      "workingDays",
+      // Manual Allowances
+      "hra",
+      "da",
+      "conveyanceAllowance",
+      "medicalAllowance",
+      "specialAllowance",
+      "overtimeAmount",
+      // Bonuses
+      "performanceBonus",
+      "projectBonus",
+      "attendanceBonus",
+      "festivalBonus",
+      // Manual Deductions
+      "pf",
+      "esi",
+      "tax",
+      "loan",
+      "advanceDeduction",
+      "other",
+      "reimbursements",
+      // Status and notes
+      "notes",
+      "status",
+    ];
+
+    allowedFields.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        payroll[field] = req.body[field];
+      }
+    });
+
+    // Auto-calculate salary if base salary or days present are updated and calculatedSalary is NOT provided manually
+    if (
+      (req.body.baseSalary !== undefined || req.body.daysPresent !== undefined) &&
+      req.body.calculatedSalary === undefined
+    ) {
+      const baseSalary = req.body.baseSalary || payroll.baseSalary;
+      const daysPresent = req.body.daysPresent || payroll.daysPresent;
+      const working = req.body.workingDays || payroll.workingDays || 30;
+      payroll.calculatedSalary = (baseSalary / working) * daysPresent;
+    }
+
+    // Auto-calculate absent days if working days or present days are updated
+    if (
+      req.body.workingDays !== undefined ||
+      req.body.daysPresent !== undefined
+    ) {
+      const presentDays = req.body.daysPresent || payroll.presentDays;
+      payroll.absentDays = 30 - presentDays;
+
+      console.log("📅 Updated attendance calculation:", {
+        standardWorkingDays: 30,
+        presentDays: payroll.presentDays,
+        absentDays: payroll.absentDays,
+      });
+    }
+
+    // If status is being approved, set approval details
+    if (req.body.status === "APPROVED") {
+      payroll.approvedBy = req.user.id;
+      payroll.approvedDate = new Date();
+    }
+
+    await payroll.save();
+
+    // Populate employee details for response and change tracking
+    await payroll.populate("employeeId userId", "fullName email department");
+
+    // Detailed Admin Notification
+    const fieldLabels = {
+      baseSalary: "Base Salary",
+      daysPresent: "Days Present",
+      calculatedSalary: "Calculated Salary",
+      workingDays: "Working Days",
+      hra: "HRA",
+      da: "DA",
+      conveyanceAllowance: "Conveyance",
+      medicalAllowance: "Medical",
+      specialAllowance: "Special Allowance",
+      overtimeAmount: "Overtime Amount",
+      performanceBonus: "Performance Bonus",
+      projectBonus: "Project Bonus",
+      attendanceBonus: "Attendance Bonus",
+      festivalBonus: "Festival Bonus",
+      pf: "PF",
+      esi: "ESI",
+      tax: "Tax",
+      loan: "Loan",
+      advanceDeduction: "Advance Deduction",
+      other: "Other Deduction",
+      reimbursements: "Reimbursements",
+      notes: "Notes",
+      status: "Status"
+    };
+
+    const changes = trackChanges(oldPayroll, payroll.toObject(), fieldLabels);
+    
+    if (changes.length > 0) {
+      const employeeName = payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee");
+      const changeMessage = `Updated: ${changes.join(", ")}`;
+      
+      // Store in payroll record for permanent audit trail
+      payroll.auditLogs.push({
+        message: changeMessage,
+        changedBy: req.user.id,
+        timestamp: new Date()
+      });
+      await payroll.save();
+
+      await notifyAdmins({
+        type: "PAYROLL_UPDATED",
+        message: `${req.user.fullName} updated payroll for ${employeeName} (${payroll.monthName || "this month"}). Changes: ${changes.join(", ")}`,
+        payrollId: payroll._id,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: payroll,
+      message: "Payroll updated successfully",
+    });
+  } catch (error) {
+    console.error("Update payroll error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+// @desc    Generate salary slip PDF
+// @route   GET /api/payroll/:id/salary-slip
+// @access  Private
+exports.generateSalarySlip = async (req, res) => {
+  try {
+    const payroll = await Payroll.findById(req.params.id)
+      .populate("employeeId", "fullName email phoneNumber department userId")
+      .populate("userId", "fullName email");
+
+    if (!payroll) {
+      return res.status(404).json({
+        success: false,
+        message: "Payroll record not found",
+      });
+    }
+
+    // Check authorization - allow admin/HR/manager to view any, others only their own
+    const isAdmin = ["Admin", "HR", "Manager"].includes(req.user.role);
+
+    // Check if user is the employee (either through userId or employeeId)
+    const isEmployee = payroll.isCustomPayee 
+      ? false 
+      : (req.user.id === payroll.userId?.toString() ||
+         req.user.id === payroll.employeeId?.userId?.toString());
+
+    console.log("Generate salary slip authorization check:", {
+      userId: req.user.id,
+      userRole: req.user.role,
+      payrollUserId: payroll.userId?.toString() || null,
+      payrollEmployeeUserId: payroll.employeeId?.userId?.toString() || null,
+      isAdmin,
+      isEmployee,
+    });
+
+    if (!isAdmin && !isEmployee) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to view this salary slip",
+      });
+    }
+
+    // Create PDF and pipe directly to response
+    const doc = new PDFDocument({ margin: 30 });
+
+    res.setHeader("Content-Type", "application/pdf");
+    const employeeName = payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "employee");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="salary-slip-${employeeName}-${payroll.month}-${payroll.year}.pdf"`,
+    );
+
+    // Pipe the PDF directly to the response
+    doc.pipe(res);
+
+    // Call the unified PDF generation function
+    generatePDFContent(doc, payroll);
+
+    // Finalize PDF
+    doc.end();
+  } catch (error) {
+    console.error("Generate salary slip error:", error);
+    // Only send error response if headers haven't been sent
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: "Server error while generating salary slip",
+        error: error.message,
+      });
+    }
+  }
+};
+
+// @desc    Get salary slip download link
+// @route   GET /api/payroll/:id/download
+// @access  Private
+exports.downloadSalarySlip = async (req, res) => {
+  try {
+    const payroll = await Payroll.findById(req.params.id)
+      .populate("employeeId", "fullName email phoneNumber department userId")
+      .populate("userId", "fullName email");
+
+    if (!payroll) {
+      return res.status(404).json({
+        success: false,
+        message: "Payroll record not found",
+      });
+    }
+
+    // Check authorization - allow admin/HR/manager to view any, others only their own
+    const isAdmin = ["Admin", "HR", "Manager"].includes(req.user.role);
+
+    // Check if user is the employee (either through userId or employeeId)
+    const isEmployee = payroll.isCustomPayee 
+      ? false 
+      : (req.user.id === payroll.userId?.toString() ||
+         req.user.id === payroll.employeeId?.userId?.toString());
+
+    console.log("Download authorization check:", {
+      userId: req.user.id,
+      userRole: req.user.role,
+      payrollUserId: payroll.userId?.toString() || null,
+      payrollEmployeeUserId: payroll.employeeId?.userId?.toString() || null,
+      isAdmin,
+      isEmployee,
+    });
+
+    if (!isAdmin && !isEmployee) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to download this salary slip",
+      });
+    }
+
+    // Generate and stream the PDF
+    const doc = new PDFDocument({ margin: 30 });
+
+    // Set response headers
+    res.setHeader("Content-Type", "application/pdf");
+    const employeeName = payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "employee");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="salary-slip-${employeeName}-${payroll.month}-${payroll.year}.pdf"`,
+    );
+
+    // Pipe the PDF directly to the response
+    doc.pipe(res);
+
+    // Call the unified PDF generation function
+    generatePDFContent(doc, payroll);
+
+    // Finalize PDF
+    doc.end();
+  } catch (error) {
+    console.error("Download salary slip error:", error);
+    // Only send error response if headers haven't been sent
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: "Server error while downloading salary slip",
+        error: error.message,
+      });
+    }
+  }
+};
+
+// @desc    Approve payroll
+// @route   PUT /api/payroll/:id/approve
+// @access  Private (Admin/HR/Manager)
+exports.approvePayroll = async (req, res) => {
+  try {
+    // Check authorization
+    if (!["Admin", "HR", "Manager"].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to approve payroll",
+      });
+    }
+
+    const payroll = await Payroll.findById(req.params.id).populate(
+      "employeeId",
+    );
+    if (!payroll) {
+      return res.status(404).json({
+        success: false,
+        message: "Payroll record not found",
+      });
+    }
+
+    payroll.status = "APPROVED";
+    payroll.approvedBy = req.user.id;
+    payroll.approvedDate = new Date();
+
+    // Trigger Paytm payout if employee has verified payment details
+    // IDEMPOTENCY CHECK: Prevent duplicate payouts if one is already success or pending
+    const hasActivePayout = payroll.paytmTransactionId && 
+                          payroll.paytmPayoutStatus && 
+                          ['SUCCESS', 'PENDING', 'PROCESSING'].includes(payroll.paytmPayoutStatus);
+
+    if (
+      !hasActivePayout &&
+      payroll.employeeId &&
+      payroll.employeeId.paytmVerified &&
+      payroll.employeeId.paytmBeneficiaryId
+    ) {
+      try {
+        const paytmService = require("../services/paytmService");
+
+        // Determine transfer mode based on employee's payment mode
+        let transferMode = "IMPS"; // Default for bank
+        if (payroll.employeeId.paymentMode === "upi") {
+          transferMode = "UPI";
+        }
+
+        // Create Paytm payout (replaces Razorpay createPayout)
+        const payoutData = {
+          beneficiaryId: payroll.employeeId.paytmBeneficiaryId,
+          amount: payroll.netSalary, // Amount in rupees
+          currency: "INR",
+          transferMode: transferMode,
+          purpose: "salary",
+          referenceId: `payroll_${payroll._id}_${payroll.month}_${payroll.year}`,
+          remarks: `Salary for ${payroll.employeeId.fullName} - ${payroll.monthName} ${payroll.year}`,
+        };
+
+        const payout = await paytmService.createPayout(payoutData);
+
+        // Phase 6: Audit Log
+        await PayoutAuditLog.create({
+          payrollId: payroll._id,
+          employeeId: payroll.employeeId._id,
+          action: "INITIATED",
+          status: payout.status,
+          amount: payroll.netSalary,
+          paytmTransactionId: payout.transactionId,
+          details: payout,
+          performedBy: req.user.id
+        });
+
+        // Update payroll with Paytm payout details (replaces Razorpay fields)
+        payroll.paytmTransactionId = payout.transactionId;
+        payroll.paytmPayoutStatus =
+          payout.status === "SUCCESS" ? "SUCCESS" : "PENDING";
+        payroll.paymentMethod =
+          payroll.employeeId.paymentMode === "upi" ? "PAYTM_UPI" : "PAYTM_BANK";
+        payroll.paymentDate = new Date();
+
+        console.log(
+          `✅ Paytm payout created for payroll ${payroll._id}: ${payout.transactionId}`,
+        );
+      } catch (payoutError) {
+        console.error("Error creating Paytm payout:", payoutError);
+        
+        // Phase 6: Audit Log (Failure)
+        try {
+          await PayoutAuditLog.create({
+            payrollId: payroll._id,
+            employeeId: payroll.employeeId._id,
+            action: "INITIATED",
+            status: "FAILED",
+            amount: payroll.netSalary,
+            details: { error: payoutError.message, stack: payoutError.stack },
+            performedBy: req.user.id
+          });
+        } catch (logError) {
+          console.error("Error creating audit log:", logError);
+        }
+
+        // Don't fail the approval if payout fails - just log the error
+        // Payroll will still be approved, but payout will need to be processed manually
+        payroll.paytmPayoutStatus = "FAILED";
+      }
+    }
+
+    await payroll.save();
+
+    // Notify Admins
+    await notifyAdmins({
+      type: "PAYROLL_APPROVED",
+      message: `Payroll Approved: ${payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee")} (${payroll.monthName || "this month"} ${payroll.year || "this year"}) by ${req.user.fullName}. Payout ${payroll.paytmPayoutStatus || "MANUAL"}.`,
+      payrollId: payroll._id,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: payroll,
+      message: payroll.paytmTransactionId
+        ? "Payroll approved and Paytm payout initiated successfully"
+        : "Payroll approved successfully",
+    });
+  } catch (error) {
+    console.error("Approve payroll error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+// @desc    Delete payroll
+// @route   DELETE /api/payroll/:id
+// @access  Private (Admin/HR/Manager)
+exports.deletePayroll = async (req, res) => {
+  try {
+    console.log("Delete payroll request received for ID:", req.params.id);
+    console.log("User role:", req.user.role);
+
+    // Check authorization
+    if (!["Admin", "HR", "Manager"].includes(req.user.role)) {
+      console.log("Authorization failed - user role not allowed");
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to delete payroll",
+      });
+    }
+
+    const payroll = await Payroll.findById(req.params.id).populate("employeeId");
+    if (!payroll) {
+      console.log("Payroll not found with ID:", req.params.id);
+      return res.status(404).json({
+        success: false,
+        message: "Payroll record not found",
+      });
+    }
+
+    console.log("Payroll found with status:", payroll.status);
+
+    console.log("Attempting to delete payroll...");
+
+    // Delete associated salary slip file if exists
+    if (payroll.salarySlipPath && fs.existsSync(payroll.salarySlipPath)) {
+      fs.unlinkSync(payroll.salarySlipPath);
+      console.log("Deleted salary slip file");
+    }
+
+    // Reset associated incentives if any
+    const Incentive = require("../models/Incentive");
+    await Incentive.updateMany(
+      { payrollId: payroll._id },
+      { $unset: { payrollId: 1 } },
+    );
+    console.log("Reset associated incentives");
+
+    // Unlink associated expenses
+    const Expense = require("../models/Expense");
+    await Expense.updateMany(
+      { payrollId: payroll._id },
+      {
+        $unset: { payrollId: 1 },
+        $set: { status: "APPROVED" }, // Reset status to APPROVED so they can be picked up again
+      },
+    );
+    console.log("Unlinked associated expenses");
+
+    // REVERSE ADVANCE DEDUCTIONS
+    const EmployeeAdvance = require("../models/EmployeeAdvance");
+    const affectedAdvances = await EmployeeAdvance.find({
+      "deductionHistory.payrollId": payroll._id,
+    });
+
+    if (affectedAdvances.length > 0) {
+      for (const advance of affectedAdvances) {
+        // Find the history entry for this payroll
+        const historyIndex = advance.deductionHistory.findIndex(
+          (h) => h.payrollId && h.payrollId.toString() === payroll._id.toString(),
+        );
+
+        if (historyIndex !== -1) {
+          const deductionAmount = advance.deductionHistory[historyIndex].deductedAmount;
+          
+          // Restore the amount
+          advance.remainingAmount += deductionAmount;
+          
+          // Re-activate if it was completed
+          if (advance.status === "completed") {
+            advance.status = "active";
+          }
+          
+          // Remove from history
+          advance.deductionHistory.splice(historyIndex, 1);
+          
+          await advance.save();
+          console.log(`🏦 Reversed deduction of Rs. ${deductionAmount} for advance ${advance._id}`);
+        }
+      }
+    }
+
+    await Payroll.findByIdAndDelete(req.params.id);
+    console.log("Payroll deleted successfully");
+
+    // Notify all admins of payroll deletion
+    try {
+      const { notifyAdmins } = require("../services/notificationService");
+      const employeeName = payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee");
+      await notifyAdmins({
+        type: "ACTIVITY",
+        message: `Payroll record for ${employeeName} (${payroll.monthName || "Month " + payroll.month}/${payroll.year}) was deleted by ${req.user.fullName}. Amount: ${payroll.netSalary} INR.`,
+        data: { payrollId: payroll._id }
+      });
+    } catch (notifyError) {
+      console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {},
+      message: "Payroll deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete payroll error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+/**
+ * Generates the content for the PDF salary slip with Enterprise Aesthetics.
+ * @param {object} doc - The PDFDocument instance.
+ * @param {object} payroll - The payroll data object.
+ */
+const generatePDFContent = (doc, payroll) => {
+  // --- Styling Constants ---
+  const PRIMARY_COLOR = "#1e3a8a"; // Deep Blue
+  const SECONDARY_COLOR = "#475569"; // Slate 600
+  const BORDER_COLOR = "#e2e8f0"; // Slate 200
+  const ACCENT_BG = "#f8fafc"; // Slate 50
+
+  const MARGIN_LEFT = 40;
+  const MARGIN_RIGHT = doc.page.width - 40;
+  const CONTENT_WIDTH = MARGIN_RIGHT - MARGIN_LEFT;
+
+  const PAGE_BORDER_PADDING = 15;
+
+  // --- Outer Border ---
+  doc
+    .rect(
+      PAGE_BORDER_PADDING,
+      PAGE_BORDER_PADDING,
+      doc.page.width - PAGE_BORDER_PADDING * 2,
+      doc.page.height - PAGE_BORDER_PADDING * 2,
+    )
+    .lineWidth(2)
+    .strokeColor(PRIMARY_COLOR)
+    .stroke();
+
+  // --- Header Section ---
+  const logoPath = path.join(__dirname, "../assets/images/traincape-logo.jpg");
+  if (fs.existsSync(logoPath)) {
+    doc.image(logoPath, MARGIN_LEFT, 45, { height: 40 });
+  } else {
+    // Fallback if logo not found
+    doc
+      .fontSize(22)
+      .font("Helvetica-Bold")
+      .fillColor(PRIMARY_COLOR)
+      .text("Traincape", MARGIN_LEFT, 50);
+  }
+
+  // Company Details (Right Aligned)
+  const headerRightWidth = 260;
+  const headerRightX = MARGIN_RIGHT - headerRightWidth;
+
+  doc.fontSize(10).font("Helvetica-Bold").fillColor(PRIMARY_COLOR);
+  doc.text("Traincape Technology", headerRightX, 42, {
+    align: "right",
+    width: headerRightWidth,
+  });
+
+  doc.font("Helvetica").fontSize(8.5).fillColor(SECONDARY_COLOR);
+  doc.text(
+    "Khandolia Plaza, 118/C, Dabri - Palam Rd,\nVaishali Colony, Dashrath Puri,\nNew Delhi, Delhi - 110045, India",
+    headerRightX,
+    55,
+    {
+      align: "right",
+      width: headerRightWidth,
+      lineGap: 2,
+    },
+  );
+
+  doc.moveDown(2);
+
+  // Solid Separator
+  doc
+    .moveTo(MARGIN_LEFT, 110)
+    .lineTo(MARGIN_RIGHT, 110)
+    .lineWidth(1)
+    .strokeColor(BORDER_COLOR)
+    .stroke();
+
+  // --- Title & Month ---
+  const months = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+
+  doc
+    .fillColor(PRIMARY_COLOR)
+    .font("Helvetica-Bold")
+    .fontSize(18)
+    .text("PAYSLIP", MARGIN_LEFT, 130, {
+      align: "center",
+      width: CONTENT_WIDTH,
+      characterSpacing: 2,
+    });
+
+  doc
+    .fillColor(SECONDARY_COLOR)
+    .font("Helvetica")
+    .fontSize(11)
+    .text(`${months[payroll.month - 1]} ${payroll.year}`, MARGIN_LEFT, 155, {
+      align: "center",
+      width: CONTENT_WIDTH,
+    });
+
+  doc.moveDown(2);
+
+  // --- Employee Info Box ---
+  const infoBoxY = 190;
+  const infoBoxHeight = 85;
+
+  doc
+    .rect(MARGIN_LEFT, infoBoxY, CONTENT_WIDTH, infoBoxHeight)
+    .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+
+  doc.fillColor(SECONDARY_COLOR).fontSize(9);
+
+  // Left Column
+  const col1X = MARGIN_LEFT + 15;
+  const col1ValueX = col1X + 80;
+  let currentY = infoBoxY + 15;
+
+  doc.font("Helvetica").text("Employee Name:", col1X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(payroll.isCustomPayee ? payroll.customPayeeName : payroll.employeeId.fullName, col1ValueX, currentY);
+  currentY += 18;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("Employee ID:", col1X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(
+      payroll.isCustomPayee ? "N/A" : payroll.employeeId._id.toString().substring(0, 10).toUpperCase(),
+      col1ValueX,
+      currentY,
+    );
+  currentY += 18;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("Department:", col1X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(payroll.isCustomPayee ? "Custom" : (payroll.employeeId.department?.name || "N/A"), col1ValueX, currentY);
+
+  // Right Column
+  const col2X = MARGIN_LEFT + CONTENT_WIDTH / 2 + 15;
+  const col2ValueX = col2X + 80;
+  currentY = infoBoxY + 15;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("Working Days:", col2X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(payroll.workingDays.toString(), col2ValueX, currentY);
+  currentY += 18;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("Days Present:", col2X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(payroll.daysPresent.toString(), col2ValueX, currentY);
+  currentY += 18;
+
+  doc
+    .font("Helvetica")
+    .fillColor(SECONDARY_COLOR)
+    .text("LWP:", col2X, currentY);
+  doc
+    .font("Helvetica-Bold")
+    .fillColor("#0f172a")
+    .text(
+      (payroll.workingDays - payroll.daysPresent).toString(),
+      col2ValueX,
+      currentY,
+    );
+
+  // --- Salary Details Table ---
+  const tableY = infoBoxY + infoBoxHeight + 30;
+  const colWidth = CONTENT_WIDTH / 2;
+
+  // Table Headers (Earnings & Deductions)
+  doc
+    .rect(MARGIN_LEFT, tableY, colWidth, 25)
+    .fillAndStroke(PRIMARY_COLOR, PRIMARY_COLOR);
+  doc
+    .rect(MARGIN_LEFT + colWidth, tableY, colWidth, 25)
+    .fillAndStroke(PRIMARY_COLOR, PRIMARY_COLOR);
+
+  doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(10);
+  doc.text("EARNINGS", MARGIN_LEFT + 15, tableY + 8);
+  doc.text("AMOUNT (INR)", MARGIN_LEFT + colWidth - 90, tableY + 8);
+
+  doc.text("DEDUCTIONS", MARGIN_LEFT + colWidth + 15, tableY + 8);
+  doc.text("AMOUNT (INR)", MARGIN_LEFT + CONTENT_WIDTH - 90, tableY + 8);
+
+  // Table rows
+  doc.fillColor("#0f172a").font("Helvetica").fontSize(9);
+  let rowY = tableY + 30;
+
+  const drawRow = (labelE, valE, labelD, valD, isLast = false) => {
+    // Labels
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR);
+    if (labelE) doc.text(labelE, MARGIN_LEFT + 15, rowY);
+    if (labelD) doc.text(labelD, MARGIN_LEFT + colWidth + 15, rowY);
+
+    // Values
+    doc.font("Helvetica").fillColor("#0f172a");
+    if (valE !== null)
+      doc.text(valE.toFixed(2), MARGIN_LEFT + colWidth - 85, rowY, {
+        width: 70,
+        align: "right",
+      });
+    if (valD !== null)
+      doc.text(valD.toFixed(2), MARGIN_LEFT + CONTENT_WIDTH - 85, rowY, {
+        width: 70,
+        align: "right",
+      });
+
+    rowY += 18;
+
+    if (!isLast) {
+      doc
+        .moveTo(MARGIN_LEFT + 10, rowY - 5)
+        .lineTo(MARGIN_RIGHT - 10, rowY - 5)
+        .lineWidth(0.5)
+        .strokeColor("#f1f5f9")
+        .stroke();
+      rowY += 5;
+    }
+  };
+
+  // Compile items
+  const earnings = [
+    { label: "Base Salary", val: payroll.baseSalary },
+    { label: "House Rent Allowance", val: payroll.hra },
+    { label: "Dearness Allowance", val: payroll.da },
+    { label: "Conveyance", val: payroll.conveyanceAllowance },
+    { label: "Medical Allowance", val: payroll.medicalAllowance },
+    { label: "Special Allowance", val: payroll.specialAllowance },
+    { label: "Overtime Amount", val: payroll.overtimeAmount },
+    { label: "Reimbursements", val: payroll.reimbursements || 0 },
+    { label: "Performance Bonus", val: payroll.performanceBonus },
+    { label: "Project/Incentive Bonus", val: payroll.projectBonus },
+    { label: "Attendance Bonus", val: payroll.attendanceBonus },
+    { label: "Festival Bonus", val: payroll.festivalBonus },
+  ].filter((i) => i.val > 0);
+
+  // Calculate LWP / Unpaid Leave Deduction
+  const lwpDays = Math.max(0, (payroll.workingDays || 30) - (payroll.daysPresent || 0));
+  let lwpDeduction = 0;
+  if (payroll.baseSalary && payroll.calculatedSalary !== undefined && payroll.baseSalary > payroll.calculatedSalary) {
+    lwpDeduction = payroll.baseSalary - payroll.calculatedSalary;
+  } else if (lwpDays > 0 && payroll.baseSalary) {
+    lwpDeduction = (payroll.baseSalary / (payroll.workingDays || 30)) * lwpDays;
+  }
+
+  const deductions = [
+    {
+      label: lwpDays > 0 ? `LWP / Leave Deduction (${lwpDays} Day${lwpDays > 1 ? "s" : ""})` : "LWP / Leave Deduction",
+      val: lwpDeduction,
+    },
+    { label: "Provident Fund (PF)", val: payroll.pf },
+    { label: "ESI", val: payroll.esi },
+    { label: "Professional Tax", val: payroll.tax },
+    { label: "Loan Recovery", val: payroll.loan },
+    { label: "Advance Deduction", val: payroll.advanceDeduction || 0 },
+    { label: "Other Deductions", val: payroll.other },
+  ].filter((i) => i.val > 0);
+
+  const rowCount = Math.max(earnings.length, deductions.length);
+
+  for (let i = 0; i < rowCount; i++) {
+    const e = earnings[i] || { label: "", val: null };
+    const d = deductions[i] || { label: "", val: null };
+    drawRow(e.label, e.val, d.label, d.val, i === rowCount - 1);
+  }
+
+  // Table Vertical Divider
+  doc
+    .moveTo(MARGIN_LEFT + colWidth, tableY + 25)
+    .lineTo(MARGIN_LEFT + colWidth, rowY)
+    .lineWidth(1)
+    .strokeColor(BORDER_COLOR)
+    .stroke();
+
+  // Table Outer Frame (Sides & Bottom)
+  doc.moveTo(MARGIN_LEFT, tableY).lineTo(MARGIN_LEFT, rowY).stroke();
+  doc.moveTo(MARGIN_RIGHT, tableY).lineTo(MARGIN_RIGHT, rowY).stroke();
+  doc.moveTo(MARGIN_LEFT, rowY).lineTo(MARGIN_RIGHT, rowY).stroke();
+
+  // --- Summary Totals Row ---
+  const totalEarnings = earnings.reduce((sum, item) => sum + item.val, 0);
+  const totalDeductions = deductions.reduce((sum, item) => sum + item.val, 0);
+
+  doc
+    .rect(MARGIN_LEFT, rowY, colWidth, 25)
+    .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+  doc
+    .rect(MARGIN_LEFT + colWidth, rowY, colWidth, 25)
+    .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+
+  doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(10);
+  doc.text("Total Earnings", MARGIN_LEFT + 15, rowY + 8);
+  doc.text(totalEarnings.toFixed(2), MARGIN_LEFT + colWidth - 85, rowY + 8, {
+    width: 70,
+    align: "right",
+  });
+
+  doc.text("Total Deductions", MARGIN_LEFT + colWidth + 15, rowY + 8);
+  doc.text(
+    totalDeductions.toFixed(2),
+    MARGIN_LEFT + CONTENT_WIDTH - 85,
+    rowY + 8,
+    { width: 70, align: "right" },
+  );
+
+  // --- Net Salary Highlight ---
+  doc.moveDown(2);
+  const netY = doc.y;
+
+  const performanceBonus = payroll.performanceBonus || 0;
+  const projectBonus = payroll.projectBonus || 0;
+  const incentives = performanceBonus + projectBonus;
+  const netSalaryExceptIncentives = payroll.netSalaryExceptIncentives !== undefined 
+    ? payroll.netSalaryExceptIncentives 
+    : (payroll.netSalary - incentives);
+
+  doc.fontSize(9).font("Helvetica").fillColor(SECONDARY_COLOR);
+  doc.text("Net Salary (Excl. Incentives):", MARGIN_RIGHT - 250, netY);
+  doc.font("Helvetica-Bold").fillColor("#0f172a").text(`INR ${netSalaryExceptIncentives.toFixed(2)}`, MARGIN_RIGHT - 110, netY, { align: "right", width: 100 });
+
+  doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Total Incentives:", MARGIN_RIGHT - 250, netY + 15);
+  doc.font("Helvetica-Bold").fillColor("#0f172a").text(`INR ${incentives.toFixed(2)}`, MARGIN_RIGHT - 110, netY + 15, { align: "right", width: 100 });
+
+  doc.moveDown(2);
+  const finalNetY = doc.y;
+
+  doc
+    .rect(MARGIN_RIGHT - 250, finalNetY, 250, 45)
+    .fillAndStroke(PRIMARY_COLOR, PRIMARY_COLOR);
+  doc.fillColor("#ffffff").font("Helvetica").fontSize(11);
+  doc.text("TOTAL NET PAYABLE", MARGIN_RIGHT - 235, finalNetY + 16);
+
+  doc.font("Helvetica-Bold").fontSize(16);
+  doc.text(
+    `INR ${payroll.netSalary.toFixed(2)}`,
+    MARGIN_RIGHT - 165,
+    finalNetY + 14,
+    { width: 140, align: "right" },
+  );
+
+  doc.moveDown(3);
+
+
+
+  doc.fillColor("#94a3b8").fontSize(8);
+  doc.text(
+    "This is a computer-generated document and does not require a physical signature.",
+    MARGIN_LEFT,
+    doc.page.height - 50,
+    { align: "center", width: CONTENT_WIDTH },
+  );
+};
+
+
+// @desc    Export payroll report for a month as PDF
+// @route   GET /api/payroll/export-report
+// @access  Private (Admin/HR/Manager)
+exports.exportPayrollReport = async (req, res) => {
+  try {
+    // Check authorization
+    if (!["Admin", "HR", "Manager"].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to export payroll report",
+      });
+    }
+
+    const { month, year } = req.query;
+
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        message: "Month and year are required",
+      });
+    }
+
+    // Fetch all payroll records for the specified month/year
+    const payrolls = await Payroll.find({
+      month: parseInt(month),
+      year: parseInt(year),
+    })
+      .populate({
+        path: "employeeId",
+        select: "fullName email department role",
+        populate: [
+          { path: "department", select: "name" },
+          { path: "role", select: "name" },
+        ],
+      })
+      .sort({ netSalary: -1 });
+
+    if (payrolls.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No payroll records found for the specified month",
+      });
+    }
+
+    // Create PDF
+    const doc = new PDFDocument({
+      margin: 30,
+      size: "A4",
+      layout: "landscape",
+    });
+
+    // Set response headers
+    const monthNames = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    const monthName = monthNames[parseInt(month) - 1];
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="payroll-report-${monthName}-${year}.pdf"`,
+    );
+
+    // Pipe the PDF directly to the response
+    doc.pipe(res);
+
+    // --- Styling Constants ---
+    const PRIMARY_COLOR = "#1e3a8a"; // Deep Blue
+    const SECONDARY_COLOR = "#475569"; // Slate 600
+    const BORDER_COLOR = "#e2e8f0"; // Slate 200
+    const ACCENT_BG = "#f8fafc"; // Slate 50
+    const TEXT_DARK = "#0f172a"; // Slate 900
+
+    // Company Logo & Address (Left Aligned)
+    const logoPath = path.join(
+      __dirname,
+      "../assets/images/traincape-logo.jpg",
+    );
+    if (fs.existsSync(logoPath)) {
+      doc.image(logoPath, 30, 30, { width: 50 });
+      doc.fontSize(8).font("Helvetica").fillColor(SECONDARY_COLOR);
+      doc.text("Traincape Technology, Khandolia Plaza 118/C", 95, 33);
+      doc.text("Dabri - Palam Rd, Vaishali, Vaishali Colony ", 95, 45);
+      doc.text("Dashrath Puri, New Delhi, Delhi, 110045", 95, 57);
+    } else {
+      doc.fontSize(16).font("Helvetica-Bold").fillColor(PRIMARY_COLOR).text("Traincape", 30, 30);
+      doc.fontSize(8).font("Helvetica").fillColor(SECONDARY_COLOR);
+      doc.text("Traincape Technology, Khandolia Plaza 118/C", 30, 48);
+      doc.text("Dabri - Palam Rd, Vaishali, Vaishali Colony ", 30, 58);
+      doc.text("Dashrath Puri, New Delhi, Delhi, 110045", 30, 68);
+    }
+
+    // Title & Month (Right Aligned)
+    doc.fontSize(16).font("Helvetica-Bold").fillColor(PRIMARY_COLOR).text("PAYROLL SUMMARY REPORT", 400, 30, { align: "right" });
+    doc.fontSize(10).font("Helvetica-Bold").fillColor(SECONDARY_COLOR).text(`${monthName} ${year}`, 400, 48, { align: "right" });
+
+    // Solid Separator
+    doc
+      .moveTo(30, 80)
+      .lineTo(doc.page.width - 30, 80)
+      .lineWidth(1)
+      .strokeColor(BORDER_COLOR)
+      .stroke();
+
+    doc.y = 90;
+
+    // Summary Statistics
+    const totalBaseSalary = payrolls.reduce(
+      (sum, p) => sum + (p.baseSalary || 0),
+      0,
+    );
+    const totalNet = payrolls.reduce((sum, p) => sum + (p.netSalary || 0), 0);
+    const totalIncentives = payrolls.reduce(
+      (sum, p) => sum + (p.performanceBonus || 0) + (p.projectBonus || 0),
+      0,
+    );
+    const totalNetExceptIncentives = payrolls.reduce(
+      (sum, p) => sum + (p.netSalaryExceptIncentives || (p.netSalary - ((p.performanceBonus || 0) + (p.projectBonus || 0)))),
+      0,
+    );
+    const totalEarnedSalary = payrolls.reduce(
+      (sum, p) => sum + (p.calculatedSalary || ((p.baseSalary || 0) / (p.workingDays || 30)) * (p.daysPresent || 0)),
+      0,
+    );
+    const totalAttBonus = payrolls.reduce(
+      (sum, p) => sum + (p.attendanceBonus || 0),
+      0,
+    );
+    const totalReimbursements = payrolls.reduce(
+      (sum, p) => sum + (p.reimbursements || 0),
+      0,
+    );
+    const totalDeductionsSum = payrolls.reduce(
+      (sum, p) => sum + (
+        (p.pf || 0) +
+        (p.esi || 0) +
+        (p.tax || 0) +
+        (p.loan || 0) +
+        (p.advanceDeduction || 0) +
+        (p.other || 0)
+      ),
+      0,
+    );
+    const draftCount = payrolls.filter((p) => p.status === "DRAFT").length;
+    const approvedCount = payrolls.filter(
+      (p) => p.status === "APPROVED",
+    ).length;
+    const paidCount = payrolls.filter((p) => p.status === "PAID").length;
+
+    // Draw Stats Box
+    const statsBoxY = doc.y;
+    const statsBoxHeight = 45;
+    doc
+      .rect(30, statsBoxY, doc.page.width - 60, statsBoxHeight)
+      .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+
+    doc.fillColor(SECONDARY_COLOR).fontSize(8).font("Helvetica");
+    // Row 1 of stats box
+    doc.text("Total Employees:", 45, statsBoxY + 10);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(payrolls.length.toString(), 125, statsBoxY + 10);
+
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Status Breakdown:", 230, statsBoxY + 10);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(`Draft: ${draftCount} | Approved: ${approvedCount} | Paid: ${paidCount}`, 320, statsBoxY + 10);
+
+    // Row 2 of stats box
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Total Base Salary:", 45, statsBoxY + 25);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(`Rs. ${totalBaseSalary.toLocaleString("en-IN")}`, 125, statsBoxY + 25);
+
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Total Net (Excl. Inc.):", 230, statsBoxY + 25);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(`Rs. ${totalNetExceptIncentives.toLocaleString("en-IN")}`, 320, statsBoxY + 25);
+
+    doc.font("Helvetica").fillColor(SECONDARY_COLOR).text("Total Incentives:", 470, statsBoxY + 25);
+    doc.font("Helvetica-Bold").fillColor(TEXT_DARK).text(`Rs. ${totalIncentives.toLocaleString("en-IN")}`, 550, statsBoxY + 25);
+
+    doc.font("Helvetica").fillColor(PRIMARY_COLOR).text("Total Net Salary:", 670, statsBoxY + 25);
+    doc.font("Helvetica-Bold").fillColor(PRIMARY_COLOR).text(`Rs. ${totalNet.toLocaleString("en-IN")}`, 740, statsBoxY + 25);
+
+    doc.y = statsBoxY + statsBoxHeight + 15;
+
+    // Table Header
+    const tableTop = doc.y;
+    const colWidths = [25, 110, 45, 60, 35, 60, 50, 50, 60, 80, 80, 85];
+    const headers = [
+      "S.No.",
+      "Employee Name",
+      "Status",
+      "Base (Rs.)",
+      "Days",
+      "Earned (Rs.)",
+      "Att. Bonus",
+      "Reimb.",
+      "Deductions",
+      "Net Excl. Inc (Rs.)",
+      "Incentives (Rs.)",
+      "Net Salary (Rs.)",
+    ];
+
+    // Solid Table Header Background
+    doc
+      .rect(30, tableTop - 4, doc.page.width - 60, 18)
+      .fillAndStroke(PRIMARY_COLOR, PRIMARY_COLOR);
+
+    doc.fontSize(8).font("Helvetica-Bold").fillColor("#ffffff");
+    let xPos = 30;
+    headers.forEach((header, i) => {
+      doc.text(header, xPos, tableTop, {
+        width: colWidths[i],
+        align: i <= 2 ? "left" : "right",
+      });
+      xPos += colWidths[i];
+    });
+
+    doc.y = tableTop + 18;
+
+    // Table Rows
+    doc.font("Helvetica").fontSize(8);
+    let rowY = doc.y;
+
+    payrolls.forEach((payroll, index) => {
+      // Check if we need a new page
+      if (rowY > doc.page.height - 60) {
+        doc.addPage({ layout: "landscape" });
+        rowY = 50;
+      }
+
+      // Draw zebra striping
+      if (index % 2 === 1) {
+        doc
+          .rect(30, rowY - 4, doc.page.width - 60, 16)
+          .fill(ACCENT_BG);
+      }
+
+      const earnedSalary = payroll.calculatedSalary || ((payroll.baseSalary || 0) / (payroll.workingDays || 30)) * (payroll.daysPresent || 0);
+
+      const attBonusVal = payroll.attendanceBonus || 0;
+      const incentives = (payroll.performanceBonus || 0) + (payroll.projectBonus || 0);
+
+      const deductions =
+        (payroll.pf || 0) +
+        (payroll.esi || 0) +
+        (payroll.tax || 0) +
+        (payroll.loan || 0) +
+        (payroll.advanceDeduction || 0) +
+        (payroll.other || 0);
+        
+      const reimbursements = payroll.reimbursements || 0;
+      const baseSalary = payroll.baseSalary || 0;
+      const netSalaryExceptIncentives = payroll.netSalaryExceptIncentives || (payroll.netSalary - incentives);
+      const netSalary = payroll.netSalary || 0;
+
+      const statusColors = {
+        DRAFT: "#64748b",
+        APPROVED: "#16a34a",
+        PAID: "#2563eb",
+        CANCELLED: "#dc2626",
+      };
+
+      xPos = 30;
+
+      // 1. S.No.
+      doc.fillColor(TEXT_DARK);
+      doc.text((index + 1).toString(), xPos, rowY, {
+        width: colWidths[0],
+        align: "left"
+      });
+      xPos += colWidths[0];
+      
+      // 2. Employee
+      doc.text(payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "N/A"), xPos, rowY, {
+        width: colWidths[1] - 5,
+        align: "left"
+      });
+      xPos += colWidths[1];
+
+      // 3. Status
+      doc.fillColor(statusColors[payroll.status] || "#64748b").font("Helvetica-Bold");
+      doc.text(payroll.status || "DRAFT", xPos, rowY, { width: colWidths[2], align: "left" });
+      doc.font("Helvetica");
+      xPos += colWidths[2];
+
+      // 4. Base Salary
+      doc.fillColor(TEXT_DARK);
+      doc.text(baseSalary.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[3], align: "right"
+      });
+      xPos += colWidths[3];
+
+      // 5. Days
+      doc.text(
+        `${payroll.daysPresent || 0}/${payroll.workingDays || 30}`,
+        xPos,
+        rowY,
+        { width: colWidths[4], align: "right" },
+      );
+      xPos += colWidths[4];
+
+      // 6. Earned Salary
+      doc.text(earnedSalary.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), xPos, rowY, {
+        width: colWidths[5], align: "right"
+      });
+      xPos += colWidths[5];
+
+      // 7. Attendance Bonus
+      doc.fillColor("#16a34a");
+      doc.text("+" + attBonusVal.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[6], align: "right"
+      });
+      xPos += colWidths[6];
+      
+      // 8. Reimb.
+      doc.fillColor("#2563eb");
+      doc.text(reimbursements.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[7], align: "right"
+      });
+      xPos += colWidths[7];
+
+      // 9. Deductions
+      doc.fillColor("#dc2626");
+      doc.text("-" + deductions.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[8], align: "right" });
+      xPos += colWidths[8];
+
+      // 10. Net Salary Excl Incentives
+      doc.fillColor(TEXT_DARK);
+      doc.font("Helvetica-Bold");
+      doc.text(netSalaryExceptIncentives.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[9], align: "right"
+      });
+      doc.font("Helvetica");
+      xPos += colWidths[9];
+
+      // 11. Incentives
+      doc.fillColor("#d97706").font("Helvetica-Bold");
+      doc.text("+" + incentives.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[10], align: "right"
+      });
+      doc.font("Helvetica");
+      xPos += colWidths[10];
+
+      // 12. Net Salary
+      doc.fillColor(TEXT_DARK);
+      doc.font("Helvetica-Bold");
+      doc.text(netSalary.toLocaleString("en-IN"), xPos, rowY, {
+        width: colWidths[11], align: "right"
+      });
+      doc.font("Helvetica");
+
+      rowY += 15;
+
+      // Light separator line every row
+      if (index < payrolls.length - 1) {
+        doc
+          .strokeColor(BORDER_COLOR)
+          .lineWidth(0.3)
+          .moveTo(30, rowY - 3)
+          .lineTo(doc.page.width - 30, rowY - 3)
+          .stroke();
+      }
+    });
+
+    // Check if we need a new page for Totals row
+    if (rowY > doc.page.height - 60) {
+      doc.addPage({ layout: "landscape" });
+      rowY = 50;
+    }
+
+    // Draw Totals row background
+    doc
+      .rect(30, rowY - 4, doc.page.width - 60, 16)
+      .fillAndStroke(ACCENT_BG, BORDER_COLOR);
+
+    // Print TOTALS row
+    doc.fontSize(8).font("Helvetica-Bold").fillColor(TEXT_DARK);
+    
+    xPos = 30;
+    // 1. S.No
+    doc.text("-", xPos, rowY, { width: colWidths[0], align: "left" });
+    xPos += colWidths[0];
+
+    // 2. Employee Name
+    doc.text("TOTAL SUMMARY", xPos, rowY, { width: colWidths[1] - 5, align: "left" });
+    xPos += colWidths[1];
+    
+    // 3. Status
+    doc.text("-", xPos, rowY, { width: colWidths[2], align: "left" });
+    xPos += colWidths[2];
+
+    // 4. Base Salary
+    doc.text(totalBaseSalary.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[3], align: "right" });
+    xPos += colWidths[3];
+
+    // 5. Days
+    doc.text("-", xPos, rowY, { width: colWidths[4], align: "right" });
+    xPos += colWidths[4];
+
+    // 6. Earned Salary
+    doc.text(totalEarnedSalary.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), xPos, rowY, { width: colWidths[5], align: "right" });
+    xPos += colWidths[5];
+
+    // 7. Attendance Bonus
+    doc.fillColor("#16a34a");
+    doc.text("+" + totalAttBonus.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[6], align: "right" });
+    xPos += colWidths[6];
+
+    // 8. Reimb.
+    doc.fillColor("#2563eb");
+    doc.text(totalReimbursements.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[7], align: "right" });
+    xPos += colWidths[7];
+
+    // 9. Deductions
+    doc.fillColor("#dc2626");
+    doc.text("-" + totalDeductionsSum.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[8], align: "right" });
+    xPos += colWidths[8];
+
+    // 10. Net Salary Excl Incentives
+    doc.fillColor(TEXT_DARK);
+    doc.text(totalNetExceptIncentives.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[9], align: "right" });
+    xPos += colWidths[9];
+
+    // 11. Incentives
+    doc.fillColor("#d97706");
+    doc.text("+" + totalIncentives.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[10], align: "right" });
+    xPos += colWidths[10];
+
+    // 12. Net Salary
+    doc.fillColor(TEXT_DARK);
+    doc.text(totalNet.toLocaleString("en-IN"), xPos, rowY, { width: colWidths[11], align: "right" });
+    
+    doc.font("Helvetica"); // Reset to regular font
+    rowY += 15;
+
+    // Footer
+    doc.y = rowY + 15;
+    doc
+      .strokeColor(BORDER_COLOR)
+      .lineWidth(1)
+      .moveTo(30, doc.y)
+      .lineTo(doc.page.width - 30, doc.y)
+      .stroke();
+
+    doc.moveDown(0.5);
+    doc.fontSize(7).font("Helvetica").fillColor(SECONDARY_COLOR);
+    doc.text(`Report generated on: ${new Date().toLocaleString("en-IN")}`, 30);
+    doc.text(`Generated by: ${req.user.fullName || req.user.email}`, 30, doc.y - 8, { align: "right", width: doc.page.width - 60 });
+    
+    doc.moveDown(0.5);
+    doc.text("This is a computer-generated report. No signature is required.", {
+      align: "center",
+      width: doc.page.width - 60
+    });
+
+    // Finalize PDF
+    doc.end();
+  } catch (error) {
+    console.error("Export payroll report error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: "Server error while generating payroll report",
+        error: error.message,
+      });
+    }
+  }
+};
