@@ -146,6 +146,17 @@ const SaleSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  allCollectionOwners: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  clearedByCollectionOwner: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  clearedAt: {
+    type: Date
+  },
   totalCollectionAssigned: {
     type: Number,
     default: 0
@@ -167,6 +178,8 @@ SaleSchema.index({ salesPerson: 1, date: -1 });
 SaleSchema.index({ date: -1 });
 SaleSchema.index({ isReference: 1 });
 SaleSchema.index({ currentCollectionOwners: 1 });
+SaleSchema.index({ allCollectionOwners: 1 });
+SaleSchema.index({ clearedByCollectionOwner: 1 });
 SaleSchema.index({ collectionStatus: 1 });
 
 module.exports = mongoose.model('Sale', SaleSchema); 

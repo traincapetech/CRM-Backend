@@ -21,6 +21,25 @@ const syncSaleCollectionSummary = async (saleId) => {
   const activeAssignments = assignments.filter((a) => a.status === 'ACTIVE');
   const currentCollectionOwners = activeAssignments.map((a) => a.assignedTo?._id || a.assignedTo);
 
+  // All collectors who have ever been assigned or collected on this deal (persists even when completed)
+  const allCollectionOwners = Array.from(
+    new Set(
+      assignments
+        .filter((a) => a.status === 'ACTIVE' || a.status === 'COMPLETED')
+        .map((a) => (a.assignedTo?._id || a.assignedTo).toString())
+    )
+  );
+
+  // Determine who cleared the collection and when
+  const completedAssignment = assignments
+    .filter((a) => a.status === 'COMPLETED')
+    .sort((a, b) => new Date(b.completedAt || b.updatedAt || 0) - new Date(a.completedAt || a.updatedAt || 0))[0];
+
+  if (completedAssignment) {
+    sale.clearedByCollectionOwner = completedAssignment.assignedTo?._id || completedAssignment.assignedTo;
+    sale.clearedAt = completedAssignment.completedAt || completedAssignment.updatedAt;
+  }
+
   const totalAssigned = activeAssignments.reduce(
     (sum, a) => sum + (parseFloat(a.assignedAmount) || 0),
     0
@@ -51,6 +70,7 @@ const syncSaleCollectionSummary = async (saleId) => {
 
   sale.collectionStatus = collectionStatus;
   sale.currentCollectionOwners = currentCollectionOwners;
+  sale.allCollectionOwners = allCollectionOwners;
   sale.totalCollectionAssigned = totalAssigned;
   sale.totalCollectionCollected = totalCollected;
   sale.totalCollectionRemaining = totalRemaining;
@@ -781,6 +801,111 @@ const bulkAssignSelectedSales = async ({
   };
 };
 
+/**
+ * Get comprehensive Collections Ledger (All assigned deals, active pending, and cleared/completed with timestamps)
+ */
+const getCollectionsLedger = async ({
+  collectorId = null,
+  status = null,
+  startDate = null,
+  endDate = null,
+  search = '',
+  page = 1,
+  limit = 50,
+}) => {
+  const query = {};
+
+  if (collectorId) {
+    query.assignedTo = collectorId;
+  }
+
+  if (status && status !== 'ALL') {
+    query.status = status; // 'ACTIVE', 'COMPLETED', 'REASSIGNED'
+  }
+
+  if (startDate || endDate) {
+    query.assignedAt = {};
+    if (startDate) query.assignedAt.$gte = new Date(startDate);
+    if (endDate) query.assignedAt.$lte = new Date(endDate);
+  }
+
+  let assignments = await SaleCollectionAssignment.find(query)
+    .populate({
+      path: 'saleId',
+      select: 'customerName course product totalCost tokenAmount currency status date clearedByCollectionOwner clearedAt salesPerson leadId email contactNumber',
+      populate: [
+        { path: 'salesPerson', select: 'fullName email' },
+        { path: 'clearedByCollectionOwner', select: 'fullName email' },
+      ],
+    })
+    .populate('assignedTo', 'fullName email role profilePicture')
+    .populate('assignedBy', 'fullName email')
+    .populate('reassignedTo', 'fullName email')
+    .populate('collections.collectedBy', 'fullName email')
+    .sort({ updatedAt: -1, assignedAt: -1 });
+
+  // Filter out any orphaned assignments
+  assignments = assignments.filter((a) => a.saleId != null);
+
+  // Text search filtering
+  if (search && search.trim()) {
+    const s = search.trim().toLowerCase();
+    assignments = assignments.filter((a) => {
+      const customer = (a.saleId.customerName || '').toLowerCase();
+      const course = (a.saleId.course || a.saleId.product || '').toLowerCase();
+      const collector = (a.assignedTo?.fullName || '').toLowerCase();
+      const closer = (a.saleId.salesPerson?.fullName || '').toLowerCase();
+      return customer.includes(s) || course.includes(s) || collector.includes(s) || closer.includes(s);
+    });
+  }
+
+  // Summary KPIs across matched records
+  let totalAssigned = 0;
+  let totalCollected = 0;
+  let totalRemaining = 0;
+  let activeCount = 0;
+  let completedCount = 0;
+  let reassignedCount = 0;
+
+  assignments.forEach((a) => {
+    const assignedAmt = parseFloat(a.assignedAmount || 0);
+    const collectedAmt = parseFloat(a.collectedAmount || 0);
+    const remainingAmt = Math.max(0, assignedAmt - collectedAmt);
+
+    totalAssigned += assignedAmt;
+    totalCollected += collectedAmt;
+    totalRemaining += remainingAmt;
+
+    if (a.status === 'ACTIVE') activeCount++;
+    else if (a.status === 'COMPLETED') completedCount++;
+    else if (a.status === 'REASSIGNED') reassignedCount++;
+  });
+
+  const total = assignments.length;
+  const startIndex = (page - 1) * limit;
+  const paginatedRecords = assignments.slice(startIndex, startIndex + limit);
+
+  return {
+    kpis: {
+      totalAssigned,
+      totalCollected,
+      totalRemaining,
+      totalCount: total,
+      activeCount,
+      completedCount,
+      reassignedCount,
+      recoveryRate: totalAssigned > 0 ? ((totalCollected / totalAssigned) * 100).toFixed(1) : 0,
+    },
+    pagination: {
+      page: parseInt(page, 10),
+      limit: parseInt(limit, 10),
+      total,
+      pages: Math.ceil(total / limit) || 1,
+    },
+    records: paginatedRecords,
+  };
+};
+
 module.exports = {
   syncSaleCollectionSummary,
   assignCollection,
@@ -792,4 +917,5 @@ module.exports = {
   getBulkPreview,
   bulkAssignSalesPersonPending,
   bulkAssignSelectedSales,
+  getCollectionsLedger,
 };

@@ -457,3 +457,38 @@ exports.bulkAssignSelectedSales = async (req, res) => {
     });
   }
 };
+
+// @desc    Get comprehensive Collections Ledger (All assigned deals, active pending, and cleared/completed with timestamps)
+// @route   GET /api/collections/ledger
+// @access  Private
+exports.getCollectionsLedger = async (req, res) => {
+  try {
+    let { collectorId, status, startDate, endDate, search, page, limit } = req.query;
+
+    // Regular sales persons can only see their own collections
+    if (['Sales Person', 'Senior Sales Executive', 'Sales Executive'].includes(req.user.role)) {
+      collectorId = req.user._id.toString();
+    }
+
+    const ledger = await collectionService.getCollectionsLedger({
+      collectorId: collectorId || null,
+      status: status || null,
+      startDate: startDate || null,
+      endDate: endDate || null,
+      search: search || '',
+      page: parseInt(page, 10) || 1,
+      limit: parseInt(limit, 10) || 50,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: ledger,
+    });
+  } catch (err) {
+    console.error('Error fetching collections ledger:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message || 'Error fetching collections ledger',
+    });
+  }
+};

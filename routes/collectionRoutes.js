@@ -11,12 +11,14 @@ const {
   getBulkPreview,
   bulkAssignSalesPersonPending,
   bulkAssignSelectedSales,
+  getCollectionsLedger,
 } = require('../controllers/collectionController');
 const { protect } = require('../middleware/auth');
 
 // All collection routes require authentication
 router.use(protect);
 
+router.get('/ledger', getCollectionsLedger);
 router.get('/performance', getCollectionPerformance);
 router.get('/bulk-preview', getBulkPreview);
 router.get('/sale/:saleId', getSaleCollections);

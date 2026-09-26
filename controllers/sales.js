@@ -70,6 +70,7 @@ exports.getSales = async (req, res) => {
           $or: [
             { salesPerson: req.user.id },
             { currentCollectionOwners: req.user.id },
+            { allCollectionOwners: req.user.id },
           ],
           ...parsedQuery,
         });
@@ -139,7 +140,10 @@ exports.getSales = async (req, res) => {
     }
 
     // Populate
-    query = query.populate("salesPerson leadPerson currentCollectionOwners", "fullName email");
+    query = query.populate(
+      "salesPerson leadPerson currentCollectionOwners allCollectionOwners clearedByCollectionOwner",
+      "fullName email"
+    );
 
     // Pagination
     const page = parseInt(req.query.page, 10) || 1;
@@ -198,6 +202,7 @@ exports.getSales = async (req, res) => {
           $or: [
             { salesPerson: req.user.id },
             { currentCollectionOwners: req.user.id },
+            { allCollectionOwners: req.user.id },
           ],
         });
       } else if (req.user.role === "Lead Person") {
@@ -215,7 +220,7 @@ exports.getSales = async (req, res) => {
       }
 
       const allSales = await fullQuery
-        .populate("salesPerson leadPerson currentCollectionOwners", "fullName email")
+        .populate("salesPerson leadPerson currentCollectionOwners allCollectionOwners clearedByCollectionOwner", "fullName email")
         .sort("-date");
 
       // Ensure currency fields are consistent for all sales
@@ -263,8 +268,8 @@ exports.getSales = async (req, res) => {
 exports.getSale = async (req, res) => {
   try {
     const sale = await Sale.findById(req.params.id).populate(
-      "salesPerson leadPerson createdBy currentCollectionOwners",
-      "fullName email",
+      "salesPerson leadPerson createdBy currentCollectionOwners allCollectionOwners clearedByCollectionOwner",
+      "fullName email"
     );
 
     if (!sale) {
@@ -279,9 +284,9 @@ exports.getSale = async (req, res) => {
       const salesPersonId =
         sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
       const userId = req.user._id?.toString() || req.user.id?.toString();
-      const isCollectionOwner = sale.currentCollectionOwners?.some(
-        (id) => (id._id || id).toString() === userId
-      );
+      const isCollectionOwner =
+        sale.currentCollectionOwners?.some((id) => (id._id || id).toString() === userId) ||
+        sale.allCollectionOwners?.some((id) => (id._id || id).toString() === userId);
 
       if (salesPersonId !== userId && !isCollectionOwner) {
         return res.status(403).json({
@@ -485,9 +490,9 @@ exports.updateSale = async (req, res) => {
       const salesPersonId =
         sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
       const userId = req.user._id?.toString() || req.user.id?.toString();
-      const isCollectionOwner = sale.currentCollectionOwners?.some(
-        (id) => (id._id || id).toString() === userId
-      );
+      const isCollectionOwner =
+        sale.currentCollectionOwners?.some((id) => (id._id || id).toString() === userId) ||
+        sale.allCollectionOwners?.some((id) => (id._id || id).toString() === userId);
 
       if (salesPersonId !== userId && !isCollectionOwner) {
         return res.status(403).json({
@@ -615,7 +620,7 @@ exports.updateSale = async (req, res) => {
     sale = await Sale.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
-    }).populate("salesPerson leadPerson createdBy currentCollectionOwners", "fullName email");
+    }).populate("salesPerson leadPerson createdBy currentCollectionOwners allCollectionOwners clearedByCollectionOwner", "fullName email");
 
     // Automatically settle active collection assignments if status changed to Completed
     if (sale.status === "Completed" && originalStatus !== "Completed") {
