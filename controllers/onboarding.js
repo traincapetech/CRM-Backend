@@ -351,7 +351,7 @@ exports.getManagersByDept = async (req, res) => {
     const { department } = req.query;
 
     const managerRoles = ["Manager", "Admin", "HR", "IT Manager"];
-    let managers;
+    let managers = [];
 
     if (department) {
       // Get employees in that department who have manager-level user roles
@@ -364,6 +364,14 @@ exports.getManagersByDept = async (req, res) => {
         _id: { $in: managerUserIds },
         active: true,
       }).select("fullName email role");
+
+      // Fallback: if no active manager found in department, return all active managers org-wide
+      if (managers.length === 0) {
+        managers = await User.find({
+          role: { $in: managerRoles },
+          active: true,
+        }).select("fullName email role");
+      }
     } else {
       managers = await User.find({
         role: { $in: managerRoles },
@@ -371,7 +379,7 @@ exports.getManagersByDept = async (req, res) => {
       }).select("fullName email role");
     }
 
-    res.json({ success: true, data: managers });
+    res.json({ success: true, data: managers, fallback: managers.length > 0 && department ? true : false });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -410,10 +418,27 @@ exports.finalizeOnboarding = async (req, res) => {
       });
     }
 
-    // Check for duplicate official email
+    // Guard: invite already finalized
+    if (invite.onboardingStatus === "JOINED" && invite.employeeId) {
+      return res.status(400).json({
+        success: false,
+        message: "This candidate has already been finalized and joined. Employee account already exists.",
+      });
+    }
+
+    // Check for duplicate User email
     const emailExists = await User.findOne({ email: officialEmail.toLowerCase() });
     if (emailExists) {
-      return res.status(400).json({ success: false, message: "Official email already in use" });
+      return res.status(400).json({ success: false, message: "A user account with this email already exists. Please use a different official email." });
+    }
+
+    // Check for duplicate Employee email (catches orphaned Employee records from partial previous finalize)
+    const employeeEmailExists = await Employee.findOne({ email: officialEmail.toLowerCase() });
+    if (employeeEmailExists) {
+      return res.status(400).json({
+        success: false,
+        message: `An employee record already exists with email "${officialEmail}". This may be from a previous incomplete finalization. Please contact the admin to resolve the duplicate, or use a different email.`,
+      });
     }
 
     // 1. Decrypt PII from invite
