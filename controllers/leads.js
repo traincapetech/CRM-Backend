@@ -234,9 +234,10 @@ exports.getLeads = async (req, res) => {
     // Get total count for pagination
     const total = await Lead.countDocuments(query.getQuery());
 
-    // Pagination logic
+    // Pagination logic (Capped to max 500 to prevent OOM / 512MB RAM crashes on Render)
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 50; // Default limit 50
+    const rawLimit = parseInt(req.query.limit, 10);
+    const limit = rawLimit > 0 ? Math.min(rawLimit, 500) : 50;
     const startIndex = (page - 1) * limit;
     const endIndex = page * limit;
 

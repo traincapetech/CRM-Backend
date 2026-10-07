@@ -145,9 +145,10 @@ exports.getSales = async (req, res) => {
       "fullName email"
     );
 
-    // Pagination
+    // Pagination (Capped to max 500 to prevent OOM memory spikes)
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 25;
+    const rawLimit = parseInt(req.query.limit, 10);
+    const limit = rawLimit > 0 ? Math.min(rawLimit, 500) : 25;
     const startIndex = (page - 1) * limit;
     const endIndex = page * limit;
     const total = await Sale.countDocuments();

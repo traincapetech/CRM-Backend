@@ -152,6 +152,7 @@ const exitRoutes = require("./routes/exits");
 const branchRoutes = require("./routes/branches");
 const branchAnalyticsRoutes = require("./routes/branchAnalytics");
 const collectionRoutes = require("./routes/collectionRoutes");
+const dashboardRoutes = require("./routes/dashboard");
 
 const app = express();
 const server = http.createServer(app);
@@ -582,6 +583,7 @@ app.use("/api/email-campaigns", emailCampaignRoutes);
 app.use("/api/email-templates", emailTemplateRoutes);
 app.use("/api/workflows", workflowRoutes);
 app.use("/api/questionnaires", questionnaireRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 app.use("/api/test-roles", testRolesRoutes);
 app.use("/api/test-groups", testGroupsRoutes);
