@@ -12,6 +12,11 @@ const payrollSchema = new mongoose.Schema(
       ref: "User",
       required: false,
     },
+    branchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Branch",
+      required: false,
+    },
     isCustomPayee: {
       type: Boolean,
       default: false,

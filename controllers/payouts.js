@@ -118,7 +118,7 @@ exports.getAllPayouts = async (req, res) => {
       });
     }
 
-    const { status, month, year } = req.query;
+    const { status, month, year, branchId } = req.query;
 
     // Build query
     // Migration Note: razorpayPayoutId replaced with paytmTransactionId
@@ -138,26 +138,46 @@ exports.getAllPayouts = async (req, res) => {
       query.year = parseInt(year);
     }
 
+    if (branchId) {
+      const branchEmployees = await Employee.find({ branchId }).select('_id');
+      const branchEmpIds = branchEmployees.map(e => e._id);
+      query.$or = [
+        { branchId: branchId },
+        { employeeId: { $in: branchEmpIds } }
+      ];
+    }
+
     const payouts = await Payroll.find(query)
-      .populate('employeeId', 'fullName email')
+      .populate({
+        path: 'employeeId',
+        select: 'fullName email branchId branchLocation',
+        populate: { path: 'branchId', select: 'name code city state' }
+      })
+      .populate('branchId', 'name code city state')
       .sort('-createdAt')
       .limit(100);
 
-    const payoutData = payouts.map(payroll => ({
-      payrollId: payroll._id,
-      employeeId: payroll.employeeId?._id,
-      employeeName: payroll.employeeId?.fullName,
-      employeeEmail: payroll.employeeId?.email,
-      month: payroll.month,
-      year: payroll.year,
-      amount: formatAmount(payroll.netSalary * 100),
-      transactionId: payroll.paytmTransactionId,
-      status: payroll.paytmPayoutStatus,
-      statusLabel: getPayoutStatusLabel(payroll.paytmPayoutStatus),
-      paymentMethod: payroll.paymentMethod,
-      createdAt: payroll.createdAt,
-      paymentDate: payroll.paymentDate
-    }));
+    const payoutData = payouts.map(payroll => {
+      const branchObj = payroll.branchId || payroll.employeeId?.branchId;
+      const branchName = branchObj?.name || payroll.employeeId?.branchLocation || null;
+
+      return {
+        payrollId: payroll._id,
+        employeeId: payroll.employeeId?._id,
+        employeeName: payroll.employeeId?.fullName,
+        employeeEmail: payroll.employeeId?.email,
+        branchName: branchName,
+        month: payroll.month,
+        year: payroll.year,
+        amount: formatAmount(payroll.netSalary * 100),
+        transactionId: payroll.paytmTransactionId,
+        status: payroll.paytmPayoutStatus,
+        statusLabel: getPayoutStatusLabel(payroll.paytmPayoutStatus),
+        paymentMethod: payroll.paymentMethod,
+        createdAt: payroll.createdAt,
+        paymentDate: payroll.paymentDate
+      };
+    });
 
     res.status(200).json({
       success: true,

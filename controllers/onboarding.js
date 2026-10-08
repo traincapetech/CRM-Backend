@@ -80,7 +80,16 @@ exports.createInvite = async (req, res) => {
 
     const Branch = require("../models/Branch");
     let targetBranchId = req.body.branchId;
-    if (!targetBranchId && branchLocation) {
+    let resolvedBranchLocation = branchLocation;
+    if (targetBranchId) {
+      const foundBranch = await Branch.findById(targetBranchId);
+      if (foundBranch) {
+        targetBranchId = foundBranch._id;
+        if (!resolvedBranchLocation) {
+          resolvedBranchLocation = `${foundBranch.name}${foundBranch.city ? ' - ' + foundBranch.city : ''}`;
+        }
+      }
+    } else if (branchLocation) {
       const foundBranch = await Branch.findOne({
         name: { $regex: new RegExp(`^${branchLocation.trim()}$`, "i") }
       });
@@ -97,7 +106,7 @@ exports.createInvite = async (req, res) => {
       proposedSalary,
       joiningDate,
       joiningTime,
-      branchLocation,
+      branchLocation: resolvedBranchLocation || branchLocation,
       branchId: targetBranchId || null,
       notes,
       internshipStartDate,
@@ -158,13 +167,16 @@ exports.createInvite = async (req, res) => {
 // @access  Private (Admin, HR, Manager)
 exports.getQueue = async (req, res) => {
   try {
-    const { status, department, search, page = 1, limit = 20 } = req.query;
+    const { status, department, branchId, search, page = 1, limit = 20 } = req.query;
 
     const query = {};
     if (status && status !== "ALL") query.onboardingStatus = status;
     if (department) query.department = department;
+    if (branchId) query.branchId = branchId;
 
-    let invites = await CandidateInvite.find(query).sort({ createdAt: -1 });
+    let invites = await CandidateInvite.find(query)
+      .populate("branchId", "name code city state")
+      .sort({ createdAt: -1 });
 
     // Search filter
     if (search) {
@@ -202,7 +214,7 @@ exports.getQueue = async (req, res) => {
 // @access  Private (Admin, HR, Manager)
 exports.getCandidateDetail = async (req, res) => {
   try {
-    const invite = await CandidateInvite.findById(req.params.id);
+    const invite = await CandidateInvite.findById(req.params.id).populate("branchId", "name code city state");
     if (!invite) {
       return res.status(404).json({ success: false, message: "Invite not found" });
     }

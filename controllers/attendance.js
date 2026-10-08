@@ -243,7 +243,7 @@ exports.getAllAttendance = async (req, res) => {
       });
     }
 
-    const { date, employeeId, department, page = 1, limit = 50 } = req.query;
+    const { date, employeeId, department, branchId, page = 1, limit = 50 } = req.query;
 
     // Build query
     let query = {};
@@ -294,14 +294,33 @@ exports.getAllAttendance = async (req, res) => {
       });
     }
 
-    if (employeeId) {
+    if (branchId) {
+      const branchEmployees = await Employee.find({ branchId }).select('_id');
+      const branchEmpIds = branchEmployees.map(e => e._id);
+      if (employeeId) {
+        if (branchEmpIds.some(id => id.toString() === employeeId.toString())) {
+          query.employeeId = employeeId;
+        } else {
+          query.employeeId = { $in: [] };
+        }
+      } else {
+        query.employeeId = { $in: branchEmpIds };
+      }
+    } else if (employeeId) {
       query.employeeId = employeeId;
     }
 
     // Get attendance records
     const skip = (page - 1) * limit;
     const attendance = await Attendance.find(query)
-      .populate('employeeId', 'fullName email department')
+      .populate({
+        path: 'employeeId',
+        select: 'fullName email department branchId',
+        populate: [
+          { path: 'department', select: 'name' },
+          { path: 'branchId', select: 'name code city state' },
+        ]
+      })
       .populate('userId', 'fullName email')
       .sort({ date: -1 })
       .skip(skip)

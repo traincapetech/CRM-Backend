@@ -271,6 +271,9 @@ exports.generatePayroll = async (req, res) => {
     } else {
       payrollData.employeeId = employee._id;
       payrollData.userId = employee.userId._id; // Make sure to set the userId from the employee record
+      if (employee.branchId) {
+        payrollData.branchId = employee.branchId;
+      }
       
       if (attendanceStats) {
         payrollData.presentDays = attendanceStats.presentDays;
@@ -368,7 +371,7 @@ exports.generatePayroll = async (req, res) => {
 // @access  Private
 exports.getPayroll = async (req, res) => {
   try {
-    const { month, year, employeeId } = req.query;
+    const { month, year, employeeId, branchId } = req.query;
     let query = {};
 
     // Build query based on filters
@@ -443,18 +446,43 @@ exports.getPayroll = async (req, res) => {
       }
     }
 
+    // Branch filter for Admin / HR / Managers
+    if (branchId) {
+      const branchEmployees = await Employee.find({ branchId }).select("_id userId");
+      const branchEmpIds = branchEmployees.map((e) => e._id);
+      const branchUserIds = branchEmployees.filter((e) => e.userId).map((e) => e.userId);
+
+      const branchClause = {
+        $or: [
+          { branchId: branchId },
+          { employeeId: { $in: branchEmpIds } },
+          { userId: { $in: branchUserIds } },
+        ],
+      };
+
+      if (query.$or) {
+        const existingOr = query.$or;
+        delete query.$or;
+        query.$and = [{ $or: existingOr }, branchClause];
+      } else {
+        Object.assign(query, branchClause);
+      }
+    }
+
     console.log("Final query:", JSON.stringify(query, null, 2));
 
-    // Fetch payroll records with populated employee and user details
+    // Fetch payroll records with populated employee, user, and branch details
     const payrolls = await Payroll.find(query)
       .populate({
         path: "employeeId",
-        select: "fullName email department role phoneNumber userId",
+        select: "fullName email department role phoneNumber userId branchId branchLocation",
         populate: [
           { path: "department", select: "name" },
           { path: "role", select: "name" },
+          { path: "branchId", select: "name code city state" },
         ],
       })
+      .populate("branchId", "name code city state")
       .populate("userId", "fullName email")
       .populate("auditLogs.changedBy", "fullName")
       .sort({ year: -1, month: -1 });
@@ -1473,7 +1501,7 @@ exports.exportPayrollReport = async (req, res) => {
       });
     }
 
-    const { month, year } = req.query;
+    const { month, year, branchId } = req.query;
 
     if (!month || !year) {
       return res.status(400).json({
@@ -1482,19 +1510,34 @@ exports.exportPayrollReport = async (req, res) => {
       });
     }
 
-    // Fetch all payroll records for the specified month/year
-    const payrolls = await Payroll.find({
+    const reportQuery = {
       month: parseInt(month),
       year: parseInt(year),
-    })
+    };
+
+    if (branchId) {
+      const branchEmployees = await Employee.find({ branchId }).select("_id userId");
+      const branchEmpIds = branchEmployees.map((e) => e._id);
+      const branchUserIds = branchEmployees.filter((e) => e.userId).map((e) => e.userId);
+      reportQuery.$or = [
+        { branchId: branchId },
+        { employeeId: { $in: branchEmpIds } },
+        { userId: { $in: branchUserIds } },
+      ];
+    }
+
+    // Fetch all payroll records for the specified month/year (and optional branch)
+    const payrolls = await Payroll.find(reportQuery)
       .populate({
         path: "employeeId",
-        select: "fullName email department role",
+        select: "fullName email department role branchId branchLocation",
         populate: [
           { path: "department", select: "name" },
           { path: "role", select: "name" },
+          { path: "branchId", select: "name code city state" },
         ],
       })
+      .populate("branchId", "name code city state")
       .sort({ netSalary: -1 });
 
     if (payrolls.length === 0) {
