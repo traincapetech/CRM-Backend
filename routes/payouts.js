@@ -6,11 +6,23 @@ const {
   getAllPayouts,
   retryPayout,
   getAccountBalance,
-  getAuditLogs
+  getAuditLogs,
+  previewBatchPayout,
+  executeBatchPayout,
+  getBatchHistory,
+  getBatchDetails,
+  getScheduleStatus
 } = require('../controllers/payouts');
 
 // All payout routes require authentication
 router.use(protect);
+
+// Batch Payout & Scheduling endpoints
+router.post('/batch/preview', previewBatchPayout);
+router.post('/batch/run', executeBatchPayout);
+router.get('/batches', getBatchHistory);
+router.get('/batches/:batchId', getBatchDetails);
+router.get('/schedule-status', getScheduleStatus);
 
 // Get payout status for a specific payroll
 router.get('/payroll/:payrollId', getPayrollPayoutStatus);

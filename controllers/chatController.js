@@ -155,7 +155,7 @@ const getAllUsersForChat = async (req, res) => {
     // Get IDs of employees who are terminated or have completed their internship
     const Employee = require("../models/Employee");
     const inactiveEmployees = await Employee.find({
-      status: { $in: ["TERMINATED", "COMPLETED"] },
+      status: { $in: ["TERMINATED", "COMPLETED", "EXITED", "RESIGNED", "INACTIVE"] },
     }).select("_id");
     const inactiveEmployeeIds = inactiveEmployees.map((emp) => emp._id);
 
