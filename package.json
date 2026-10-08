@@ -4,8 +4,8 @@
   "description": "Backend server for CRM application",
   "main": "server.js",
   "scripts": {
-    "start": "node --max-old-space-size=420 server.js",
-    "dev": "nodemon server.js",
+    "start": "node api.js && node --max-old-space-size=420 server.js",
+    "dev": "node api.js && nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "postinstall": "npm rebuild bcrypt --build-from-source",
     "drop-indexes": "node utils/dropUniqueIndexes.js"

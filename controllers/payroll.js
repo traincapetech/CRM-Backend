@@ -880,102 +880,26 @@ exports.approvePayroll = async (req, res) => {
     payroll.approvedBy = req.user.id;
     payroll.approvedDate = new Date();
 
-    // Trigger Paytm payout if employee has verified payment details
-    // IDEMPOTENCY CHECK: Prevent duplicate payouts if one is already success or pending
-    const hasActivePayout = payroll.paytmTransactionId && 
-                          payroll.paytmPayoutStatus && 
-                          ['SUCCESS', 'PENDING', 'PROCESSING'].includes(payroll.paytmPayoutStatus);
-
-    if (
-      !hasActivePayout &&
-      payroll.employeeId &&
-      payroll.employeeId.paytmVerified &&
-      payroll.employeeId.paytmBeneficiaryId
-    ) {
-      try {
-        const paytmService = require("../services/paytmService");
-
-        // Determine transfer mode based on employee's payment mode
-        let transferMode = "IMPS"; // Default for bank
-        if (payroll.employeeId.paymentMode === "upi") {
-          transferMode = "UPI";
-        }
-
-        // Create Paytm payout (replaces Razorpay createPayout)
-        const payoutData = {
-          beneficiaryId: payroll.employeeId.paytmBeneficiaryId,
-          amount: payroll.netSalary, // Amount in rupees
-          currency: "INR",
-          transferMode: transferMode,
-          purpose: "salary",
-          referenceId: `payroll_${payroll._id}_${payroll.month}_${payroll.year}`,
-          remarks: `Salary for ${payroll.employeeId.fullName} - ${payroll.monthName} ${payroll.year}`,
-        };
-
-        const payout = await paytmService.createPayout(payoutData);
-
-        // Phase 6: Audit Log
-        await PayoutAuditLog.create({
-          payrollId: payroll._id,
-          employeeId: payroll.employeeId._id,
-          action: "INITIATED",
-          status: payout.status,
-          amount: payroll.netSalary,
-          paytmTransactionId: payout.transactionId,
-          details: payout,
-          performedBy: req.user.id
-        });
-
-        // Update payroll with Paytm payout details (replaces Razorpay fields)
-        payroll.paytmTransactionId = payout.transactionId;
-        payroll.paytmPayoutStatus =
-          payout.status === "SUCCESS" ? "SUCCESS" : "PENDING";
-        payroll.paymentMethod =
-          payroll.employeeId.paymentMode === "upi" ? "PAYTM_UPI" : "PAYTM_BANK";
-        payroll.paymentDate = new Date();
-
-        console.log(
-          `✅ Paytm payout created for payroll ${payroll._id}: ${payout.transactionId}`,
-        );
-      } catch (payoutError) {
-        console.error("Error creating Paytm payout:", payoutError);
-        
-        // Phase 6: Audit Log (Failure)
-        try {
-          await PayoutAuditLog.create({
-            payrollId: payroll._id,
-            employeeId: payroll.employeeId._id,
-            action: "INITIATED",
-            status: "FAILED",
-            amount: payroll.netSalary,
-            details: { error: payoutError.message, stack: payoutError.stack },
-            performedBy: req.user.id
-          });
-        } catch (logError) {
-          console.error("Error creating audit log:", logError);
-        }
-
-        // Don't fail the approval if payout fails - just log the error
-        // Payroll will still be approved, but payout will need to be processed manually
-        payroll.paytmPayoutStatus = "FAILED";
-      }
-    }
+    // Audit log
+    payroll.auditLogs.push({
+      message: `Payroll approved by ${req.user.fullName || "User"}. Verified and ready for payout disbursement.`,
+      changedBy: req.user.id,
+      timestamp: new Date()
+    });
 
     await payroll.save();
 
     // Notify Admins
     await notifyAdmins({
       type: "PAYROLL_APPROVED",
-      message: `Payroll Approved: ${payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee")} (${payroll.monthName || "this month"} ${payroll.year || "this year"}) by ${req.user.fullName}. Payout ${payroll.paytmPayoutStatus || "MANUAL"}.`,
+      message: `Payroll Approved: ${payroll.isCustomPayee ? payroll.customPayeeName : (payroll.employeeId?.fullName || "Employee")} (${payroll.monthName || "this month"} ${payroll.year || "this year"}) by ${req.user.fullName}. Ready for disbursement.`,
       payrollId: payroll._id,
     });
 
     res.status(200).json({
       success: true,
       data: payroll,
-      message: payroll.paytmTransactionId
-        ? "Payroll approved and Paytm payout initiated successfully"
-        : "Payroll approved successfully",
+      message: "Payroll approved successfully. Ready for scheduled payout disbursement.",
     });
   } catch (error) {
     console.error("Approve payroll error:", error);

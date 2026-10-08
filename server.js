@@ -87,6 +87,14 @@ try {
   console.warn("⚠️ Onboarding cron jobs not initialized:", error.message);
 }
 
+// Initialize Payout Scheduling & Due Date Cron Jobs
+const PayoutCronJobs = require("./services/payoutCronJobs");
+try {
+  PayoutCronJobs.startAll();
+} catch (error) {
+  console.warn("⚠️ Payout cron jobs not initialized:", error.message);
+}
+
 // Use the IP filter middleware
 // app.use(ipFilter);
 

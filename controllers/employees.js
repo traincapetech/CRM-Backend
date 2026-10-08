@@ -294,7 +294,7 @@ exports.getEmployee = async (req, res) => {
       };
     }
 
-    if (["TERMINATED", "COMPLETED", "INACTIVE"].includes(empObj.status?.toUpperCase()) && !empObj.exitDate) {
+    if (["TERMINATED", "COMPLETED", "INACTIVE", "EXITED", "RESIGNED"].includes(empObj.status?.toUpperCase()) && !empObj.exitDate) {
       empObj.exitDate = empObj.updatedAt || empObj.joiningDate;
     }
 
@@ -463,7 +463,7 @@ exports.getTeamDirectory = async (req, res) => {
         status: emp.status,
         employmentType: emp.employmentType,
         joiningDate: emp.joiningDate,
-        exitDate: emp.exitDate || (["TERMINATED", "COMPLETED", "INACTIVE"].includes(emp.status?.toUpperCase()) ? emp.updatedAt || emp.joiningDate : null),
+        exitDate: emp.exitDate || (["TERMINATED", "COMPLETED", "INACTIVE", "EXITED", "RESIGNED"].includes(emp.status?.toUpperCase()) ? emp.updatedAt || emp.joiningDate : null),
         skills: emp.skills || [],
         linkedInUrl: emp.linkedInUrl || null,
         photograph: emp.photograph || null,
@@ -888,7 +888,7 @@ exports.updateEmployee = async (req, res) => {
 
     // Sync status change to user account active state & set exitDate
     if (employeeData.status && employeeData.status !== oldEmployee.status) {
-      const isDeactivatedStatus = ["TERMINATED", "COMPLETED", "INACTIVE"].includes(employeeData.status);
+      const isDeactivatedStatus = ["TERMINATED", "COMPLETED", "INACTIVE", "EXITED", "RESIGNED"].includes(employeeData.status?.toUpperCase());
       if (isDeactivatedStatus && !employeeData.exitDate && !employee.exitDate) {
         employee.exitDate = new Date();
         await employee.save();

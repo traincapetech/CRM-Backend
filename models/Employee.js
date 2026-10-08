@@ -65,6 +65,7 @@ const employeeSchema = new mongoose.Schema(
         "ON_LEAVE",
         "PIP",
         "NOTICE_PERIOD",
+        "RESIGNED",
         "EXITED",
         "TERMINATED",
         "INACTIVE",

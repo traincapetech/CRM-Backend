@@ -251,7 +251,7 @@ exports.login = async (req, res) => {
 
     // --- General Employee Status Check ---
     if (employee) {
-      const isDeactivatedStatus = ["TERMINATED", "COMPLETED", "INACTIVE"].includes(employee.status);
+      const isDeactivatedStatus = ["TERMINATED", "COMPLETED", "INACTIVE", "EXITED", "RESIGNED"].includes(employee.status?.toUpperCase());
       if (isDeactivatedStatus) {
         if (user.active !== false) {
           user.active = false;

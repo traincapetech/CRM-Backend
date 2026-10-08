@@ -184,6 +184,13 @@ const payrollSchema = new mongoose.Schema(
       type: Date,
     },
 
+    // Due Date: Salary for month M is due on 10th of month M+1
+    // (e.g. September salary is due on 10 October)
+    dueDate: {
+      type: Date,
+      index: true,
+    },
+
     // Payment
     paymentDate: {
       type: Date,
@@ -204,6 +211,20 @@ const payrollSchema = new mongoose.Schema(
       type: String,
       enum: ["PENDING", "SUCCESS", "FAILED", "PROCESSING", null],
       default: null,
+    },
+
+    // Split payout tracking: salary (Net Excl. Incentives) is paid monthly,
+    // incentives (performance + project bonus) are paid quarterly.
+    // Written only by the payout-run service (Paytm success or "paid offline").
+    salaryPaid: {
+      amount: { type: Number, default: 0 },
+      paidAt: { type: Date },
+      method: { type: String, enum: ["PAYTM", "OFFLINE", null], default: null },
+    },
+    incentivePaid: {
+      amount: { type: Number, default: 0 },
+      paidAt: { type: Date },
+      method: { type: String, enum: ["PAYTM", "OFFLINE", null], default: null },
     },
 
     // Salary Slip
@@ -231,6 +252,8 @@ const payrollSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   },
 );
 
@@ -260,6 +283,42 @@ payrollSchema.virtual("monthName").get(function () {
     "December",
   ];
   return months[this.month - 1];
+});
+
+// Virtual for due status
+payrollSchema.virtual("dueStatus").get(function () {
+  if (this.status === "PAID") return "PAID";
+  if (!this.dueDate) return "UNKNOWN";
+
+  const now = new Date();
+  const due = new Date(this.dueDate);
+  const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueMidnight = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+
+  const diffTime = dueMidnight - nowMidnight;
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return "DUE_TODAY";
+  if (diffDays > 0) return "UPCOMING";
+  return "OVERDUE";
+});
+
+payrollSchema.virtual("dueDaysText").get(function () {
+  if (this.status === "PAID") return "Paid";
+  if (!this.dueDate) return "";
+
+  const now = new Date();
+  const due = new Date(this.dueDate);
+  const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueMidnight = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+
+  const diffTime = dueMidnight - nowMidnight;
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return "Due Today (10th)";
+  if (diffDays > 0) return `Due in ${diffDays} day${diffDays === 1 ? "" : "s"}`;
+  const overDays = Math.abs(diffDays);
+  return `Overdue by ${overDays} day${overDays === 1 ? "" : "s"}`;
 });
 
 // Method to calculate salary based on manual input
@@ -373,10 +432,19 @@ payrollSchema.methods.calculateSalary = function () {
   return this.netSalary;
 };
 
-// Pre-save middleware to calculate salary
+// Pre-save middleware to calculate salary and due date
 payrollSchema.pre("save", function (next) {
   // Always recalculate when saving
   this.calculateSalary();
+
+  // Automatic 10th-of-next-month due date calculation
+  // E.g. September (month: 9) -> Due on 10 October
+  if (this.month && this.year) {
+    const nextMonth = this.month === 12 ? 1 : this.month + 1;
+    const nextYear = this.month === 12 ? this.year + 1 : this.year;
+    this.dueDate = new Date(Date.UTC(nextYear, nextMonth - 1, 10, 0, 0, 0));
+  }
+
   next();
 });
 
