@@ -760,15 +760,17 @@ exports.submitForm = async (req, res) => {
 
     const { declarationAccepted, privacyAccepted, joiningTermsAccepted } = req.body;
 
-    if (!declarationAccepted || !privacyAccepted || !joiningTermsAccepted) {
-      return res.status(400).json({ success: false, message: "All declarations must be accepted." });
+    const isTruthy = (v) => v === true || v === "true" || v === 1 || v === "1";
+
+    if (!isTruthy(declarationAccepted) || !isTruthy(privacyAccepted) || !isTruthy(joiningTermsAccepted)) {
+      return res.status(400).json({ success: false, message: "All declarations must be accepted to proceed." });
     }
 
     // Save draft fields first
     const draftFields = [
-      "gender","permanentAddress","qualification",
-      "experience","skills","bankName","ifscCode","accountHolderName",
-      "collegeName", "internshipStartDate", "internshipEndDate"
+      "gender", "permanentAddress", "qualification",
+      "experience", "skills", "bankName", "ifscCode", "accountHolderName",
+      "collegeName", "internshipStartDate", "internshipEndDate", "emergencyContact"
     ];
 
     const parseJSON = (val) => {
@@ -778,20 +780,42 @@ exports.submitForm = async (req, res) => {
 
     draftFields.forEach(f => {
       if (req.body[f] !== undefined) {
-        if (f === "emergencyContact" || f === "skills") {
-          invite[f] = parseJSON(req.body[f]);
+        if (f === "skills") {
+          const parsed = parseJSON(req.body[f]);
+          invite.skills = Array.isArray(parsed)
+            ? parsed
+            : typeof parsed === "string"
+            ? parsed.split(",").map((s) => s.trim()).filter(Boolean)
+            : [];
+        } else if (f === "emergencyContact") {
+          invite.emergencyContact = parseJSON(req.body[f]);
         } else {
           invite[f] = req.body[f];
         }
       }
     });
 
-    // PII
-    if (req.body.dob) { invite.dob = req.body.dob; invite.markModified("dob"); }
-    if (req.body.currentAddress) { invite.currentAddress = req.body.currentAddress; invite.markModified("currentAddress"); }
-    if (req.body.panNumber) { invite.panNumber = req.body.panNumber; invite.markModified("panNumber"); }
-    if (req.body.aadharNumber) { invite.aadharNumber = req.body.aadharNumber; invite.markModified("aadharNumber"); }
-    if (req.body.bankAccountNumber) { invite.bankAccountNumber = req.body.bankAccountNumber; invite.markModified("bankAccountNumber"); }
+    // PII (only update if non-empty string provided)
+    if (req.body.dob && typeof req.body.dob === "string" && req.body.dob.trim()) {
+      invite.dob = req.body.dob;
+      invite.markModified("dob");
+    }
+    if (req.body.currentAddress && typeof req.body.currentAddress === "string" && req.body.currentAddress.trim()) {
+      invite.currentAddress = req.body.currentAddress;
+      invite.markModified("currentAddress");
+    }
+    if (req.body.panNumber && typeof req.body.panNumber === "string" && req.body.panNumber.trim()) {
+      invite.panNumber = req.body.panNumber;
+      invite.markModified("panNumber");
+    }
+    if (req.body.aadharNumber && typeof req.body.aadharNumber === "string" && req.body.aadharNumber.trim()) {
+      invite.aadharNumber = req.body.aadharNumber;
+      invite.markModified("aadharNumber");
+    }
+    if (req.body.bankAccountNumber && typeof req.body.bankAccountNumber === "string" && req.body.bankAccountNumber.trim()) {
+      invite.bankAccountNumber = req.body.bankAccountNumber;
+      invite.markModified("bankAccountNumber");
+    }
 
     // Upload documents
     if (req.files) {
@@ -809,19 +833,23 @@ exports.submitForm = async (req, res) => {
       invite.markModified("documents");
     }
 
-    invite.declarationAccepted = declarationAccepted;
-    invite.privacyAccepted = privacyAccepted;
-    invite.joiningTermsAccepted = joiningTermsAccepted;
+    invite.declarationAccepted = true;
+    invite.privacyAccepted = true;
+    invite.joiningTermsAccepted = true;
     invite.onboardingStatus = "SUBMITTED";
     invite.submittedAt = new Date();
 
     await invite.save();
 
     // Notify HR
-    await notifyAdmins({
-      type: "CANDIDATE_SUBMITTED",
-      message: `${invite.fullName} has submitted their onboarding form. Please review.`,
-    });
+    try {
+      await notifyAdmins({
+        type: "CANDIDATE_SUBMITTED",
+        message: `${invite.fullName} has submitted their onboarding form. Please review.`,
+      });
+    } catch (notifErr) {
+      console.warn("Failed to notify admins of candidate submission:", notifErr.message);
+    }
 
     res.json({ success: true, message: "Form submitted successfully! HR will review and contact you soon." });
   } catch (error) {
