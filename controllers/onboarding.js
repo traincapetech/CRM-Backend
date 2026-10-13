@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const CandidateInvite = require("../models/CandidateInvite");
@@ -170,9 +171,15 @@ exports.getQueue = async (req, res) => {
     const { status, department, branchId, search, page = 1, limit = 20 } = req.query;
 
     const query = {};
-    if (status && status !== "ALL") query.onboardingStatus = status;
-    if (department) query.department = department;
-    if (branchId) query.branchId = branchId;
+    if (status && status !== "ALL" && status !== "undefined" && status !== "null") {
+      query.onboardingStatus = status;
+    }
+    if (department && department !== "ALL" && department !== "undefined" && department !== "null") {
+      query.department = department;
+    }
+    if (branchId && branchId !== "ALL" && branchId !== "undefined" && branchId !== "null" && mongoose.Types.ObjectId.isValid(branchId)) {
+      query.branchId = branchId;
+    }
 
     let invites = await CandidateInvite.find(query)
       .populate("branchId", "name code city state")
