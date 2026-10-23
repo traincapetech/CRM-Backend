@@ -36,13 +36,19 @@ const { fixITInterns } = require('../controllers/fixEmployees');
 
 // Debug middleware
 const debugMiddleware = (req, res, next) => {
+  const hasToken = Boolean(
+    (req.cookies && req.cookies.token) ||
+    (req.headers.authorization && req.headers.authorization.startsWith("Bearer"))
+  );
+
   console.log('Employee route accessed:', {
     method: req.method,
     path: req.path,
-    user: req.user ? {
-      id: req.user.id,
-      role: req.user.role
-    } : 'Not authenticated',
+    authStatus: req.user
+      ? `Authenticated (${req.user.role})`
+      : hasToken
+      ? 'Token present (verifying in auth middleware...)'
+      : 'No token provided',
     query: req.query,
     params: req.params,
     contentType: req.headers['content-type'],
