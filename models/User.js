@@ -89,8 +89,10 @@ const UserSchema = new mongoose.Schema(
     },
     verifyOtp: { type: String, default: null },
     verifyOtpExpireAt: { type: Number, default: 0 },
+    verifyOtpAttempts: { type: Number, default: 0 },
     resetOtp: { type: String, default: null },
     resetOtpExpireAt: { type: Number, default: 0 },
+    resetOtpAttempts: { type: Number, default: 0 },
     active: {
       type: Boolean,
       default: true,

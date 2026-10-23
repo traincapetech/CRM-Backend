@@ -26,7 +26,11 @@ const {
   getEmployeeTimeline,
   getEmployeeAuditLogs,
   get360Profile,
-  getNextOfficialId
+  getNextOfficialId,
+  getNextDocRef,
+  commitDocRef,
+  saveGeneratedLetterToVault,
+  sendDocumentToEmployee
 } = require('../controllers/employees');
 const { fixITInterns } = require('../controllers/fixEmployees');
 
@@ -80,6 +84,12 @@ router.get('/:id/360', protect, get360Profile);
 // Get next auto-incremented official ID
 router.get('/next-official-id', protect, getNextOfficialId);
 
+// Get next auto-incremented document reference number (07AAJ/HR/{TYPE}/{YEAR}/{SEQ})
+router.get('/next-doc-ref', protect, getNextDocRef);
+
+// Commit / advance document reference number
+router.post('/commit-doc-ref', protect, commitDocRef);
+
 // Employee routes - accessible to all authenticated users
 router.route('/')
   .get(protect, getEmployees)
@@ -98,6 +108,12 @@ router.route('/user/:userId')
 router.route('/:id/documents')
   .post(protect, uploadEmployeeFiles, uploadDocuments)
   .get(protect, getDocuments);
+
+// Save generated letter to employee vault
+router.post('/:id/save-letter-vault', protect, saveGeneratedLetterToVault);
+
+// Send document to employee via email
+router.post('/:id/send-document', protect, sendDocumentToEmployee);
 
 // Serve a single document by filename (local fallback)
 router.get('/documents/:filename', protect, getDocument);

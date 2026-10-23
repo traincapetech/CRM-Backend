@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const LoginHistory = require("../models/LoginHistory"); // Added LoginHistory model
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 const fs = require("fs"); // Added for file cleanup
 const path = require("path"); // Added for path.join
 const { UPLOAD_PATHS } = require("../config/storage");
@@ -85,12 +86,19 @@ exports.register = async (req, res) => {
     }
 
     console.log("Creating new user...");
+    // Security: Prevent self-assignment of privileged roles via public registration
+    const restrictedRoles = ["Admin", "Super Admin", "Manager", "IT Manager", "HR", "Branch Partner"];
+    let assignedRole = "Sales Person";
+    if (role && !restrictedRoles.includes(role)) {
+      assignedRole = role;
+    }
+
     // Create user
     const user = await User.create({
       fullName,
       email: email.toLowerCase(),
       password,
-      role: role || "Sales Person", // Default role if not specified
+      role: assignedRole,
     });
 
     console.log(`User created successfully with ID: ${user._id}`);
@@ -699,19 +707,19 @@ exports.updateUser = async (req, res) => {
       });
     }
 
-    // Prevent Managers from modifying Admin accounts
-    if (req.user.role === "Manager" && user.role === "Admin") {
+    // Prevent non-Admins from modifying Admin accounts
+    if (user.role === "Admin" && req.user.role !== "Admin") {
       return res.status(403).json({
         success: false,
-        message: "Managers cannot modify Admin accounts",
+        message: "Only Admins can modify Admin accounts",
       });
     }
 
-    // Prevent Managers from creating new Admin accounts
-    if (req.user.role === "Manager" && role === "Admin") {
+    // Prevent non-Admins from granting Admin role
+    if (role === "Admin" && req.user.role !== "Admin") {
       return res.status(403).json({
         success: false,
-        message: "Managers cannot create Admin accounts",
+        message: "Only Admins can grant the Admin role",
       });
     }
 
@@ -795,11 +803,11 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
-    // Prevent Managers from deleting Admin accounts
-    if (req.user.role === "Manager" && user.role === "Admin") {
+    // Prevent non-Admins from deleting Admin accounts
+    if (user.role === "Admin" && req.user.role !== "Admin") {
       return res.status(403).json({
         success: false,
-        message: "Managers cannot delete Admin accounts",
+        message: "Only Admins can delete Admin accounts",
       });
     }
 
@@ -1037,11 +1045,11 @@ exports.createUser = async (req, res) => {
       });
     }
 
-    // Prevent Managers from creating Admin accounts
-    if (req.user.role === "Manager" && role === "Admin") {
+    // Prevent non-Admins from creating Admin accounts
+    if (role === "Admin" && req.user.role !== "Admin") {
       return res.status(403).json({
         success: false,
-        message: "Managers cannot create Admin accounts",
+        message: "Only Admins can create Admin accounts",
       });
     }
 
@@ -1128,11 +1136,11 @@ exports.createUserWithDocuments = async (req, res) => {
       });
     }
 
-    // Prevent Managers from creating Admin accounts
-    if (req.user.role === "Manager" && role === "Admin") {
+    // Prevent non-Admins from creating Admin accounts
+    if (role === "Admin" && req.user.role !== "Admin") {
       return res.status(403).json({
         success: false,
-        message: "Managers cannot create Admin accounts",
+        message: "Only Admins can create Admin accounts",
       });
     }
 
@@ -1990,13 +1998,14 @@ exports.forgotPassword = async (req, res) => {
       role: user.role,
     });
 
-    // Generate OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate secure 6-digit OTP using crypto
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const otpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
 
-    // Save OTP to user
+    // Save OTP to user and reset failed verification attempts
     user.verifyOtp = otp;
     user.verifyOtpExpireAt = otpExpiry;
+    user.verifyOtpAttempts = 0;
     await user.save();
 
     console.log("OTP generated and saved for user:", user.email);
@@ -2043,12 +2052,12 @@ exports.verifyOTP = async (req, res) => {
     // Normalize email to lowercase for case-insensitive search
     const normalizedEmail = email ? email.toLowerCase().trim() : "";
 
-    console.log("OTP verification request:", { email: normalizedEmail, otp });
+    console.log("OTP verification request for email:", normalizedEmail);
 
-    if (!normalizedEmail) {
+    if (!normalizedEmail || !otp) {
       return res.status(400).json({
         success: false,
-        message: "Please provide an email address",
+        message: "Please provide an email address and OTP",
       });
     }
 
@@ -2074,29 +2083,42 @@ exports.verifyOTP = async (req, res) => {
       });
     }
 
-    // Check if OTP matches and is not expired
-    if (user.verifyOtp !== otp || Date.now() > user.verifyOtpExpireAt) {
-      return res.status(400).json({
+    // Invalidate if maximum failed attempts exceeded (5 attempts max)
+    if ((user.verifyOtpAttempts || 0) >= 5) {
+      user.verifyOtp = undefined;
+      user.verifyOtpExpireAt = undefined;
+      user.verifyOtpAttempts = 0;
+      await user.save();
+      return res.status(429).json({
         success: false,
-        message: "Invalid or expired OTP",
+        message: "Too many failed attempts. Please request a new OTP.",
       });
     }
 
-    // Generate reset OTP
-    const resetOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    const resetOtpExpiry = Date.now() + 30 * 60 * 1000; // 30 minutes
+    // Check if OTP matches and is not expired
+    const isExpired = !user.verifyOtpExpireAt || Date.now() > user.verifyOtpExpireAt;
+    const isMatch = user.verifyOtp && user.verifyOtp.toString().trim() === otp.toString().trim();
 
-    console.log("Generating reset OTP:", {
-      email,
-      resetOtp,
-      resetOtpExpiry,
-    });
+    if (!isMatch || isExpired) {
+      user.verifyOtpAttempts = (user.verifyOtpAttempts || 0) + 1;
+      await user.save();
+      return res.status(400).json({
+        success: false,
+        message: isExpired ? "OTP has expired. Please request a new one." : "Invalid OTP code",
+      });
+    }
 
-    // Save reset OTP
+    // Generate cryptographically secure reset token
+    const resetOtp = crypto.randomBytes(32).toString("hex");
+    const resetOtpExpiry = Date.now() + 15 * 60 * 1000; // 15 minutes
+
+    // Save reset token and clear verifyOtp
     user.resetOtp = resetOtp;
     user.resetOtpExpireAt = resetOtpExpiry;
+    user.resetOtpAttempts = 0;
     user.verifyOtp = undefined;
     user.verifyOtpExpireAt = undefined;
+    user.verifyOtpAttempts = 0;
     await user.save();
 
     res.status(200).json({
@@ -2189,6 +2211,18 @@ exports.resetPassword = async (req, res) => {
     }
 
     if (user.resetOtp !== resetOtp) {
+      user.resetOtpAttempts = (user.resetOtpAttempts || 0) + 1;
+      if (user.resetOtpAttempts >= 5) {
+        user.resetOtp = undefined;
+        user.resetOtpExpireAt = undefined;
+        user.resetOtpAttempts = 0;
+        await user.save();
+        return res.status(429).json({
+          success: false,
+          message: "Too many failed attempts. Please request a new password reset.",
+        });
+      }
+      await user.save();
       return res.status(400).json({
         success: false,
         message:
@@ -2200,6 +2234,7 @@ exports.resetPassword = async (req, res) => {
       // Clear expired OTPs
       user.resetOtp = undefined;
       user.resetOtpExpireAt = undefined;
+      user.resetOtpAttempts = 0;
       await user.save();
 
       return res.status(400).json({
@@ -2212,6 +2247,7 @@ exports.resetPassword = async (req, res) => {
     user.password = newPassword;
     user.resetOtp = undefined;
     user.resetOtpExpireAt = undefined;
+    user.resetOtpAttempts = 0;
     await user.save();
 
     res.status(200).json({

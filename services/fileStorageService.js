@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const multer = require("multer");
 
 // Import R2 service
@@ -35,6 +36,84 @@ Object.values(UPLOAD_PATHS).forEach((dir) => {
   }
 });
 
+// Allowed file extensions and MIME types whitelist
+const ALLOWED_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".csv",
+  ".txt",
+  ".rtf",
+  ".zip",
+  ".rar",
+]);
+
+const ALLOWED_MIMES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+  "text/plain",
+  "application/rtf",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/x-rar-compressed",
+  "application/octet-stream",
+]);
+
+const fileFilter = (req, file, cb) => {
+  if (!file || !file.originalname) {
+    return cb(new Error("File missing or invalid"), false);
+  }
+
+  // Prevent null byte attacks or path traversal in originalname
+  if (file.originalname.includes("\0") || file.originalname.includes("..")) {
+    return cb(new Error("Invalid file name"), false);
+  }
+
+  const ext = path.extname(file.originalname).toLowerCase();
+  if (!ALLOWED_EXTENSIONS.has(ext)) {
+    return cb(
+      new Error(
+        `File extension '${ext}' is not permitted. Allowed extensions: ${Array.from(ALLOWED_EXTENSIONS).join(", ")}`
+      ),
+      false
+    );
+  }
+
+  // Reject executable or script-like secondary extensions (e.g., test.php.png, exploit.exe.jpg)
+  const parts = file.originalname.toLowerCase().split(".");
+  const dangerousTokens = [
+    "php", "phtml", "jsp", "asp", "aspx", "exe", "sh", "bash", "bat", "cmd",
+    "js", "mjs", "cjs", "html", "htm", "svg", "vbs", "ps1", "jar", "war"
+  ];
+  if (parts.slice(1, -1).some((p) => dangerousTokens.includes(p))) {
+    return cb(new Error("Disallowed file name structure"), false);
+  }
+
+  if (ALLOWED_MIMES.has(file.mimetype.toLowerCase())) {
+    cb(null, true);
+  } else {
+    cb(
+      new Error(
+        `File MIME type '${file.mimetype}' is not permitted.`
+      ),
+      false
+    );
+  }
+};
+
 // Multer storage to save incoming files to a temp folder before we upload to R2
 const multerStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -45,8 +124,10 @@ const multerStorage = multer.diskStorage({
     cb(null, tmpDir);
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const name = `${file.fieldname}-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    const ext = path.extname(file.originalname).toLowerCase();
+    const safeField = (file.fieldname || "file").replace(/[^a-zA-Z0-9_-]/g, "");
+    const randomHex = crypto.randomBytes(8).toString("hex");
+    const name = `${safeField}-${Date.now()}-${randomHex}${ext}`;
     cb(null, name);
   },
 });
@@ -54,6 +135,7 @@ const multerStorage = multer.diskStorage({
 // Exposed upload middleware to be used by controllers
 const uploadMiddleware = multer({
   storage: multerStorage,
+  fileFilter: fileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit
     files: 20, // Allow up to 20 files for split document uploads

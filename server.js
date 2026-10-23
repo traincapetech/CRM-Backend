@@ -403,16 +403,83 @@ io.use(async (socket, next) => {
   }
 });
 
+// Socket.IO JWT Authentication Middleware
+io.use(async (socket, next) => {
+  try {
+    const jwt = require("jsonwebtoken");
+    const User = require("./models/User");
+
+    // Extract token from auth payload, authorization headers, or query
+    let token = socket.handshake.auth?.token;
+    if (!token && socket.handshake.headers?.authorization) {
+      const parts = socket.handshake.headers.authorization.split(" ");
+      if (parts.length === 2 && parts[0] === "Bearer") {
+        token = parts[1];
+      }
+    }
+    if (!token && socket.handshake.query?.token) {
+      token = socket.handshake.query.token;
+    }
+
+    if (token && process.env.JWT_SECRET) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.id).select("-password");
+        if (user) {
+          socket.user = user;
+          socket.userId = user._id.toString();
+        }
+      } catch (tokenErr) {
+        console.warn(`Socket.IO Auth Warning: ${tokenErr.message}`);
+      }
+    }
+
+    // Fallback: If connecting as desktop agent with query parameters
+    if (!socket.user && socket.handshake.query?.isAgent === "true") {
+      const queryUserId = socket.handshake.query?.userId;
+      if (queryUserId) {
+        try {
+          const user = await User.findById(queryUserId).select("-password");
+          if (user) {
+            // SECURITY: Never allow unauthenticated query-param fallback to claim administrative/supervisory roles
+            if (["Admin", "Super Admin", "Manager", "IT Manager"].includes(user.role)) {
+              console.warn(
+                `🚨 [SECURITY] Blocked unauthenticated attempt to claim privileged role via isAgent query fallback for userId: ${queryUserId}`
+              );
+            } else {
+              socket.user = user;
+              socket.userId = user._id.toString();
+              socket.isAgent = true;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    return next();
+  } catch (err) {
+    console.error("Socket.IO Auth Middleware Error:", err);
+    return next();
+  }
+});
+
 io.on("connection", (socket) => {
   console.log("New client connected:", socket.id);
 
   // 🔑 Critical: Allow clients to join their personal room for targeted notifications
   socket.on("join-user-room", (userId) => {
-    if (userId) {
-      const room = `user-${userId.toString()}`;
-      socket.join(room);
-      console.log(`✅ User joined room: ${room} (socket: ${socket.id})`);
+    // SECURITY: Strictly require authenticated socket
+    if (!socket.userId) {
+      console.warn(`🚨 [SECURITY] Blocked unauthenticated socket ${socket.id} from joining user room`);
+      return;
     }
+
+    // Only managerial users can observe other rooms; regular users are confined strictly to their own room
+    const isManagerial = ["Admin", "Super Admin", "Manager"].includes(socket.user?.role);
+    const targetUserId = isManagerial && userId ? userId.toString() : socket.userId.toString();
+    const room = `user-${targetUserId}`;
+    socket.join(room);
+    console.log(`✅ User joined room: ${room} (socket: ${socket.id}, role: ${socket.user?.role || "unknown"})`);
   });
 
   // Initialize modular handlers
@@ -439,9 +506,9 @@ const rateLimit = require("express-rate-limit");
 const cookieParser = require("cookie-parser");
 const compression = require("compression");
 
-// Body parser
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+// Body parser (restricted to 10mb for DoS prevention; multipart uploads handled by multer)
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 // Cookie parser for JWT cookies
 app.use(cookieParser());
@@ -511,8 +578,8 @@ app.options("/api/*", handleOptions);
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 0.5 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 1000, // limit each IP to 1000 requests per 15 minutes
   message: "Too many requests from this IP, please try again later",
   standardHeaders: true,
   legacyHeaders: false,
@@ -542,9 +609,24 @@ app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/register", authLimiter);
 app.use("/api/auth/forgot-password", authLimiter);
 app.use("/api/auth/reset-password", authLimiter);
+app.use("/api/auth/reset_password", authLimiter);
+app.use("/api/auth/verifyOtp", authLimiter);
 app.use("/api/auth/verify-email", authLimiter);
+app.use("/api/auth/2fa/validate", authLimiter);
+app.use("/api/auth/2fa/verify", authLimiter);
 app.use("/api/auth/verify-2fa", authLimiter);
 app.use("/api/auth/enable-2fa", authLimiter);
+
+// Rate limiting for public form submissions to prevent spam and disk exhaustion
+const publicFormLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 submissions per 15 minutes
+  message: "Too many requests submitted. Please try again after 15 minutes.",
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
+});
+app.use("/api/public/project-request", publicFormLimiter);
 
 // IP Filter already applied above
 
@@ -628,42 +710,134 @@ app.use("/api/meetings", meetingRoutes);
 app.use("/api/office-networks", officeNetworkRoutes);
 app.use("/api/onboarding", onboardingRoutes);
 
-// Image Proxy Route to solve CORS issues for ID Card generation
-app.get("/api/proxy-image", async (req, res) => {
+// Image Proxy Route to solve CORS issues for ID Card generation (Hardened against SSRF)
+const { protect } = require("./middleware/auth");
+const path = require("path");
+const fs = require("fs");
+
+app.get("/api/proxy-image", protect, async (req, res) => {
   let imageUrl = req.query.url;
-  if (!imageUrl) return res.status(400).send("URL is required");
-  
-  // If it's a relative URL, try to point it to the local server
-  if (imageUrl.startsWith("/")) {
-    const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-    const host = req.get("host");
-    imageUrl = `${protocol}://${host}${imageUrl}`;
-    console.log(`[Proxy] Resolved relative URL to: ${imageUrl}`);
+  if (!imageUrl || typeof imageUrl !== "string") {
+    return res.status(400).json({ success: false, message: "URL is required" });
   }
 
-  try {
-    const axios = require("axios");
-    // Forward auth cookies for internal requests
-    const headers = {};
-    if (req.headers.cookie) {
-      headers.cookie = req.headers.cookie;
+  imageUrl = imageUrl.trim();
+
+  // 1. Handle local relative paths directly from the filesystem (Zero network SSRF risk)
+  if (imageUrl.startsWith("/")) {
+    const safeBaseDir = path.resolve(__dirname);
+    const allowedSubdirs = [
+      path.join(safeBaseDir, "uploads"),
+      path.join(safeBaseDir, "assets"),
+    ];
+
+    const cleanRelativePath = imageUrl.split("?")[0];
+    const resolvedPath = path.resolve(safeBaseDir, `.${cleanRelativePath}`);
+
+    const isAllowedDir = allowedSubdirs.some((dir) =>
+      resolvedPath.startsWith(dir)
+    );
+
+    if (isAllowedDir && fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
+      const ext = path.extname(resolvedPath).toLowerCase();
+      const mimeTypes = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+      };
+      const contentType = mimeTypes[ext] || "application/octet-stream";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      return fs.createReadStream(resolvedPath).pipe(res);
     }
-    if (req.headers.authorization) {
-      headers.authorization = req.headers.authorization;
+  }
+
+  // 2. Validate external URLs with strict domain whitelist & anti-SSRF protections
+  try {
+    const parsedUrl = new URL(imageUrl);
+
+    // Enforce protocol strictly
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return res.status(400).json({ success: false, message: "Invalid URL protocol" });
     }
 
-    const response = await axios.get(imageUrl, { 
+    const hostname = parsedUrl.hostname.toLowerCase();
+
+    // Block private/loopback/cloud metadata IP ranges
+    const isPrivateOrLoopback =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname === "169.254.169.254" ||
+      hostname.startsWith("10.") ||
+      hostname.startsWith("192.168.") ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
+      hostname.endsWith(".local") ||
+      hostname.endsWith(".internal");
+
+    if (isPrivateOrLoopback) {
+      return res.status(403).json({
+        success: false,
+        message: "Access to private or local addresses is prohibited",
+      });
+    }
+
+    // Whitelist allowed external domains (R2 storage, corporate domains, Render host)
+    let r2Host = "";
+    if (process.env.Public_URL) {
+      try {
+        r2Host = new URL(process.env.Public_URL).hostname.toLowerCase();
+      } catch {}
+    }
+
+    const currentHost = (req.get("host") || "").split(":")[0].toLowerCase();
+
+    const isWhitelisted =
+      (r2Host && hostname === r2Host) ||
+      hostname.endsWith(".r2.dev") ||
+      hostname.endsWith(".r2.cloudflarestorage.com") ||
+      hostname === "traincapecrm.traincapetech.in" ||
+      hostname.endsWith(".traincapetech.in") ||
+      hostname === "crm-backend-o36v.onrender.com" ||
+      hostname === currentHost;
+
+    if (!isWhitelisted) {
+      return res.status(403).json({
+        success: false,
+        message: "Fetching images from this external domain is not allowed",
+      });
+    }
+
+    const axios = require("axios");
+    // Explicitly DO NOT forward authorization or cookie headers to external destinations
+    const response = await axios.get(imageUrl, {
       responseType: "arraybuffer",
-      headers: headers
+      timeout: 5000,
+      maxContentLength: 10 * 1024 * 1024, // 10MB limit
+      headers: {
+        "User-Agent": "Traincape-CRM-ImageProxy/1.0",
+      },
     });
-    
-    const contentType = response.headers["content-type"];
+
+    const contentType = response.headers["content-type"] || "";
+    if (!contentType.startsWith("image/")) {
+      return res.status(400).json({
+        success: false,
+        message: "Target URL does not return an image",
+      });
+    }
+
     res.set("Content-Type", contentType);
-    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Origin", req.headers.origin || "*");
+    res.set("X-Content-Type-Options", "nosniff");
     res.send(response.data);
   } catch (error) {
     console.error("Proxy error:", error.message, "URL:", imageUrl);
-    res.status(500).send("Error fetching image");
+    res.status(500).json({ success: false, message: "Error fetching image" });
   }
 });
 

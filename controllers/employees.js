@@ -1566,29 +1566,39 @@ exports.deleteDocument = async (req, res) => {
 // @access  Private
 exports.getDocument = async (req, res) => {
   try {
-    const { filename } = req.params;
+    const rawFilename = req.params.filename;
 
-    if (!filename) {
+    if (!rawFilename || typeof rawFilename !== "string") {
       return res
         .status(400)
         .json({ success: false, message: "Filename is required" });
     }
 
-    // Primary local uploads path: server/uploads/employees/<filename>
-    const primaryPath = path.join(
-      __dirname,
-      "..",
-      "uploads",
-      "employees",
-      filename,
-    );
+    // Strip directory traversal sequences and take strictly the base filename
+    const filename = path.basename(rawFilename.trim());
 
-    let filePath = null;
-    if (fs.existsSync(primaryPath)) {
-      filePath = primaryPath;
+    // Prohibit suspicious path patterns (null bytes, traversal attempts)
+    if (
+      filename !== rawFilename.trim() ||
+      filename.includes("..") ||
+      filename.includes("\0")
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid filename" });
     }
 
-    if (!filePath) {
+    const baseDir = path.resolve(__dirname, "..", "uploads", "employees");
+    const filePath = path.resolve(baseDir, filename);
+
+    // Verify canonical path resides strictly inside uploads/employees
+    if (!filePath.startsWith(baseDir + path.sep)) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Access denied" });
+    }
+
+    if (!fs.existsSync(filePath)) {
       return res
         .status(404)
         .json({ success: false, message: "Document not found" });
@@ -1602,18 +1612,20 @@ exports.getDocument = async (req, res) => {
     }
 
     const ext = path.extname(filename).toLowerCase();
-    const contentType =
-      ext === ".pdf"
-        ? "application/pdf"
-        : ext === ".jpg" || ext === ".jpeg"
-          ? "image/jpeg"
-          : ext === ".png"
-            ? "image/png"
-            : "application/octet-stream";
+    const mimeTypes = {
+      ".pdf": "application/pdf",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".png": "image/png",
+      ".webp": "image/webp",
+    };
+
+    const contentType = mimeTypes[ext] || "application/octet-stream";
 
     res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Length", stats.size);
-    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Disposition", `inline; filename="${filename.replace(/"/g, "")}"`);
 
     fs.createReadStream(filePath).pipe(res);
   } catch (err) {
@@ -2273,5 +2285,303 @@ exports.getNextOfficialId = async (req, res) => {
   } catch (error) {
     console.error("Error generating next officialId:", error);
     return res.status(500).json({ success: false, message: "Error generating officialId" });
+  }
+};
+
+// @desc    Get or peek next auto-incremented document reference number (07AAJ/HR/{TYPE}/{YEAR}/{SEQ})
+// @route   GET /api/employees/next-doc-ref
+// @access  Private
+exports.getNextDocRef = async (req, res) => {
+  try {
+    const Counter = require("../models/Counter");
+    const type = (req.query.type || "generic").toLowerCase();
+    const year = new Date().getFullYear();
+
+    const docCodeMap = {
+      offer: "OFF",
+      increment: "INC",
+      experience: "EXP",
+      relieving: "REL",
+      termination: "TRM",
+      idcard: "IDC",
+      generic: "DOC"
+    };
+    const code = docCodeMap[type] || type.toUpperCase().slice(0, 3);
+    const key = `doc-ref-${code}-${year}`;
+
+    const counter = await Counter.findOne({ key });
+    const nextSeq = counter ? (counter.seq + 1) : 1;
+    const refNumber = `07AAJ/HR/${code}/${year}/${String(nextSeq).padStart(3, "0")}`;
+
+    return res.status(200).json({
+      success: true,
+      refNumber,
+      code,
+      year,
+      seq: nextSeq
+    });
+  } catch (err) {
+    console.error("Error generating next doc reference number:", err);
+    return res.status(500).json({ success: false, message: "Error generating reference number" });
+  }
+};
+
+// @desc    Commit / increment document reference number
+// @route   POST /api/employees/commit-doc-ref
+// @access  Private
+exports.commitDocRef = async (req, res) => {
+  try {
+    const Counter = require("../models/Counter");
+    const { type = "generic", refNumber } = req.body;
+    const year = new Date().getFullYear();
+
+    const docCodeMap = {
+      offer: "OFF",
+      increment: "INC",
+      experience: "EXP",
+      relieving: "REL",
+      termination: "TRM",
+      idcard: "IDC",
+      generic: "DOC"
+    };
+    const code = docCodeMap[type.toLowerCase()] || type.toUpperCase().slice(0, 3);
+    const key = `doc-ref-${code}-${year}`;
+
+    const numMatch = refNumber ? String(refNumber).match(/(\d+)$/) : null;
+    const parsedSeq = numMatch ? parseInt(numMatch[1], 10) : null;
+
+    let updatedCounter;
+    if (parsedSeq !== null && !isNaN(parsedSeq)) {
+      updatedCounter = await Counter.findOneAndUpdate(
+        { key },
+        { $max: { seq: parsedSeq } },
+        { new: true, upsert: true }
+      );
+    } else {
+      updatedCounter = await Counter.findOneAndUpdate(
+        { key },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      );
+    }
+
+    const nextSeq = updatedCounter.seq + 1;
+    const nextRefNumber = `07AAJ/HR/${code}/${year}/${String(nextSeq).padStart(3, "0")}`;
+
+    return res.status(200).json({
+      success: true,
+      currentSeq: updatedCounter.seq,
+      nextSeq,
+      nextRefNumber
+    });
+  } catch (err) {
+    console.error("Error committing doc reference:", err);
+    return res.status(500).json({ success: false, message: "Error committing reference number" });
+  }
+};
+
+// @desc    Save generated letter PDF directly to employee documents vault
+// @route   POST /api/employees/:id/save-letter-vault
+// @access  Private (Admin, HR, Manager)
+exports.saveGeneratedLetterToVault = async (req, res) => {
+  try {
+    const { letterType, pdfBase64, fileName, refNumber } = req.body;
+    if (!pdfBase64) {
+      return res.status(400).json({ success: false, message: "PDF data is required" });
+    }
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({ success: false, message: "Employee not found" });
+    }
+
+    // Strip data URI scheme prefix (e.g. data:application/pdf;filename=...;base64,) if present
+    const rawBase64 = pdfBase64.includes(",") ? pdfBase64.split(",")[1] : pdfBase64;
+    const pdfBuffer = Buffer.from(rawBase64.trim(), "base64");
+
+    const sanitizedType = (letterType || "generatedDocument").replace(/\s+/g, "");
+    const fileStorage = require("../services/fileStorageService");
+    const safeFilename = fileName || `${sanitizedType}_${Date.now()}.pdf`;
+
+    const fileInfo = await fileStorage.saveEmployeeDoc({
+      buffer: pdfBuffer,
+      originalname: safeFilename,
+      mimetype: "application/pdf"
+    });
+
+    if (!employee.documents) employee.documents = {};
+    const docKey = `${letterType.toLowerCase()}Letter`;
+    employee.documents[docKey] = fileInfo;
+    employee.markModified("documents");
+    await employee.save();
+
+    // Increment counter if refNumber was provided
+    if (refNumber && letterType) {
+      try {
+        const Counter = require("../models/Counter");
+        const docCodeMap = { offer: "OFF", increment: "INC", experience: "EXP", relieving: "REL", termination: "TRM", idcard: "IDC" };
+        const code = docCodeMap[(letterType || "").toLowerCase()] || "DOC";
+        const year = new Date().getFullYear();
+        const numMatch = String(refNumber).match(/(\d+)$/);
+        const parsedSeq = numMatch ? parseInt(numMatch[1], 10) : null;
+        if (parsedSeq !== null && !isNaN(parsedSeq)) {
+          await Counter.findOneAndUpdate(
+            { key: `doc-ref-${code}-${year}` },
+            { $max: { seq: parsedSeq } },
+            { upsert: true }
+          );
+        } else {
+          await Counter.findOneAndUpdate(
+            { key: `doc-ref-${code}-${year}` },
+            { $inc: { seq: 1 } },
+            { upsert: true }
+          );
+        }
+      } catch (cntErr) {
+        console.error("Counter increment warning:", cntErr);
+      }
+    }
+
+    // Get next ref sequence for immediate client sync
+    let nextRefNumber = null;
+    try {
+      const Counter = require("../models/Counter");
+      const docCodeMap = { offer: "OFF", increment: "INC", experience: "EXP", relieving: "REL", termination: "TRM", idcard: "IDC" };
+      const code = docCodeMap[(letterType || "").toLowerCase()] || "DOC";
+      const year = new Date().getFullYear();
+      const updated = await Counter.findOne({ key: `doc-ref-${code}-${year}` });
+      if (updated) {
+        nextRefNumber = `07AAJ/HR/${code}/${year}/${String(updated.seq + 1).padStart(3, "0")}`;
+      }
+    } catch (_) {}
+
+    return res.status(200).json({
+      success: true,
+      message: "Letter successfully saved to Employee Document Vault",
+      docKey,
+      fileInfo,
+      nextRefNumber
+    });
+  } catch (err) {
+    console.error("Error saving letter to vault:", err);
+    return res.status(500).json({ success: false, message: err.message || "Failed to save letter to vault" });
+  }
+};
+
+// @desc    Send generated HR document/letter to employee via email
+// @route   POST /api/employees/:id/send-document
+// @access  Private (Admin, HR, Manager)
+exports.sendDocumentToEmployee = async (req, res) => {
+  try {
+    const { recipientEmail, letterType, pdfBase64, fileName, customMessage, refNumber } = req.body;
+
+    if (!recipientEmail) {
+      return res.status(400).json({ success: false, message: "Recipient email is required" });
+    }
+    if (!pdfBase64) {
+      return res.status(400).json({ success: false, message: "PDF document data is required" });
+    }
+
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({ success: false, message: "Employee not found" });
+    }
+
+    // Strip data URI scheme prefix (e.g. data:application/pdf;filename=...;base64,) if present
+    const rawBase64 = pdfBase64.includes(",") ? pdfBase64.split(",")[1] : pdfBase64;
+    const pdfBuffer = Buffer.from(rawBase64.trim(), "base64");
+
+    const documentTitle = letterType || "Official HR Document";
+    const subject = `Official ${documentTitle} ${refNumber ? `(${refNumber}) ` : ""}- Traincape Technology Pvt. Ltd.`;
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+        <div style="text-align: center; margin-bottom: 24px; border-bottom: 2px solid #3b82f6; padding-bottom: 16px;">
+          <h2 style="color: #1e3a8a; margin: 0; font-size: 20px;">Traincape Technology Pvt. Ltd.</h2>
+          <p style="color: #64748b; font-size: 13px; margin: 4px 0 0 0;">Human Resources & Personnel Operations</p>
+          ${refNumber ? `<p style="color: #2563eb; font-size: 11px; font-weight: bold; margin: 6px 0 0 0; letter-spacing: 0.5px;">REF: ${refNumber}</p>` : ""}
+        </div>
+        
+        <p style="font-size: 15px; color: #1e293b;">Dear <b>${employee.fullName}</b>,</p>
+        
+        <p style="font-size: 14px; color: #334155; line-height: 1.6;">
+          Please find attached your official <b>${documentTitle}</b> issued by Traincape Technology Pvt. Ltd.
+        </p>
+        
+        ${customMessage ? `<div style="font-size: 14px; color: #1e293b; background: #f0fdf4; padding: 14px; border-left: 4px solid #22c55e; border-radius: 6px; margin: 16px 0;">${customMessage}</div>` : ""}
+        
+        <p style="font-size: 14px; color: #334155; line-height: 1.6;">
+          Please retain this document for your official employment records and future reference. If you have any inquiries, you may contact the HR operations department.
+        </p>
+        
+        <div style="margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 16px; font-size: 12px; color: #64748b;">
+          <p style="margin: 0; font-weight: bold; color: #0f172a;">Traincape Technology Pvt. Ltd.</p>
+          <p style="margin: 2px 0 0 0;">HR Operations & Administration</p>
+          <p style="margin: 2px 0 0 0; color: #94a3b8;">This is an officially dispatched corporate communication.</p>
+        </div>
+      </div>
+    `;
+
+    const { sendEmail } = require("../config/nodemailer");
+    await sendEmail({
+      email: recipientEmail,
+      subject,
+      html,
+      attachments: [
+        {
+          filename: fileName || `${(letterType || "document").toLowerCase()}_${employee.fullName.replace(/\s+/g, "_")}.pdf`,
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    });
+
+    // Increment counter if refNumber was provided
+    if (refNumber && letterType) {
+      try {
+        const Counter = require("../models/Counter");
+        const docCodeMap = { offer: "OFF", increment: "INC", experience: "EXP", relieving: "REL", termination: "TRM", idcard: "IDC" };
+        const code = docCodeMap[letterType.toLowerCase()] || "DOC";
+        const year = new Date().getFullYear();
+        const numMatch = String(refNumber).match(/(\d+)$/);
+        const parsedSeq = numMatch ? parseInt(numMatch[1], 10) : null;
+        if (parsedSeq !== null && !isNaN(parsedSeq)) {
+          await Counter.findOneAndUpdate(
+            { key: `doc-ref-${code}-${year}` },
+            { $max: { seq: parsedSeq } },
+            { upsert: true }
+          );
+        } else {
+          await Counter.findOneAndUpdate(
+            { key: `doc-ref-${code}-${year}` },
+            { $inc: { seq: 1 } },
+            { upsert: true }
+          );
+        }
+      } catch (cntErr) {
+        console.error("Counter increment warning:", cntErr);
+      }
+    }
+
+    // Get next ref sequence for immediate client sync
+    let nextRefNumber = null;
+    try {
+      const Counter = require("../models/Counter");
+      const docCodeMap = { offer: "OFF", increment: "INC", experience: "EXP", relieving: "REL", termination: "TRM", idcard: "IDC" };
+      const code = docCodeMap[(letterType || "").toLowerCase()] || "DOC";
+      const year = new Date().getFullYear();
+      const updated = await Counter.findOne({ key: `doc-ref-${code}-${year}` });
+      if (updated) {
+        nextRefNumber = `07AAJ/HR/${code}/${year}/${String(updated.seq + 1).padStart(3, "0")}`;
+      }
+    } catch (_) {}
+
+    return res.status(200).json({
+      success: true,
+      message: `Document successfully dispatched to ${recipientEmail}`,
+      nextRefNumber
+    });
+  } catch (error) {
+    console.error("Error sending document to employee:", error);
+    return res.status(500).json({ success: false, message: error.message || "Failed to send email" });
   }
 };

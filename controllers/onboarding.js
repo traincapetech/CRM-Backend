@@ -494,8 +494,8 @@ exports.finalizeOnboarding = async (req, res) => {
       // 3. Create Employee record (PII encrypted by pre('save'))
       const employeeData = {
         fullName: invite.fullName,
-        email: officialEmail.toLowerCase(),
-        officialEmail: officialEmail.toLowerCase(),
+        email: (invite.personalEmail || officialEmail).toLowerCase().trim(),
+        officialEmail: officialEmail.toLowerCase().trim(),
         phoneNumber: invite.phoneNumber,
         department: invite.department._id || invite.department,
         role: invite.role._id || invite.role,
