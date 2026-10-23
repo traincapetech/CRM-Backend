@@ -797,3 +797,53 @@ exports.checkPendingAssetsForExit = async (req, res) => {
     res.status(500).json({ success: false, message: "Server Error" });
   }
 };
+
+// @desc    Delete Asset Record
+// @route   DELETE /api/assets/:id
+// @access  Private (Admin only)
+exports.deleteAsset = async (req, res) => {
+  try {
+    const asset = await Asset.findById(req.params.id);
+    if (!asset) {
+      return res.status(404).json({ success: false, message: "Asset not found" });
+    }
+
+    if (asset.status === "ASSIGNED") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete an assigned asset. Please unassign or return it first.",
+      });
+    }
+
+    // Clean up associated assignments and maintenance history
+    await AssetAssignment.deleteMany({ assetId: asset._id });
+    await AssetMaintenance.deleteMany({ assetId: asset._id });
+    await Asset.findByIdAndDelete(req.params.id);
+
+    try {
+      await Log.create({
+        action: "ASSET_DELETED",
+        performedBy: req.user.id,
+        affectedResource: "Asset",
+        resourceId: asset._id,
+        details: {
+          assetName: asset.name,
+          assetCode: asset.assetId,
+          deletedBy: req.user.id,
+        },
+        status: "SUCCESS",
+      });
+    } catch (logErr) {
+      console.warn("Audit log warning (ASSET_DELETED):", logErr.message);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Asset '${asset.name}' (${asset.assetId}) deleted successfully.`,
+    });
+  } catch (err) {
+    console.error("Error deleting asset:", err);
+    res.status(500).json({ success: false, message: err.message || "Failed to delete asset" });
+  }
+};
+
