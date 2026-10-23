@@ -319,14 +319,28 @@ exports.createAsset = async (req, res) => {
     });
 
     // Write Audit Event
-    await Log.create({
-      action: "ASSET_CREATED",
-      performedBy: req.user.id,
-      affectedResource: "Asset",
-      resourceId: asset._id,
-      newState: asset.toObject(),
-      status: "SUCCESS",
-    });
+    try {
+      await Log.create({
+        action: "ASSET_CREATED",
+        performedBy: req.user.id,
+        affectedResource: "Asset",
+        resourceId: asset._id,
+        details: {
+          assetName: asset.name,
+          assetCode: asset.assetId,
+          category: asset.category,
+          brand: asset.brand,
+          model: asset.model,
+          serialNumber: asset.serialNumber,
+          condition: asset.condition,
+          officeLocation: asset.officeLocation,
+        },
+        newState: asset.toObject(),
+        status: "SUCCESS",
+      });
+    } catch (logErr) {
+      console.warn("Audit log warning (ASSET_CREATED):", logErr.message);
+    }
 
     res.status(201).json({
       success: true,
@@ -377,15 +391,24 @@ exports.updateAsset = async (req, res) => {
     await asset.save();
 
     // Audit log
-    await Log.create({
-      action: "ASSET_UPDATED",
-      performedBy: req.user.id,
-      affectedResource: "Asset",
-      resourceId: asset._id,
-      previousState,
-      newState: asset.toObject(),
-      status: "SUCCESS",
-    });
+    try {
+      await Log.create({
+        action: "ASSET_UPDATED",
+        performedBy: req.user.id,
+        affectedResource: "Asset",
+        resourceId: asset._id,
+        details: {
+          assetName: asset.name,
+          assetCode: asset.assetId,
+          updatedFields: Object.keys(req.body),
+        },
+        previousState,
+        newState: asset.toObject(),
+        status: "SUCCESS",
+      });
+    } catch (logErr) {
+      console.warn("Audit log warning (ASSET_UPDATED):", logErr.message);
+    }
 
     res.status(200).json({
       success: true,
