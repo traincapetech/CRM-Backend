@@ -60,7 +60,7 @@ const getBrevoApiKey = () => {
   return rawKey.trim();
 };
 
-const sendViaBrevo = async ({ to, subject, text, html }) => {
+const sendViaBrevo = async ({ to, subject, text, html, attachments }) => {
   const apiKey = getBrevoApiKey();
   if (!apiKey) return false;
 
@@ -85,6 +85,24 @@ const sendViaBrevo = async ({ to, subject, text, html }) => {
     htmlContent: html || textContent
   };
 
+  // Attachments for Brevo
+  if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+    payload.attachment = attachments.map(att => {
+      let contentBase64 = '';
+      if (Buffer.isBuffer(att.content)) {
+        contentBase64 = att.content.toString('base64');
+      } else if (typeof att.content === 'string') {
+        contentBase64 = att.content.includes(',')
+          ? att.content.split(',')[1].trim()
+          : att.content.trim();
+      }
+      return {
+        name: att.filename || 'attachment.pdf',
+        content: contentBase64
+      };
+    });
+  }
+
   await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
     headers: {
       'api-key': apiKey,
@@ -96,12 +114,37 @@ const sendViaBrevo = async ({ to, subject, text, html }) => {
   return true;
 };
 
-const sendEmail = async (to, subject, text, html, retries = 2) => {
+const sendEmail = async (toOrOptions, subjectArg, textArg, htmlArg, retriesArg = 2, attachmentsArg = []) => {
+  let to, subject, text, html, retries, attachments;
+
+  // Support both object parameter: sendEmail({ to, email, subject, text, html, attachments })
+  // and positional parameters: sendEmail(to, subject, text, html, retries, attachments)
+  if (typeof toOrOptions === 'object' && toOrOptions !== null && !Array.isArray(toOrOptions)) {
+    to = toOrOptions.to || toOrOptions.email;
+    subject = toOrOptions.subject;
+    text = toOrOptions.text || toOrOptions.message || '';
+    html = toOrOptions.html || toOrOptions.htmlContent || '';
+    retries = typeof toOrOptions.retries === 'number' ? toOrOptions.retries : 2;
+    attachments = toOrOptions.attachments || [];
+  } else {
+    to = toOrOptions;
+    subject = subjectArg;
+    text = textArg || '';
+    html = htmlArg || '';
+    retries = typeof retriesArg === 'number' ? retriesArg : 2;
+    attachments = attachmentsArg || [];
+  }
+
+  if (typeof to === 'string') {
+    to = to.trim();
+  }
+
   console.log('Attempting to send email:', {
     to,
     subject,
     from: process.env.FROM_EMAIL || process.env.EMAIL_USER,
     retries: retries,
+    hasAttachments: attachments && attachments.length > 0,
     provider: getBrevoApiKey() ? 'brevo' : 'smtp',
     smtpConfig: {
       host: 'smtp.hostinger.com',
@@ -112,7 +155,7 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
 
   if (getBrevoApiKey()) {
     try {
-      await sendViaBrevo({ to, subject, text, html });
+      await sendViaBrevo({ to, subject, text, html, attachments });
       console.log('✅ Email sent successfully via Brevo');
       return true;
     } catch (error) {
@@ -139,7 +182,8 @@ const sendEmail = async (to, subject, text, html, retries = 2) => {
         to,
         subject,
         text,
-        html
+        html,
+        attachments
       };
 
       const smtpConfig = smtpConfigs[attempt % smtpConfigs.length];

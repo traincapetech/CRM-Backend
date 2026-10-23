@@ -22,11 +22,22 @@ function updateSupervisorWatchingStatus(io) {
 }
 
 module.exports = function screenShareSocketHandler(io, socket) {
-  // 1. Supervisor joins the monitoring room
+  // 1. Supervisor joins the monitoring room (Strictly authorized roles only)
   socket.on("join_screen_monitors", () => {
+    const allowedSupervisorRoles = ["Admin", "Super Admin", "Manager", "IT Manager", "HR"];
+    const userRole = socket.user?.role;
+
+    if (!socket.user || !allowedSupervisorRoles.includes(userRole)) {
+      console.warn(`🚫 [SCREEN MONITOR] Unauthorized join attempt by socket ${socket.id} (user: ${socket.user?.email || "anonymous"}, role: ${userRole})`);
+      socket.emit("screen_monitor_error", {
+        message: "Unauthorized: Only Admins and Supervisors can access screen monitors",
+      });
+      return;
+    }
+
     socket.join("supervisors_room");
     socket.isSupervisor = true;
-    console.log(`📺 [SCREEN MONITOR] Supervisor joined monitors room: ${socket.id}`);
+    console.log(`📺 [SCREEN MONITOR] Supervisor joined monitors room: ${socket.user?.fullName} (${socket.id})`);
 
     // Send current list of active streaming employees with their last frame immediately
     const streamsList = Array.from(activeScreenStreams.values());
@@ -118,6 +129,16 @@ module.exports = function screenShareSocketHandler(io, socket) {
   socket.on("remote_control_action", (actionData) => {
     if (!actionData || !actionData.targetUserId) return;
 
+    // Strict security check: Only verified Admin, Manager, or IT Manager can send remote actions
+    const allowedControllerRoles = ["Admin", "Super Admin", "Manager", "IT Manager"];
+    if (!socket.user || !allowedControllerRoles.includes(socket.user.role)) {
+      console.error(`🚨 [SECURITY ALERT] Unauthorized remote control action attempt blocked from socket ${socket.id} (user: ${socket.user?.email || "anonymous"})`);
+      socket.emit("remote_control_error", {
+        message: "Forbidden: You do not have permission to execute remote control actions",
+      });
+      return;
+    }
+
     const targetId = actionData.targetUserId.toString();
     const targetStream = activeScreenStreams.get(targetId);
 
@@ -125,7 +146,8 @@ module.exports = function screenShareSocketHandler(io, socket) {
       // Send directly to the employee's agent socket
       io.to(targetStream.socketId).emit("execute_remote_action", {
         ...actionData,
-        supervisorId: socket.userId || "supervisor",
+        supervisorId: socket.userId || socket.user._id.toString(),
+        supervisorName: socket.user?.fullName || "Supervisor",
         timestamp: Date.now(),
       });
     }

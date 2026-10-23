@@ -218,18 +218,22 @@ const isIPAllowed = async (ip) => {
 const ipFilter = async (req, res, next) => {
   if (process.env.ENABLE_IP_FILTER !== "true") return next();
 
-  // Bypasses
-  const bypassPaths = ["/health", "/api/health", "/api/public/health", "/api/logs"];
-  if (bypassPaths.some(hp => req.path === hp || req.originalUrl === hp)) {
+  // Bypasses - strict path matching (never check raw query strings to prevent ?bypass= injections)
+  const requestPath = (req.path || "").toLowerCase();
+
+  const exactBypasses = ["/health", "/api/health", "/api/public/health", "/api/logs"];
+  if (exactBypasses.includes(requestPath)) {
     return next();
   }
 
-  // Public Onboarding Portal Bypass
-  if (req.originalUrl.includes("/api/onboarding/portal") || req.path.includes("/api/onboarding/portal")) {
-    return next();
-  }
-
-  if (req.originalUrl.includes("/api/biometric/webhook") || req.path.includes("/api/biometric/webhook")) {
+  // Strict prefix bypasses for public portals and webhooks
+  if (
+    requestPath.startsWith("/api/onboarding/portal") ||
+    requestPath.startsWith("/api/public") ||
+    requestPath === "/api/biometric/webhook" ||
+    requestPath.startsWith("/api/paytm/callback") ||
+    requestPath.startsWith("/api/stripe-invoices/webhook")
+  ) {
     return next();
   }
 

@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { protect } = require("../middleware/auth");
+const { protect, authorize } = require("../middleware/auth");
 const fileStorage = require("../services/fileStorageService");
 const {
   register,
@@ -99,15 +99,24 @@ router
     updateProfilePicture,
   );
 
-// Admin only routes
-router.route("/users").get(protect, getAllUsers).post(protect, createUser);
+// Admin and Manager user management routes
+router
+  .route("/users")
+  .get(protect, authorize("Admin", "Manager"), getAllUsers)
+  .post(protect, authorize("Admin", "Manager"), createUser);
 
-router.route("/users/:id").put(protect, updateUser).delete(protect, deleteUser);
+router
+  .route("/users/:id")
+  .put(protect, authorize("Admin", "Manager"), updateUser)
+  .delete(protect, authorize("Admin", "Manager"), deleteUser);
 
-router.route("/users/:id/toggle-active").put(protect, toggleUserActive);
+router
+  .route("/users/:id/toggle-active")
+  .put(protect, authorize("Admin", "Manager"), toggleUserActive);
 
 router.route("/users/with-documents").post(
   protect,
+  authorize("Admin", "Manager"),
   fileStorage.uploadMiddleware.fields([
     { name: "photograph", maxCount: 1 },
     { name: "tenthMarksheet", maxCount: 1 },
@@ -125,6 +134,7 @@ router.route("/users/with-documents").post(
 
 router.route("/users/:id/with-documents").put(
   protect,
+  authorize("Admin", "Manager"),
   fileStorage.uploadMiddleware.fields([
     { name: "photograph", maxCount: 1 },
     { name: "tenthMarksheet", maxCount: 1 },

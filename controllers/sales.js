@@ -520,6 +520,32 @@ exports.updateSale = async (req, res) => {
 
     // Enforce 100% payment on Completed status
     const finalStatus = req.body.status !== undefined ? req.body.status : sale.status;
+
+    // SECURITY: Once a sale is Completed, only Admin or Manager can re-open or change its status (e.g. to Pending or Cancelled)
+    const allowedReopenRoles = ["Admin", "Super Admin", "Manager", "Sales Manager"];
+    if (originalStatus === "Completed" && finalStatus !== "Completed" && !allowedReopenRoles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to change the status of a Completed sale. Only Admin or Manager can re-open completed sales.",
+      });
+    }
+
+    // SECURITY: Non-managers cannot alter totalCost or tokenAmount on an already Completed sale
+    if (originalStatus === "Completed" && !allowedReopenRoles.includes(req.user.role)) {
+      if (req.body.totalCost !== undefined && parseFloat(req.body.totalCost) !== sale.totalCost) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to modify the total cost of a Completed sale. Only Admin or Manager can alter financial values of completed sales.",
+        });
+      }
+      if (req.body.tokenAmount !== undefined && parseFloat(req.body.tokenAmount) !== sale.tokenAmount) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to modify payment amounts on a Completed sale.",
+        });
+      }
+    }
+
     if (finalStatus === "Completed") {
       req.body.tokenAmount = req.body.totalCost !== undefined ? parseFloat(req.body.totalCost) : sale.totalCost;
       req.body.pending = false;
@@ -832,23 +858,12 @@ exports.deleteSale = async (req, res) => {
       });
     }
 
-    // Check permissions - only sales person who created it, manager, or admin can delete
-    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
-      const salesPersonId =
-        sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
-      const userId = req.user._id?.toString() || req.user.id?.toString();
-
-      if (salesPersonId !== userId) {
-        return res.status(403).json({
-          success: false,
-          message: "Not authorized to delete this sale",
-        });
-      }
-    } else if (req.user.role === "Lead Person") {
-      // Lead persons cannot delete sales
+    // SECURITY: Strictly restrict sale deletion to Admin or Manager roles only
+    const allowedRoles = ["Admin", "Super Admin", "Manager", "Sales Manager"];
+    if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: "Lead persons cannot delete sales",
+        message: "Not authorized to delete sale records. Only Admin or Manager can delete sales.",
       });
     }
 

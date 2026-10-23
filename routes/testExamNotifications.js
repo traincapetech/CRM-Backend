@@ -3,6 +3,19 @@ const router = express.Router();
 const Task = require('../models/Task');
 const User = require('../models/User');
 const { checkUpcomingExams } = require('../utils/examNotificationService');
+const { protect, authorize } = require('../middleware/auth');
+
+// In production, disable test exam endpoints entirely
+router.use((req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ success: false, message: 'Endpoint not available in production' });
+  }
+  next();
+});
+
+// Require Admin authorization for test diagnostic endpoints
+router.use(protect);
+router.use(authorize('Admin'));
 
 // @route   POST /api/test/create-exam
 // @desc    Create a test exam task for notification testing

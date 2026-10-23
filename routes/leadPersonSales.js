@@ -21,6 +21,6 @@ router.route('/')
 router.route('/:id')
   .get(authorize('Lead Person', 'Manager', 'Admin'), getLeadPersonSale)
   .put(authorize('Lead Person', 'Manager', 'Admin'), updateLeadPersonSale)
-  .delete(authorize('Lead Person', 'Manager', 'Admin'), deleteLeadPersonSale);
+  .delete(authorize('Manager', 'Admin', 'Super Admin'), deleteLeadPersonSale);
 
 module.exports = router; 

@@ -127,7 +127,7 @@ router.get('/count', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'
 router.route('/:id')
   .get(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSale)
   .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/sales*']), updateSale)
-  .delete(authorize('Sales Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/sales*']), deleteSale);
+  .delete(authorize('Manager', 'Admin', 'Super Admin', 'Sales Manager'), invalidateCache(['cache:/api/sales*']), deleteSale);
 
 // Reports routes
 router.get('/reports/course-analysis', protect, authorize('Admin', 'Manager'), async (req, res) => {
