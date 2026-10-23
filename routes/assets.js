@@ -20,13 +20,13 @@ const {
 
 // Category Routes
 router.get("/categories", protect, getCategories);
-router.post("/categories", protect, authorize("Admin", "HR"), createCategory);
+router.post("/categories", protect, authorize("Admin", "HR", "IT Manager"), createCategory);
 
 // Dashboard Route
 router.get(
   "/dashboard",
   protect,
-  authorize("Admin", "HR", "Manager"),
+  authorize("Admin", "HR", "Manager", "IT Manager"),
   getAssetDashboardStats
 );
 
@@ -34,7 +34,7 @@ router.get(
 router.get(
   "/employee/:employeeId/pending",
   protect,
-  authorize("Admin", "HR"),
+  authorize("Admin", "HR", "IT Manager"),
   checkPendingAssetsForExit
 );
 router.get("/employee/:employeeId", protect, getEmployeeAssets);
@@ -43,7 +43,7 @@ router.get("/employee/:employeeId", protect, getEmployeeAssets);
 router.put(
   "/maintenance/:maintenanceId",
   protect,
-  authorize("Admin", "HR"),
+  authorize("Admin", "HR", "IT Manager"),
   updateMaintenance
 );
 
@@ -51,21 +51,21 @@ router.put(
 router
   .route("/")
   .get(protect, getAssets)
-  .post(protect, authorize("Admin", "HR"), createAsset);
+  .post(protect, authorize("Admin", "HR", "IT Manager"), createAsset);
 
 // Individual Asset Routes
 router
   .route("/:id")
   .get(protect, getAssetById)
-  .put(protect, authorize("Admin", "HR"), updateAsset)
+  .put(protect, authorize("Admin", "HR", "IT Manager"), updateAsset)
   .delete(protect, authorize("Admin"), deleteAsset);
 
-router.post("/:id/assign", protect, authorize("Admin", "HR"), assignAsset);
-router.post("/:id/return", protect, authorize("Admin", "HR"), returnAsset);
+router.post("/:id/assign", protect, authorize("Admin", "HR", "IT Manager"), assignAsset);
+router.post("/:id/return", protect, authorize("Admin", "HR", "IT Manager"), returnAsset);
 router.post(
   "/:id/maintenance",
   protect,
-  authorize("Admin", "HR"),
+  authorize("Admin", "HR", "IT Manager"),
   addMaintenance
 );
 
