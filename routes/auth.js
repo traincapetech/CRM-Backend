@@ -99,20 +99,20 @@ router
     updateProfilePicture,
   );
 
-// Admin and Manager user management routes
+// Admin, Manager, and IT Manager user management routes
 router
   .route("/users")
-  .get(protect, authorize("Admin", "Manager"), getAllUsers)
-  .post(protect, authorize("Admin", "Manager"), createUser);
+  .get(protect, authorize("Admin", "Manager", "IT Manager", "HR"), getAllUsers)
+  .post(protect, authorize("Admin", "Manager", "IT Manager"), createUser);
 
 router
   .route("/users/:id")
-  .put(protect, authorize("Admin", "Manager"), updateUser)
+  .put(protect, authorize("Admin", "Manager", "IT Manager"), updateUser)
   .delete(protect, authorize("Admin", "Manager"), deleteUser);
 
 router
   .route("/users/:id/toggle-active")
-  .put(protect, authorize("Admin", "Manager"), toggleUserActive);
+  .put(protect, authorize("Admin", "Manager", "IT Manager"), toggleUserActive);
 
 router.route("/users/with-documents").post(
   protect,

@@ -2087,11 +2087,17 @@ exports.get360Profile = async (req, res) => {
     }
 
     const requestingRole = req.user.role;
-    const isAdminOrHR = ["Admin", "HR"].includes(requestingRole);
+    const isAdminOrHR = ["Admin", "HR", "IT Manager", "SuperAdmin"].includes(requestingRole);
     const isOwnProfile = employee.userId?.toString() === req.user.id;
-    const isDirectManager =
-      requestingRole === "Manager" &&
-      employee.reportingManager?._id?.toString() === req.user.id;
+    
+    // Check if requesting user is the employee's direct manager (by employee record or user ID)
+    let isDirectManager = false;
+    if (["Manager", "IT Manager", "Sales Manager", "Team Leader", "Team Lead", "Branch Partner"].includes(requestingRole)) {
+      const requestingEmp = await Employee.findOne({ userId: req.user.id }).select("_id").lean();
+      isDirectManager =
+        (requestingEmp && employee.reportingManager?._id?.toString() === requestingEmp._id.toString()) ||
+        employee.reportingManager?._id?.toString() === req.user.id;
+    }
 
     // Authorization gate
     if (!isAdminOrHR && !isOwnProfile && !isDirectManager) {
