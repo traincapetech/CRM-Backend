@@ -52,6 +52,11 @@ exports.getEmployees = async (req, res) => {
     // Loop over removeFields and delete them from reqQuery
     removeFields.forEach((param) => delete reqQuery[param]);
 
+    // Handle case-insensitivity for status (e.g. 'active' -> 'ACTIVE')
+    if (reqQuery.status && typeof reqQuery.status === "string") {
+      reqQuery.status = reqQuery.status.toUpperCase();
+    }
+
     // Create query string
     let queryStr = JSON.stringify(reqQuery);
 

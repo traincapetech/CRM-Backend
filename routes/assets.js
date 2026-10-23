@@ -15,6 +15,7 @@ const {
   createCategory,
   getEmployeeAssets,
   checkPendingAssetsForExit,
+  deleteAsset,
 } = require("../controllers/assetsController");
 
 // Category Routes
@@ -56,7 +57,8 @@ router
 router
   .route("/:id")
   .get(protect, getAssetById)
-  .put(protect, authorize("Admin", "HR"), updateAsset);
+  .put(protect, authorize("Admin", "HR"), updateAsset)
+  .delete(protect, authorize("Admin"), deleteAsset);
 
 router.post("/:id/assign", protect, authorize("Admin", "HR"), assignAsset);
 router.post("/:id/return", protect, authorize("Admin", "HR"), returnAsset);
