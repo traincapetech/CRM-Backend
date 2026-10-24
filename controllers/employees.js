@@ -2405,6 +2405,25 @@ exports.saveGeneratedLetterToVault = async (req, res) => {
       return res.status(404).json({ success: false, message: "Employee not found" });
     }
 
+    // Exit Asset Gate: Prevent generating/saving Relieving Letter if employee has unreturned assets
+    if ((letterType || "").toLowerCase() === "relieving" && !req.body.bypassAssetClearance) {
+      const Asset = require("../models/Asset");
+      const pendingAssets = await Asset.find({
+        currentAssignee: employee._id,
+        status: "ASSIGNED",
+      }).select("name assetId brand model serialNumber").lean();
+
+      if (pendingAssets.length > 0) {
+        return res.status(400).json({
+          success: false,
+          isAssetBlocked: true,
+          pendingCount: pendingAssets.length,
+          pendingAssets,
+          message: `Exit Asset Gate Block: Employee still holds ${pendingAssets.length} unreturned company asset(s) (${pendingAssets.map(a => `${a.name} [${a.assetId}]`).join(", ")}). All equipment must be checked in before Relieving Letter can be issued.`,
+        });
+      }
+    }
+
     // Strip data URI scheme prefix (e.g. data:application/pdf;filename=...;base64,) if present
     const rawBase64 = pdfBase64.includes(",") ? pdfBase64.split(",")[1] : pdfBase64;
     const pdfBuffer = Buffer.from(rawBase64.trim(), "base64");
@@ -2495,6 +2514,25 @@ exports.sendDocumentToEmployee = async (req, res) => {
     const employee = await Employee.findById(req.params.id);
     if (!employee) {
       return res.status(404).json({ success: false, message: "Employee not found" });
+    }
+
+    // Exit Asset Gate: Prevent sending Relieving Letter if employee has unreturned assets
+    if ((letterType || "").toLowerCase() === "relieving" && !req.body.bypassAssetClearance) {
+      const Asset = require("../models/Asset");
+      const pendingAssets = await Asset.find({
+        currentAssignee: employee._id,
+        status: "ASSIGNED",
+      }).select("name assetId brand model serialNumber").lean();
+
+      if (pendingAssets.length > 0) {
+        return res.status(400).json({
+          success: false,
+          isAssetBlocked: true,
+          pendingCount: pendingAssets.length,
+          pendingAssets,
+          message: `Exit Asset Gate Block: Employee still holds ${pendingAssets.length} unreturned company asset(s) (${pendingAssets.map(a => `${a.name} [${a.assetId}]`).join(", ")}). All equipment must be checked in before Relieving Letter can be issued.`,
+        });
+      }
     }
 
     // Strip data URI scheme prefix (e.g. data:application/pdf;filename=...;base64,) if present

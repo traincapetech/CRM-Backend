@@ -65,6 +65,25 @@ const assetAssignmentSchema = new mongoose.Schema(
       default: "ACTIVE",
       index: true,
     },
+    // Digital Handover Acknowledgement
+    acknowledgementStatus: {
+      type: String,
+      enum: ["PENDING_SIGNATURE", "ACKNOWLEDGED", "REJECTED"],
+      default: "PENDING_SIGNATURE",
+      index: true,
+    },
+    acknowledgedAt: {
+      type: Date,
+      default: null,
+    },
+    employeeSignature: {
+      type: String,
+      default: "",
+    },
+    handoverTermsAccepted: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

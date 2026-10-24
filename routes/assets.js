@@ -16,7 +16,15 @@ const {
   getEmployeeAssets,
   checkPendingAssetsForExit,
   deleteAsset,
+  lookupAssetByCode,
+  signAssetHandover,
+  getMyPendingAcknowledgements,
 } = require("../controllers/assetsController");
+
+// Fast QR / Barcode Lookup & Digital Handover
+router.get("/lookup/:code", protect, lookupAssetByCode);
+router.get("/my-pending-acknowledgements", protect, getMyPendingAcknowledgements);
+router.post("/assignment/:assignmentId/sign", protect, signAssetHandover);
 
 // Category Routes
 router.get("/categories", protect, getCategories);
