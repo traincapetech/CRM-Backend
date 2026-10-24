@@ -205,6 +205,23 @@ exports.getAssets = async (req, res) => {
       Asset.countDocuments(query),
     ]);
 
+    // Attach active assignment acknowledgement status for assigned assets
+    const assignedIds = assets.filter((a) => a.status === "ASSIGNED").map((a) => a._id);
+    if (assignedIds.length > 0) {
+      const activeAssignments = await AssetAssignment.find({
+        assetId: { $in: assignedIds },
+        status: "ACTIVE",
+      }).select("assetId acknowledgementStatus acknowledgedAt employeeSignature assignedDate expectedReturnDate").lean();
+
+      const assignMap = new Map();
+      activeAssignments.forEach((item) => assignMap.set(item.assetId.toString(), item));
+      assets.forEach((a) => {
+        if (assignMap.has(a._id.toString())) {
+          a.activeAssignment = assignMap.get(a._id.toString());
+        }
+      });
+    }
+
     res.status(200).json({
       success: true,
       count: assets.length,
@@ -844,6 +861,169 @@ exports.deleteAsset = async (req, res) => {
   } catch (err) {
     console.error("Error deleting asset:", err);
     res.status(500).json({ success: false, message: err.message || "Failed to delete asset" });
+  }
+};
+
+// @desc    Fast QR / Barcode Scan Lookup
+// @route   GET /api/assets/lookup/:code
+// @access  Private (All authenticated)
+exports.lookupAssetByCode = async (req, res) => {
+  try {
+    let rawCode = (req.params.code || "").trim();
+
+    // Check if code is JSON payload from QR tag
+    let searchCode = rawCode;
+    try {
+      if (rawCode.startsWith("{") && rawCode.endsWith("}")) {
+        const parsed = JSON.parse(rawCode);
+        searchCode = parsed.assetId || parsed.id || parsed.serialNumber || rawCode;
+      }
+    } catch {}
+
+    const query = {
+      $or: [
+        { assetId: new RegExp(`^${searchCode}$`, "i") },
+        { serialNumber: new RegExp(`^${searchCode}$`, "i") },
+      ],
+    };
+
+    if (searchCode.match(/^[0-9a-fA-F]{24}$/)) {
+      query.$or.push({ _id: searchCode });
+    }
+
+    const asset = await Asset.findOne(query)
+      .populate("category", "name code icon")
+      .populate("currentAssignee", "fullName email officialEmail department role")
+      .lean();
+
+    if (!asset) {
+      return res.status(404).json({
+        success: false,
+        message: `No asset found matching QR/Barcode '${searchCode}'.`,
+      });
+    }
+
+    // Attach active assignment if assigned
+    let activeAssignment = null;
+    if (asset.status === "ASSIGNED") {
+      activeAssignment = await AssetAssignment.findOne({
+        assetId: asset._id,
+        status: "ACTIVE",
+      })
+        .populate("employeeId", "fullName email officialEmail")
+        .populate("assignedBy", "fullName email")
+        .lean();
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        asset,
+        activeAssignment,
+      },
+    });
+  } catch (err) {
+    console.error("Error in QR asset lookup:", err);
+    res.status(500).json({ success: false, message: "Server error during asset lookup" });
+  }
+};
+
+// @desc    Sign Digital Asset Handover Agreement
+// @route   POST /api/assets/assignment/:assignmentId/sign
+// @access  Private
+exports.signAssetHandover = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+    const { signature, handoverCondition = "GOOD", notes = "" } = req.body;
+
+    const assignment = await AssetAssignment.findById(assignmentId)
+      .populate("assetId")
+      .populate("employeeId");
+
+    if (!assignment) {
+      return res.status(404).json({ success: false, message: "Assignment record not found" });
+    }
+
+    if (assignment.status !== "ACTIVE") {
+      return res.status(400).json({ success: false, message: "This assignment is no longer active." });
+    }
+
+    // Authorization: User must be the assigned employee, or Admin/HR/IT Manager
+    const employeeUserId = assignment.employeeId?.userId?.toString();
+    const isEmployee = employeeUserId && employeeUserId === req.user.id;
+    const isPrivileged = ["Admin", "HR", "IT Manager", "SuperAdmin"].includes(req.user.role);
+
+    if (!isEmployee && !isPrivileged) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to sign this handover agreement.",
+      });
+    }
+
+    assignment.acknowledgementStatus = "ACKNOWLEDGED";
+    assignment.acknowledgedAt = new Date();
+    assignment.employeeSignature = signature || `Acknowledged by ${req.user.name || assignment.employeeId.fullName}`;
+    assignment.handoverTermsAccepted = true;
+    if (notes) assignment.assignmentNotes = (assignment.assignmentNotes ? assignment.assignmentNotes + "\n" : "") + notes;
+    await assignment.save();
+
+    // Log to EmployeeTimeline
+    await EmployeeTimeline.logEvent({
+      employeeId: assignment.employeeId._id,
+      eventType: "ASSET_ACKNOWLEDGED",
+      title: `Asset Handover Signed: ${assignment.assetId?.name || "Equipment"}`,
+      description: `Employee acknowledged receipt in ${handoverCondition} condition and signed the digital handover agreement.`,
+      category: "ASSETS",
+      metadata: {
+        assetId: assignment.assetId?._id,
+        assetCode: assignment.assetId?.assetId,
+        assignmentId: assignment._id,
+      },
+      performedBy: req.user.id,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Asset Handover Agreement signed and acknowledged successfully.",
+      data: assignment,
+    });
+  } catch (err) {
+    console.error("Error signing asset handover:", err);
+    res.status(500).json({ success: false, message: err.message || "Failed to sign handover agreement" });
+  }
+};
+
+// @desc    Get Current User's Pending Asset Handover Acknowledgements
+// @route   GET /api/assets/my-pending-acknowledgements
+// @access  Private
+exports.getMyPendingAcknowledgements = async (req, res) => {
+  try {
+    const employee = await Employee.findOne({
+      $or: [{ userId: req.user.id }, { email: req.user.email }, { officialEmail: req.user.email }],
+    });
+
+    if (!employee) {
+      return res.status(200).json({ success: true, count: 0, data: [] });
+    }
+
+    const pending = await AssetAssignment.find({
+      employeeId: employee._id,
+      status: "ACTIVE",
+      acknowledgementStatus: "PENDING_SIGNATURE",
+    })
+      .populate("assetId", "name assetId brand model serialNumber condition officeLocation")
+      .populate("assignedBy", "fullName email")
+      .sort({ assignedDate: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      count: pending.length,
+      data: pending,
+    });
+  } catch (err) {
+    console.error("Error fetching pending asset acknowledgements:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
