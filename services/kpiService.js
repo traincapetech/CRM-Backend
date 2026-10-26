@@ -27,9 +27,9 @@ class KPIService {
     ]);
 
     const liveOverview = {
-      last7Days: last7DaysAvg,
-      last30Days: last30DaysAvg,
-      last90Days: last90DaysAvg,
+      last7Days: liveRollingAverages.last7Days !== undefined ? liveRollingAverages.last7Days : last7DaysAvg,
+      last30Days: liveRollingAverages.last30Days !== undefined ? liveRollingAverages.last30Days : last30DaysAvg,
+      last90Days: liveRollingAverages.last90Days !== undefined ? liveRollingAverages.last90Days : last90DaysAvg,
       thisMonth: liveRollingAverages.thisMonth || 0,
     };
 
@@ -156,9 +156,16 @@ class KPIService {
     startDate.setHours(0, 0, 0, 0);
     startDate.setDate(startDate.getDate() - (days - 1));
 
+    // Clamp window start date to employee's official joining date
+    const joiningDate = await PerformanceCalculationService.getEmployeeJoiningDate(employeeId);
+    let effectiveStart = startDate;
+    if (joiningDate && joiningDate > effectiveStart) {
+      effectiveStart = joiningDate;
+    }
+
     const records = await DailyPerformanceRecord.find({
       employeeId,
-      date: { $gte: startDate, $lte: endDate }
+      date: { $gte: effectiveStart, $lte: endDate }
     });
 
     if (records.length === 0) return 0;
@@ -252,12 +259,18 @@ class KPIService {
 
         if (isCurrentMonth) {
           // Current Month: Pacing calculation (Actual / Expected Till Today)
+          const joiningDate = await PerformanceCalculationService.getEmployeeJoiningDate(employeeId);
+          let effectiveStart = startOfMonth;
+          if (joiningDate && joiningDate > effectiveStart) {
+            effectiveStart = joiningDate;
+          }
+
           const totalWorkingDays = await PerformanceCalculationService.getWorkingDaysInMonth(year, month, "Sales Person");
           const dailyExpected = totalWorkingDays > 0 ? salesTarget / totalWorkingDays : 0;
           
-          const holidays = await PerformanceCalculationService.fetchHolidays(startOfMonth, calculationEnd);
+          const holidays = await PerformanceCalculationService.fetchHolidays(effectiveStart, calculationEnd);
           const workingDaysPassed = PerformanceCalculationService.getWorkingDays(
-            startOfMonth, 
+            effectiveStart, 
             calculationEnd, 
             holidays.fullDays, 
             holidays.halfDays, 

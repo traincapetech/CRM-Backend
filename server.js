@@ -1,3 +1,6 @@
+// Default the process timezone to IST so day boundaries (performance, attendance) are correct on UTC hosts
+if (!process.env.TZ) process.env.TZ = "Asia/Kolkata";
+
 // Force IPv4 DNS resolution first to prevent ENETUNREACH errors on IPv6-only/restricted environments (e.g. Render)
 const dns = require("dns");
 if (dns && typeof dns.setDefaultResultOrder === "function") {

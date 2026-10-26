@@ -7,6 +7,8 @@ const PIPService = require("../services/pipService");
  * Automated jobs for performance tracking
  */
 
+const CRON_OPTIONS = { timezone: "Asia/Kolkata" };
+
 class PerformanceCronJobs {
   /**
    * Start all cron jobs
@@ -51,7 +53,7 @@ class PerformanceCronJobs {
       } catch (error) {
         console.error("❌ [CRON] Daily Performance Calculation Failed:", error);
       }
-    });
+    }, CRON_OPTIONS);
 
     console.log(
       "📍 Daily Performance Calculation: Scheduled for 12:05 AM daily",
@@ -77,7 +79,7 @@ class PerformanceCronJobs {
       } catch (error) {
         console.error("❌ [CRON] Daily PIP Check Failed:", error);
       }
-    });
+    }, CRON_OPTIONS);
 
     console.log("📍 Daily PIP Check: Scheduled for 1:00 AM daily");
   }
@@ -101,7 +103,7 @@ class PerformanceCronJobs {
       } catch (error) {
         console.error("❌ [CRON] Weekly Performance Summary Failed:", error);
       }
-    });
+    }, CRON_OPTIONS);
 
     console.log(
       "📍 Weekly Performance Summary: Scheduled for 9:00 AM every Monday",
@@ -131,7 +133,7 @@ class PerformanceCronJobs {
       } catch (error) {
         console.error("❌ [CRON] Monthly Target Initialization Failed:", error);
       }
-    });
+    }, CRON_OPTIONS);
 
     console.log(
       "📍 Monthly Target Initialization: Scheduled for 12:10 AM on the 1st of every month",

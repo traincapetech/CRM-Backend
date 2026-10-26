@@ -7,6 +7,7 @@ const PerformanceSummary = require("../models/PerformanceSummary");
 const Lead = require("../models/Lead");
 const Sale = require("../models/Sale");
 const User = require("../models/User");
+const Employee = require("../models/Employee");
 const Attendance = require("../models/Attendance");
 const Holiday = require("../models/Holiday");
 
@@ -16,6 +17,52 @@ const Holiday = require("../models/Holiday");
  */
 
 class PerformanceCalculationService {
+  /**
+   * YYYY-MM-DD using the process-local timezone (avoids UTC day shift of toISOString)
+   */
+  static localDateKey(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
+  /**
+   * Helper to resolve official joining date for an employee.
+   * Checks Employee collection first (which holds HR onboarding joiningDate),
+   * falls back to User.createdAt.
+   * Returned date is normalized to start of day (00:00:00.000).
+   */
+  static async getEmployeeJoiningDate(employeeId, userDoc = null) {
+    try {
+      let user = userDoc;
+      if (!user) {
+        user = await User.findById(employeeId).select("email createdAt");
+      }
+      if (!user) return null;
+
+      const emp = await Employee.findOne({
+        $or: [{ userId: employeeId }, { email: user.email }],
+      }).select("joiningDate");
+
+      if (emp && emp.joiningDate) {
+        const jd = new Date(emp.joiningDate);
+        jd.setHours(0, 0, 0, 0);
+        return jd;
+      }
+
+      if (user.createdAt) {
+        const jd = new Date(user.createdAt);
+        jd.setHours(0, 0, 0, 0);
+        return jd;
+      }
+      return null;
+    } catch (err) {
+      console.error(`Error resolving joining date for ${employeeId}:`, err);
+      return null;
+    }
+  }
+
   /**
    * Calculate score capped at 100%
    * @param {number} actual
@@ -130,7 +177,7 @@ class PerformanceCalculationService {
     const curDate = new Date(startDate.getTime());
     while (curDate <= endDate) {
       const dayOfWeek = curDate.getDay(); // 0 = Sunday
-      const dateStr = curDate.toISOString().split("T")[0];
+      const dateStr = this.localDateKey(curDate);
 
       if (dayOfWeek !== 0 && !fullHolidays.includes(dateStr)) {
         if (halfHolidays.includes(dateStr)) {
@@ -306,12 +353,16 @@ class PerformanceCalculationService {
   /**
    * Calculate performance for Lead Person
    */
-  static async calculateLeadPersonPerformance(employee, target, date) {
-    const dateKey = date.toISOString().split("T")[0];
-    const holidays = await this.fetchHolidays(date, date);
+  static async calculateLeadPersonPerformance(employee, target, date, attendanceRecord = null) {
+    const dateKey = this.localDateKey(date);
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(date);
+    dayEnd.setHours(23, 59, 59, 999);
+    const holidays = await this.fetchHolidays(dayStart, dayEnd);
 
-    // 1. Daily Performance
-    const isHalfDay = holidays.halfDays.includes(dateKey);
+    // 1. Daily Performance (half-day holiday or half-day attendance reduces target by 50%)
+    const isHalfDay = holidays.halfDays.includes(dateKey) || attendanceRecord?.status === "HALF_DAY";
     const dailyTarget = (target?.leadDailyTarget || target?.targets?.target || 0) * (isHalfDay ? 0.5 : 1);
     const leadsToday = await this.calculateLeads(employee._id, date, "daily");
     const dailyScore = this.calculateScore(leadsToday, dailyTarget);
@@ -352,9 +403,15 @@ class PerformanceCalculationService {
   static async calculateSalesPersonPerformance(employee, target, date) {
     const year = date.getFullYear();
     const month = date.getMonth(); // 0-indexed
-    const startOfMonth = new Date(year, month, 1);
+    let startOfMonth = new Date(year, month, 1);
     const endOfCurrentDay = new Date(date);
     endOfCurrentDay.setHours(23, 59, 59, 999);
+
+    // Enterprise Tenure Rule: Prorate month start to employee's joining date if they joined during this month
+    const joiningDate = await this.getEmployeeJoiningDate(employee._id, employee);
+    if (joiningDate && joiningDate > startOfMonth) {
+      startOfMonth = new Date(joiningDate);
+    }
 
     // 1. Get Monthly Target and Working Days
     const monthlyTarget = target?.monthlySalesTarget || target?.targets?.target || 0;
@@ -417,11 +474,17 @@ class PerformanceCalculationService {
       const employee = await User.findById(employeeId);
       if (!employee || !employee.active) return;
 
-      const dateKey = date.toISOString().split("T")[0];
+      const dateKey = this.localDateKey(date);
       const startOfDay = new Date(date);
       startOfDay.setHours(0, 0, 0, 0);
       const endOfDay = new Date(date);
       endOfDay.setHours(23, 59, 59, 999);
+
+      // Check joining date: Do NOT calculate performance before official hire date
+      const joiningDate = await this.getEmployeeJoiningDate(employeeId, employee);
+      if (joiningDate && startOfDay < joiningDate) {
+        return; // Pre-hire date: no performance record should exist
+      }
 
       // Skip Sundays
       if (date.getDay() === 0) return;
@@ -433,12 +496,12 @@ class PerformanceCalculationService {
       });
       if (holidayRecord) return;
 
-      // Skip if absent
+      // Skip if absent or on approved leave
       const attendanceRecord = await Attendance.findOne({
         userId: employeeId,
         date: { $gte: startOfDay, $lte: endOfDay },
       });
-      if (attendanceRecord && attendanceRecord.status === "ABSENT") return;
+      if (attendanceRecord && (attendanceRecord.status === "ABSENT" || attendanceRecord.status === "ON_LEAVE")) return;
 
       // Get ALL targets for the month
       const targets = await this.getTargetsForPeriod(
@@ -474,6 +537,7 @@ class PerformanceCalculationService {
             employee,
             target,
             date,
+            attendanceRecord,
           );
         } else if (employee.role === "Sales Person") {
           performanceResult = await this.calculateSalesPersonPerformance(
@@ -547,21 +611,37 @@ class PerformanceCalculationService {
       const employee = await User.findById(employeeId);
       if (!employee) return {};
 
+      const joiningDate = await this.getEmployeeJoiningDate(employeeId, employee);
+
       const now = new Date();
       const todayEnd = new Date(now);
       todayEnd.setHours(23, 59, 59, 999);
 
-      const sevenDaysAgo = new Date(now);
-      sevenDaysAgo.setDate(now.getDate() - 6);
-      sevenDaysAgo.setHours(0, 0, 0, 0);
+      // If employee has a joining date in the future (relative to todayEnd), return 0
+      if (joiningDate && joiningDate > todayEnd) {
+        return {
+          last7Days: 0,
+          last30Days: 0,
+          last90Days: 0,
+          thisMonth: 0,
+          previousMonth: 0,
+        };
+      }
 
-      const thirtyDaysAgo = new Date(now);
-      thirtyDaysAgo.setDate(now.getDate() - 29);
-      thirtyDaysAgo.setHours(0, 0, 0, 0);
+      const getWindowStartDate = (daysBack) => {
+        const d = new Date(now);
+        d.setDate(now.getDate() - (daysBack - 1));
+        d.setHours(0, 0, 0, 0);
+        // Enterprise Tenure Rule: Clamp window start date to employee joining date
+        if (joiningDate && joiningDate > d) {
+          return new Date(joiningDate);
+        }
+        return d;
+      };
 
-      const ninetyDaysAgo = new Date(now);
-      ninetyDaysAgo.setDate(now.getDate() - 89);
-      ninetyDaysAgo.setHours(0, 0, 0, 0);
+      const sevenDaysAgo = getWindowStartDate(7);
+      const thirtyDaysAgo = getWindowStartDate(30);
+      const ninetyDaysAgo = getWindowStartDate(90);
 
       const getAvg = (records, expectedWorkingDays) => {
         if (expectedWorkingDays <= 0) return 0;
@@ -570,6 +650,7 @@ class PerformanceCalculationService {
       };
 
       const fetchRollingStats = async (startDate, endDate) => {
+        if (startDate > endDate) return 0;
         const holidays = await this.fetchHolidays(startDate, endDate);
         return this.getWorkingDays(
           startDate,
@@ -587,6 +668,7 @@ class PerformanceCalculationService {
       ]);
 
       const fetchAggregatePerformance = async (startDate, endDate, expectedDays) => {
+        if (expectedDays <= 0 || startDate > endDate) return 0;
         const targets = await this.getTargetsForPeriod(employeeId, endDate.getFullYear(), endDate.getMonth() + 1);
         const target = targets.length > 0 ? targets[0] : null; // Fallback to first target for aggregate stats
         let dailyTarget = 0;
@@ -608,12 +690,22 @@ class PerformanceCalculationService {
       const calcMonthAvg = async (targetDate) => {
         const y = targetDate.getFullYear();
         const m = targetDate.getMonth() + 1;
-        const startOfMonth = new Date(y, m - 1, 1);
+        let startOfMonth = new Date(y, m - 1, 1, 0, 0, 0, 0);
         let endOfPeriod;
         if (y === now.getFullYear() && m === now.getMonth() + 1) {
           endOfPeriod = new Date(now);
         } else {
           endOfPeriod = new Date(y, m, 0, 23, 59, 59, 999);
+        }
+
+        // If employee joined AFTER this month ended, they were not employed during this month
+        if (joiningDate && joiningDate > endOfPeriod) {
+          return 0;
+        }
+
+        // Prorate month start to joining date if joined this month
+        if (joiningDate && joiningDate > startOfMonth) {
+          startOfMonth = new Date(joiningDate);
         }
 
         if (employee.role === "Sales Person") {
