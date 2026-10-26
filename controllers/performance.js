@@ -463,25 +463,39 @@ const getEmployeePerformance = async (req, res) => {
       "fullName email role",
     );
 
-    // If no summary exists, calculate performance for today to generate one in background
+    // If no summary exists, check if user is an eligible KPI-tracked employee with assigned targets
     if (!summary) {
-      console.log(
-        `No summary for ${employeeId}, triggering initial calculation in background...`,
-      );
-      const today = new Date();
-      const { queuePerformanceCalculation } = require("../services/performanceQueue");
-      queuePerformanceCalculation(employeeId, today).catch(err => {
-        console.error("Async performance calculation error:", err);
-      });
+      const targetUser = await User.findById(employeeId).select("role fullName email");
+      const hasTargets = await EmployeeTarget.exists({ employeeId });
 
-      // Create fallback summary immediately so the page doesn't block
-      summary = await PerformanceSummary.create({
-        employeeId,
-        currentRating: 0,
-        ratingTier: "N/A",
-        stars: 0,
-      });
-      summary = await summary.populate("employeeId", "fullName email role");
+      if (targetUser && ["Lead Person", "Sales Person"].includes(targetUser.role) && hasTargets) {
+        console.log(
+          `No summary for ${employeeId}, triggering initial calculation in background...`,
+        );
+        const today = new Date();
+        const { queuePerformanceCalculation } = require("../services/performanceQueue");
+        queuePerformanceCalculation(employeeId, today).catch(err => {
+          console.error("Async performance calculation error:", err);
+        });
+
+        // Create fallback summary for KPI employee
+        summary = await PerformanceSummary.create({
+          employeeId,
+          currentRating: 0,
+          ratingTier: "N/A",
+          stars: 0,
+        });
+        summary = await summary.populate("employeeId", "fullName email role");
+      } else {
+        // Return non-persisted transient summary so non-KPI users (Admin, Branch Partner, etc.) do not pollute the team leaderboard
+        summary = {
+          employeeId: targetUser,
+          currentRating: 0,
+          ratingTier: "N/A",
+          stars: 0,
+          averages: { last7Days: 0, last30Days: 0, last90Days: 0, thisMonth: 0, previousMonth: 0 },
+        };
+      }
     }
 
     // Get current active targets

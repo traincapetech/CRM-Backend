@@ -511,18 +511,9 @@ class PerformanceCalculationService {
       );
 
       if (!targets || targets.length === 0) {
-        console.log(`No KPI assignments found for ${employee.fullName} for this period. Resetting summary.`);
-        // Reset performance summary if no KPIs are assigned to avoid stale data impacting averages
-        await PerformanceSummary.findOneAndUpdate(
-          { employeeId },
-          { 
-            currentRating: 0,
-            ratingTier: "poor",
-            lastCalculated: new Date(),
-            history: [] 
-          },
-          { upsert: false }
-        );
+        console.log(`No KPI assignments found for ${employee.fullName} for this period. Removing from performance summary.`);
+        // Remove performance summary if no KPIs are assigned to avoid unassigned employees dragging down team averages
+        await PerformanceSummary.deleteOne({ employeeId });
         return;
       }
 
@@ -1023,10 +1014,12 @@ class PerformanceCalculationService {
         return { successCount: 0, errorCount: 0, total: 0, skippedReason: "holiday" };
       }
 
-      // Get all active employees
+      // Get all active employees who actually have assigned KPI targets
+      const targetUserIds = await EmployeeTarget.distinct("employeeId");
       const employees = await User.find({
+        _id: { $in: targetUserIds },
         active: true,
-        role: { $in: ["Lead Person", "Sales Person", "Manager"] },
+        role: { $in: ["Lead Person", "Sales Person"] },
       });
 
       console.log(`📊 Found ${employees.length} active employees to process`);

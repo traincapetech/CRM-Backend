@@ -371,41 +371,30 @@ router.get(
 
       if (!isHistorical) {
         // --- CURRENT MONTH LOGIC (Default) ---
-        // Ensure all active employees with KPI-eligible roles have at least a summary record
+        const EmployeeTarget = require("../models/EmployeeTarget");
+
+        // 1. Only include employees who actually have assigned KPI targets
+        const targetEmployeeIds = await EmployeeTarget.distinct("employeeId");
+
+        // 2. Only active Sales Persons and Lead Persons with assigned targets
         const eligibleEmployees = await User.find({
+          _id: { $in: targetEmployeeIds },
           active: true,
-          role: { $in: ["Lead Person", "Sales Person", "Manager"] },
+          role: { $in: ["Lead Person", "Sales Person"] },
         }).select("_id");
 
-        const eligibleIds = eligibleEmployees.map(emp => emp._id);
-        const existingSummaries = await PerformanceSummary.find({
-          employeeId: { $in: eligibleIds }
-        }).select("employeeId");
+        const eligibleIds = eligibleEmployees.map((emp) => emp._id);
 
-        const existingIdsSet = new Set(existingSummaries.map(s => s.employeeId.toString()));
-        const missingEmployees = eligibleEmployees.filter(emp => !existingIdsSet.has(emp._id.toString()));
-
-        if (missingEmployees.length > 0) {
-          const createPromises = missingEmployees.map(emp => 
-            PerformanceSummary.create({
-              employeeId: emp._id,
-              currentRating: 0,
-              ratingTier: "poor",
-              stars: 1,
-            }).catch(() => null) // Ignore duplicate key errors if race condition occurs
-          );
-          await Promise.all(createPromises);
-        }
-
-        const summaries = await PerformanceSummary.find({})
+        const summaries = await PerformanceSummary.find({
+          employeeId: { $in: eligibleIds },
+        })
           .populate({
             path: "employeeId",
-            match: { active: true },
-            select: "fullName email role active"
+            select: "fullName email role active",
           })
           .sort({ currentRating: -1 });
 
-        const activeSummaries = summaries.filter(s => s.employeeId);
+        const activeSummaries = summaries.filter((s) => s.employeeId);
 
         // Enhance with 'live' averages from KPIService as requested
         const liveNow = new Date();
