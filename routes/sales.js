@@ -14,16 +14,29 @@ const { protect, authorize } = require('../middleware/auth');
 const { cacheMiddleware, invalidateCache } = require('../middleware/cache');
 const Sale = require('../models/Sale');
 
+const SALES_ROLES = [
+  'Sales Person',
+  'Sales Team Leader',
+  'Team Leader',
+  'Senior Sales Executive',
+  'Sales Executive',
+  'Sales Manager',
+  'Lead Person',
+  'Manager',
+  'Admin',
+  'Branch Partner',
+];
+
 // All routes below this line require authentication
 router.use(protect);
 
 // Routes specific to roles
 router.route('/')
-  .get(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), cacheMiddleware(300), getSales)
-  .post(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/sales*']), createSale);
+  .get(authorize(...SALES_ROLES), cacheMiddleware(300), getSales)
+  .post(authorize(...SALES_ROLES), invalidateCache(['cache:/api/sales*']), createSale);
 
 // Sales data route for dashboard
-router.get('/data', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), cacheMiddleware(60), async (req, res) => {
+router.get('/data', authorize(...SALES_ROLES), cacheMiddleware(60), async (req, res) => {
   try {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -122,11 +135,11 @@ router.get('/data', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin')
 router.post('/import', authorize('Admin'), importSales);
 
 // Count route
-router.get('/count', authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSalesCount);
+router.get('/count', authorize(...SALES_ROLES), getSalesCount);
 
 router.route('/:id')
-  .get(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), getSale)
-  .put(authorize('Sales Person', 'Lead Person', 'Manager', 'Admin'), invalidateCache(['cache:/api/sales*']), updateSale)
+  .get(authorize(...SALES_ROLES), getSale)
+  .put(authorize(...SALES_ROLES), invalidateCache(['cache:/api/sales*']), updateSale)
   .delete(authorize('Manager', 'Admin', 'Super Admin', 'Sales Manager'), invalidateCache(['cache:/api/sales*']), deleteSale);
 
 // Reports routes
