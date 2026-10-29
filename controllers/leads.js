@@ -421,7 +421,7 @@ exports.createLead = async (req, res) => {
       source: req.body.SOURSE,
       sourceLink: req.body["SOURCE LINK"],
       googleFormLink: req.body.googleFormLink || "",
-      assignedTo: req.body["SALE PERSON"],
+      assignedTo: req.body["SALE PERSON"] || req.body.assignedTo,
       leadPerson: req.body["LEAD PERSON"] || req.body.leadPerson,
       feedback: req.body.FEEDBACK || req.body.feedback,
       remarks: req.body.REMARKS || req.body.remarks,

@@ -341,9 +341,11 @@ exports.createSale = async (req, res) => {
       req.body.salesPerson = req.user.id;
     }
 
-    // Handle empty leadPerson - set to undefined so mongoose doesn't try to cast empty string to ObjectId
-    if (req.body.leadPerson === "" || req.body.leadPerson === "null") {
+    // Handle empty or invalid leadPerson - set to undefined so mongoose doesn't try to cast empty string to ObjectId
+    const mongoose = require("mongoose");
+    if (!req.body.leadPerson || req.body.leadPerson === "" || req.body.leadPerson === "null" || !mongoose.Types.ObjectId.isValid(req.body.leadPerson)) {
       delete req.body.leadPerson;
+      req.body.isLeadPersonSale = false;
     }
 
     // Enforce 100% payment on Completed status

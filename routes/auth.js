@@ -102,7 +102,28 @@ router
 // Admin, Manager, and IT Manager user management routes
 router
   .route("/users")
-  .get(protect, authorize("Admin", "Manager", "IT Manager", "HR"), getAllUsers)
+  .get(
+    protect,
+    authorize(
+      "Admin",
+      "Manager",
+      "IT Manager",
+      "HR",
+      "Sales Person",
+      "Sales Team Leader",
+      "Team Leader",
+      "Senior Sales Executive",
+      "Sales Executive",
+      "Sales Manager",
+      "Lead Person",
+      "Employee",
+      "IT Staff",
+      "IT Intern",
+      "IT Permanent",
+      "Branch Partner"
+    ),
+    getAllUsers
+  )
   .post(protect, authorize("Admin", "Manager", "IT Manager"), createUser);
 
 router

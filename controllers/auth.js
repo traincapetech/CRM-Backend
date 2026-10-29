@@ -664,8 +664,18 @@ exports.getAllUsers = async (req, res) => {
             .filter(Boolean),
         };
       } else if (roleParam === "Sales Person") {
-        // Include Sales Persons, Sales Team Leaders, Team Leaders, and Managers for sales assignments
-        filter.role = { $in: ["Sales Person", "Sales Team Leader", "Team Leader", "Manager"] };
+        // Include all sales roles, team leaders, and managers for sales assignments
+        filter.role = {
+          $in: [
+            "Sales Person",
+            "Sales Team Leader",
+            "Team Leader",
+            "Senior Sales Executive",
+            "Sales Executive",
+            "Sales Manager",
+            "Manager",
+          ],
+        };
       } else {
         filter.role = roleParam;
       }
