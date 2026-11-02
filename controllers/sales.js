@@ -60,7 +60,7 @@ exports.getSales = async (req, res) => {
     const parsedQuery = JSON.parse(queryStr);
 
     // If user is a sales person / team leader, show their sales or sales assigned to them for collection
-    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive", "Sales Executive"].includes(req.user.role)) {
       if (parsedQuery.salesPerson) {
         query = Sale.find(parsedQuery);
       } else if (parsedQuery.currentCollectionOwners) {
@@ -198,7 +198,7 @@ exports.getSales = async (req, res) => {
       // Apply the same role-based filtering for full results, but ignore all query parameters
       let fullQuery;
 
-      if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+      if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive", "Sales Executive"].includes(req.user.role)) {
         fullQuery = Sale.find({
           $or: [
             { salesPerson: req.user.id },
@@ -281,7 +281,7 @@ exports.getSale = async (req, res) => {
     }
 
     // Check if user can access this sale
-    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive", "Sales Executive"].includes(req.user.role)) {
       const salesPersonId =
         sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
       const userId = req.user._id?.toString() || req.user.id?.toString();
@@ -489,15 +489,33 @@ exports.updateSale = async (req, res) => {
     const originalTotalCost = sale.totalCost;
 
     // Check permissions
-    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+    const salesRoles = ["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive", "Sales Executive"];
+    if (salesRoles.includes(req.user.role)) {
       const salesPersonId =
         sale.salesPerson?._id?.toString() || sale.salesPerson?.toString();
       const userId = req.user._id?.toString() || req.user.id?.toString();
-      const isCollectionOwner =
-        sale.currentCollectionOwners?.some((id) => (id._id || id).toString() === userId) ||
-        sale.allCollectionOwners?.some((id) => (id._id || id).toString() === userId);
 
-      if (salesPersonId !== userId && !isCollectionOwner) {
+      let empId = null;
+      try {
+        const Employee = require("../models/Employee");
+        const emp = await Employee.findOne({ userId }).select("_id");
+        if (emp) empId = emp._id.toString();
+      } catch (empErr) {
+        console.error("Error finding linked employee in updateSale:", empErr.message);
+      }
+
+      const isSalesPerson = salesPersonId === userId || (empId && salesPersonId === empId);
+      const isCollectionOwner =
+        sale.currentCollectionOwners?.some((id) => {
+          const cid = (id._id || id).toString();
+          return cid === userId || (empId && cid === empId);
+        }) ||
+        sale.allCollectionOwners?.some((id) => {
+          const cid = (id._id || id).toString();
+          return cid === userId || (empId && cid === empId);
+        });
+
+      if (!isSalesPerson && !isCollectionOwner) {
         return res.status(403).json({
           success: false,
           message: "Not authorized to update this sale",
@@ -512,7 +530,17 @@ exports.updateSale = async (req, res) => {
         sale.leadPerson?._id?.toString() || sale.leadPerson?.toString();
       const userId = req.user._id?.toString() || req.user.id?.toString();
 
-      if (leadPersonId !== userId) {
+      let empId = null;
+      try {
+        const Employee = require("../models/Employee");
+        const emp = await Employee.findOne({ userId }).select("_id");
+        if (emp) empId = emp._id.toString();
+      } catch (empErr) {
+        console.error("Error finding linked employee in updateSale for lead person:", empErr.message);
+      }
+
+      const isLeadPerson = leadPersonId === userId || (empId && leadPersonId === empId);
+      if (!isLeadPerson) {
         return res.status(403).json({
           success: false,
           message: "Not authorized to update this sale",
@@ -520,12 +548,22 @@ exports.updateSale = async (req, res) => {
       }
     }
 
+    // Normalize amount / token payload compatibility
+    if (req.body.amount !== undefined && req.body.totalCost === undefined) {
+      req.body.totalCost = parseFloat(req.body.amount) || 0;
+    }
+    if (req.body.token !== undefined && req.body.tokenAmount === undefined) {
+      req.body.tokenAmount = parseFloat(req.body.token) || 0;
+    }
+
     // Enforce 100% payment on Completed status
     const finalStatus = req.body.status !== undefined ? req.body.status : sale.status;
+    const isOriginalCompleted = (originalStatus || "").toString().toLowerCase() === "completed";
+    const isFinalCompleted = (finalStatus || "").toString().toLowerCase() === "completed";
 
     // SECURITY: Once a sale is Completed, only Admin or Manager can re-open or change its status (e.g. to Pending or Cancelled)
     const allowedReopenRoles = ["Admin", "Super Admin", "Manager", "Sales Manager"];
-    if (originalStatus === "Completed" && finalStatus !== "Completed" && !allowedReopenRoles.includes(req.user.role)) {
+    if (isOriginalCompleted && !isFinalCompleted && !allowedReopenRoles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: "Not authorized to change the status of a Completed sale. Only Admin or Manager can re-open completed sales.",
@@ -533,7 +571,7 @@ exports.updateSale = async (req, res) => {
     }
 
     // SECURITY: Non-managers cannot alter totalCost or tokenAmount on an already Completed sale
-    if (originalStatus === "Completed" && !allowedReopenRoles.includes(req.user.role)) {
+    if (isOriginalCompleted && !allowedReopenRoles.includes(req.user.role)) {
       if (req.body.totalCost !== undefined && parseFloat(req.body.totalCost) !== sale.totalCost) {
         return res.status(403).json({
           success: false,
@@ -548,7 +586,8 @@ exports.updateSale = async (req, res) => {
       }
     }
 
-    if (finalStatus === "Completed") {
+    if (isFinalCompleted) {
+      req.body.status = "Completed";
       req.body.tokenAmount = req.body.totalCost !== undefined ? parseFloat(req.body.totalCost) : sale.totalCost;
       req.body.pending = false;
     }
@@ -903,7 +942,7 @@ exports.getSalesCount = async (req, res) => {
     let count;
 
     // If user is a sales person / team leader, only count their sales
-    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive"].includes(req.user.role)) {
+    if (["Sales Person", "Sales Team Leader", "Team Leader", "Senior Sales Executive", "Sales Executive"].includes(req.user.role)) {
       count = await Sale.countDocuments({
         salesPerson: req.user.id,
         isLeadPersonSale: { $ne: true }, // Exclude lead person sales

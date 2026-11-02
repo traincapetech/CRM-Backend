@@ -573,10 +573,11 @@ exports.getActiveSessions = async (req, res) => {
 exports.getMe = async (req, res) => {
   let user = await User.findById(req.user.id).populate("branchId", "name code city state");
 
+  let employee = null;
   // Auto-sync User.role from linked Employee record if mismatched
   try {
     const Employee = require("../models/Employee");
-    const employee = await Employee.findOne({ userId: user._id }).populate("role");
+    employee = await Employee.findOne({ userId: user._id }).populate("role");
     if (employee && employee.role && employee.role.name && user.role !== employee.role.name) {
       console.log(`[getMe] Auto-syncing User.role from "${user.role}" to "${employee.role.name}" for user ${user._id}`);
       user.role = employee.role.name;
@@ -603,6 +604,8 @@ exports.getMe = async (req, res) => {
       roles: permissionPayload.roleNames,
       permissions: permissionPayload.permissions,
       activePIP: activePIP || null,
+      employeeId: employee ? employee._id : null,
+      employee: employee ? { _id: employee._id, fullName: employee.fullName, employeeId: employee.employeeId } : null,
     },
   });
 };

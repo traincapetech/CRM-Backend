@@ -241,10 +241,12 @@ exports.updateLeadPersonSale = async (req, res) => {
     // Enforce 100% payment on Completed status
     const originalStatus = sale.status;
     const finalStatus = req.body.status !== undefined ? req.body.status : sale.status;
+    const isOriginalCompleted = (originalStatus || "").toString().toLowerCase() === "completed";
+    const isFinalCompleted = (finalStatus || "").toString().toLowerCase() === "completed";
 
     // SECURITY: Once a sale is Completed, only Admin or Manager can re-open or change its status (e.g. to Pending or Cancelled)
-    const allowedReopenRoles = ["Admin", "Super Admin", "Manager"];
-    if (originalStatus === "Completed" && finalStatus !== "Completed" && !allowedReopenRoles.includes(req.user.role)) {
+    const allowedReopenRoles = ["Admin", "Super Admin", "Manager", "Sales Manager"];
+    if (isOriginalCompleted && !isFinalCompleted && !allowedReopenRoles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: "Not authorized to change the status of a Completed sale. Only Admin or Manager can re-open completed sales.",
@@ -252,7 +254,7 @@ exports.updateLeadPersonSale = async (req, res) => {
     }
 
     // SECURITY: Non-managers cannot alter totalCost or tokenAmount on an already Completed sale
-    if (originalStatus === "Completed" && !allowedReopenRoles.includes(req.user.role)) {
+    if (isOriginalCompleted && !allowedReopenRoles.includes(req.user.role)) {
       if (req.body.totalCost !== undefined && parseFloat(req.body.totalCost) !== sale.totalCost) {
         return res.status(403).json({
           success: false,
@@ -267,7 +269,8 @@ exports.updateLeadPersonSale = async (req, res) => {
       }
     }
 
-    if (finalStatus === "Completed") {
+    if (isFinalCompleted) {
+      req.body.status = "Completed";
       req.body.tokenAmount = req.body.totalCost !== undefined ? parseFloat(req.body.totalCost) : sale.totalCost;
       req.body.pending = false;
     }
