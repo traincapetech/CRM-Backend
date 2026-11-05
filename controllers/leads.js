@@ -566,6 +566,16 @@ exports.createLead = async (req, res) => {
       console.error("Workflow execution error (non-blocking):", workflowError);
     }
 
+    // Trigger automated WhatsApp welcome message (non-blocking)
+    try {
+      const whatsappService = require("../services/whatsappService");
+      whatsappService.sendLeadWelcomeMessage(lead).catch((err) => {
+        console.warn("Automated WhatsApp welcome delivery deferred:", err.message);
+      });
+    } catch (waError) {
+      console.warn("WhatsApp welcome service non-blocking catch:", waError.message);
+    }
+
     // REAL-TIME PERFORMANCE UPDATE
     // Calculate performance for assignedTo and leadPerson immediately
     try {

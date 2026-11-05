@@ -164,6 +164,7 @@ const branchRoutes = require("./routes/branches");
 const branchAnalyticsRoutes = require("./routes/branchAnalytics");
 const collectionRoutes = require("./routes/collectionRoutes");
 const dashboardRoutes = require("./routes/dashboard");
+const whatsappRoutes = require("./routes/whatsapp");
 
 const app = express();
 const server = http.createServer(app);
@@ -712,6 +713,7 @@ app.use("/api/verda-enquiries", verdaEnquiryRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/office-networks", officeNetworkRoutes);
 app.use("/api/onboarding", onboardingRoutes);
+app.use("/api/whatsapp", whatsappRoutes);
 
 // Image Proxy Route to solve CORS issues for ID Card generation (Hardened against SSRF)
 const { protect } = require("./middleware/auth");

@@ -241,6 +241,16 @@ exports.createInvoice = async (req, res) => {
 
     console.log(`Invoice created successfully with number: ${populatedInvoice.invoiceNumber}`);
 
+    // Send automated WhatsApp invoice notification (non-blocking)
+    try {
+      const whatsappService = require('../services/whatsappService');
+      whatsappService.sendInvoiceNotification(populatedInvoice).catch(err => {
+        console.warn('WhatsApp invoice delivery deferred:', err.message);
+      });
+    } catch (waErr) {
+      console.warn('WhatsApp invoice non-blocking catch:', waErr.message);
+    }
+
     res.status(201).json({
       success: true,
       data: populatedInvoice
@@ -607,6 +617,20 @@ exports.recordPayment = async (req, res) => {
       });
     } catch (notifyError) {
       console.error("Admin notification error (non-blocking):", notifyError);
+    }
+
+    // Send automated WhatsApp payment receipt (non-blocking)
+    try {
+      const whatsappService = require('../services/whatsappService');
+      const studentPhone = updatedInvoice.clientInfo?.phone || updatedInvoice.clientInfo?.mobile || updatedInvoice.clientInfo?.whatsappNumber;
+      if (studentPhone) {
+        const receiptText = `Dear *${updatedInvoice.clientInfo?.name || "Student"}*,\n\nWe have received your payment of *${updatedInvoice.currency || "₹"}${amount}* towards invoice *#${updatedInvoice.invoiceNumber}*! 🎉\n\n💵 *Remaining Balance:* ${updatedInvoice.currency || "₹"}${updatedInvoice.balanceDue}\n📊 *Status:* ${updatedInvoice.status}\n\nThank you for choosing Traincape Technology!`;
+        whatsappService.sendTextMessage(studentPhone, receiptText, updatedInvoice.clientInfo?.countryCode || "91").catch(err => {
+          console.warn('WhatsApp payment receipt delivery deferred:', err.message);
+        });
+      }
+    } catch (waErr) {
+      console.warn('WhatsApp receipt non-blocking catch:', waErr.message);
     }
 
     console.log(`Payment of ${amount} recorded successfully for invoice: ${invoice.invoiceNumber}`);
