@@ -7,6 +7,37 @@ const {
 } = require("../services/emailService");
 const trackChanges = require("../utils/changeTracker");
 
+// Helper to sync lead conversion on sale creation or import
+const syncLeadConversionFromSale = async (sale) => {
+  try {
+    const Lead = require("../models/Lead");
+    const { hashForSearch } = require("../utils/encryption");
+    let lead = null;
+    if (sale.email) {
+      lead = await Lead.findOne({ emailHash: hashForSearch(sale.email.trim()) });
+    }
+    if (!lead && sale.contactNumber) {
+      const cleanPhone = (sale.contactNumber || "").replace(/\D/g, "");
+      if (cleanPhone.length >= 7) {
+        lead = await Lead.findOne({ phoneHash: hashForSearch(cleanPhone) });
+      }
+    }
+    if (!lead && sale.customerName) {
+      lead = await Lead.findOne({ name: new RegExp("^" + sale.customerName.trim() + "$", "i") });
+    }
+    if (lead && lead.status !== "Converted") {
+      lead.status = "Converted";
+      if (!lead.remarks) {
+        lead.remarks = `Converted via sale: ${sale.course || ""} (${sale.customerName || ""})`;
+      }
+      await lead.save();
+      console.log(`Auto-updated lead ${lead._id} (${lead.name}) to Converted from sale`);
+    }
+  } catch (err) {
+    console.warn("syncLeadConversionFromSale warning (non-blocking):", err.message);
+  }
+};
+
 // @desc    Get all sales
 // @route   GET /api/sales
 // @access  Private
@@ -437,6 +468,11 @@ exports.createSale = async (req, res) => {
     } catch (notifyError) {
       console.error("Admin notification error (non-blocking):", notifyError);
     }
+
+    // Auto-sync matching lead to Converted
+    syncLeadConversionFromSale(sale).catch((e) =>
+      console.warn("Auto-sync lead conversion error:", e?.message)
+    );
 
     res.status(201).json({
       success: true,
@@ -1063,6 +1099,11 @@ exports.importSales = async (req, res) => {
     });
 
     console.log(`Successfully imported ${results.length} sales`);
+
+    // Auto-sync matching leads for all imported sales
+    Promise.allSettled(results.map((s) => syncLeadConversionFromSale(s))).catch(
+      (e) => console.warn("Import lead sync warning:", e?.message)
+    );
 
     res.status(201).json({
       success: true,

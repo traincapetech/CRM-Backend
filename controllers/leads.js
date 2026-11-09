@@ -2024,6 +2024,29 @@ exports.getLeadStats = async (req, res) => {
       }
     }
 
+    // Optional query filters (e.g. for filtered stats)
+    if (req.query.assignedTo && (req.user.role === "Admin" || req.user.role === "Manager")) {
+      filter.assignedTo = req.query.assignedTo;
+    }
+    if (req.query.leadPerson && (req.user.role === "Admin" || req.user.role === "Manager")) {
+      filter.leadPerson = req.query.leadPerson;
+    }
+    if (req.query.country) {
+      filter.country = req.query.country;
+    }
+    if (req.query.course) {
+      filter.course = req.query.course;
+    }
+    if (req.query.source) {
+      filter.source = req.query.source;
+    }
+    if (req.query.startDate && req.query.endDate) {
+      const start = new Date(req.query.startDate);
+      const end = new Date(req.query.endDate);
+      end.setHours(23, 59, 59, 999);
+      filter.createdAt = { $gte: start, $lte: end };
+    }
+
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
@@ -2050,12 +2073,70 @@ exports.getLeadStats = async (req, res) => {
             $sum: { $cond: [{ $eq: ["$status", "Interested"] }, 1, 0] },
           },
           qualified: {
+            $sum: {
+              $cond: [
+                { $in: ["$status", ["Qualified", "Interested", "Future Promise", "Question", "Acknowledgement"]] },
+                1,
+                0
+              ]
+            },
+          },
+          strictlyQualified: {
             $sum: { $cond: [{ $eq: ["$status", "Qualified"] }, 1, 0] },
           },
           converted: {
+            $sum: {
+              $cond: [
+                { $in: ["$status", ["Converted", "Payment"]] },
+                1,
+                0
+              ]
+            },
+          },
+          strictlyConverted: {
             $sum: { $cond: [{ $eq: ["$status", "Converted"] }, 1, 0] },
           },
+          payment: {
+            $sum: { $cond: [{ $eq: ["$status", "Payment"] }, 1, 0] },
+          },
           lost: { $sum: { $cond: [{ $eq: ["$status", "Lost"] }, 1, 0] } },
+          autoAllocated: {
+            $sum: {
+              $cond: [
+                {
+                  $in: [
+                    "$assignmentMethod",
+                    ["ROUND_ROBIN", "round-robin", "round_robin", "SENIOR_ALLOCATION"]
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          },
+          roundRobin: {
+            $sum: {
+              $cond: [
+                {
+                  $in: [
+                    "$assignmentMethod",
+                    ["ROUND_ROBIN", "round-robin", "round_robin", "SENIOR_ALLOCATION"]
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          },
+          manualAllocated: {
+            $sum: {
+              $cond: [
+                { $in: ["$assignmentMethod", ["MANUAL", "manual"]] },
+                1,
+                0
+              ]
+            }
+          }
         },
       },
     ]);
@@ -2079,8 +2160,14 @@ exports.getLeadStats = async (req, res) => {
         contacted: 0,
         interested: 0,
         qualified: 0,
+        strictlyQualified: 0,
         converted: 0,
+        strictlyConverted: 0,
+        payment: 0,
         lost: 0,
+        autoAllocated: 0,
+        roundRobin: 0,
+        manualAllocated: 0,
       },
       sources: sourceStats,
     };

@@ -165,6 +165,7 @@ const branchAnalyticsRoutes = require("./routes/branchAnalytics");
 const collectionRoutes = require("./routes/collectionRoutes");
 const dashboardRoutes = require("./routes/dashboard");
 const whatsappRoutes = require("./routes/whatsapp");
+const shiftReportsRoutes = require("./routes/shiftReports");
 
 const app = express();
 const server = http.createServer(app);
@@ -714,6 +715,7 @@ app.use("/api/meetings", meetingRoutes);
 app.use("/api/office-networks", officeNetworkRoutes);
 app.use("/api/onboarding", onboardingRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
+app.use("/api/shift-reports", shiftReportsRoutes);
 
 // Image Proxy Route to solve CORS issues for ID Card generation (Hardened against SSRF)
 const { protect } = require("./middleware/auth");

@@ -1214,6 +1214,9 @@ exports.createUserWithDocuments = async (req, res) => {
         "IT Manager",
         "IT Intern",
         "IT Permanent",
+        "Digital Marketing Intern",
+        "Digital Marketing Permanent",
+        "Digital Marketing Manager",
       ].includes(role)
     ) {
       try {
@@ -1221,7 +1224,7 @@ exports.createUserWithDocuments = async (req, res) => {
         const Department = require("../models/Department");
         const Role = require("../models/EmployeeRole");
 
-        // Department: IT for IT roles, else General
+        // Department: IT for IT roles, Marketing for Digital Marketing, else General
         let department;
         if (["IT Manager", "IT Intern", "IT Permanent"].includes(role)) {
           department =
@@ -1229,6 +1232,20 @@ exports.createUserWithDocuments = async (req, res) => {
             (await Department.create({
               name: "IT",
               description: "IT Department",
+            }));
+        } else if (
+          [
+            "Digital Marketing Intern",
+            "Digital Marketing Permanent",
+            "Digital Marketing Manager",
+          ].includes(role)
+        ) {
+          department =
+            (await Department.findOne({ name: "Digital Marketing" })) ||
+            (await Department.findOne({ name: "Marketing" })) ||
+            (await Department.create({
+              name: "Digital Marketing",
+              description: "Digital Marketing Department",
             }));
         } else {
           department =
@@ -1266,8 +1283,8 @@ exports.createUserWithDocuments = async (req, res) => {
             : null,
         };
 
-        // Set employmentType for IT roles
-        if (role === "IT Intern") {
+        // Set employmentType for IT & Digital Marketing roles
+        if (["IT Intern", "Digital Marketing Intern"].includes(role)) {
           employeeData.employmentType = "INTERN";
           // Handle internship dates
           if (req.body.internshipStartDate) {
@@ -1280,7 +1297,7 @@ exports.createUserWithDocuments = async (req, res) => {
               req.body.internshipEndDate,
             );
           }
-        } else if (role === "IT Permanent") {
+        } else if (["IT Permanent", "Digital Marketing Permanent"].includes(role)) {
           employeeData.employmentType = "PERMANENT";
         }
 
@@ -1467,6 +1484,9 @@ exports.updateUserWithDocuments = async (req, res) => {
         "IT Manager",
         "IT Intern",
         "IT Permanent",
+        "Digital Marketing Intern",
+        "Digital Marketing Permanent",
+        "Digital Marketing Manager",
       ].includes(userRole)
     ) {
       const Employee = require("../models/Employee");
@@ -1886,6 +1906,9 @@ exports.updateUserWithDocuments = async (req, res) => {
         "IT Manager",
         "IT Intern",
         "IT Permanent",
+        "Digital Marketing Intern",
+        "Digital Marketing Permanent",
+        "Digital Marketing Manager",
       ].includes(userRole)
     ) {
       const Employee = require("../models/Employee");

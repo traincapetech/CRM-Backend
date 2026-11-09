@@ -32,14 +32,14 @@ router.post('/restore-preview', authorize('Admin', 'Manager', 'Lead Person'), ge
 
 // Routes specific to roles
 router.route('/')
-  .get(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin', 'Branch Partner'), cacheMiddleware(300), getLeads)
-  .post(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin', 'Branch Partner'), invalidateCache(['cache:/api/leads*']), createLead);
+  .get(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin', 'Branch Partner', 'Digital Marketing Intern', 'Digital Marketing Permanent', 'Digital Marketing Manager'), cacheMiddleware(300), getLeads)
+  .post(authorize('Lead Person', 'Sales Person', 'Manager', 'Admin', 'Branch Partner', 'Digital Marketing Intern', 'Digital Marketing Permanent', 'Digital Marketing Manager'), invalidateCache(['cache:/api/leads*']), createLead);
 
 // Import route (Admin, Manager, Lead Person, Branch Partner)
-router.post('/import', authorize('Admin', 'Manager', 'Lead Person', 'Branch Partner'), importLeads);
+router.post('/import', authorize('Admin', 'Manager', 'Lead Person', 'Branch Partner', 'Digital Marketing Intern', 'Digital Marketing Permanent', 'Digital Marketing Manager'), importLeads);
 
-// Stats route (Admin, Manager, Lead Person, Sales Person, Branch Partner)
-router.get('/stats', authorize('Admin', 'Manager', 'Lead Person', 'Sales Person', 'Branch Partner'), getLeadStats);
+// Stats route (Admin, Manager, Lead Person, Sales Person, Branch Partner, Digital Marketing)
+router.get('/stats', authorize('Admin', 'Manager', 'Lead Person', 'Sales Person', 'Branch Partner', 'Digital Marketing Intern', 'Digital Marketing Permanent', 'Digital Marketing Manager'), getLeadStats);
 
 // Repeat customers route (Admin/Manager/Branch Partner)
 router.get('/repeat-customers', authorize('Admin', 'Manager', 'Branch Partner'), getRepeatCustomers);

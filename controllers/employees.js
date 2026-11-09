@@ -1167,16 +1167,23 @@ exports.deleteEmployee = async (req, res) => {
 // @access  Private
 exports.getDepartments = async (req, res) => {
   try {
-    const departments = await Department.find().select("name _id");
+    let departments = await Department.find().select("name _id");
 
-    // If no departments exist, create a default one
-    if (departments.length === 0) {
-      const defaultDepartment = await Department.create({
-        name: "General",
-        description: "Default department",
-      });
-      departments.push(defaultDepartment);
+    const requiredDepts = ["Sales", "Digital Marketing", "HR", "IT", "Operations", "General"];
+    for (const deptName of requiredDepts) {
+      const exists = departments.some((d) => d.name === deptName);
+      if (!exists) {
+        try {
+          const newDept = await Department.create({
+            name: deptName,
+            description: `${deptName} department`,
+          });
+          departments.push(newDept);
+        } catch (_) {}
+      }
     }
+
+    departments = await Department.find().select("name _id");
 
     res.json({
       success: true,
@@ -1236,6 +1243,12 @@ exports.getRoles = async (req, res) => {
       { name: "Team Leader", description: "Team Leader" },
       { name: "Sales Team Leader", description: "Sales Team Leader" },
       { name: "Senior Sales Executive", description: "Senior Sales Executive" },
+      { name: "IT Manager", description: "IT Department Manager" },
+      { name: "IT Intern", description: "IT Intern (Developer/Engineer)" },
+      { name: "IT Permanent", description: "IT Full-Time Permanent Staff" },
+      { name: "Digital Marketing Intern", description: "Digital Marketing Intern" },
+      { name: "Digital Marketing Permanent", description: "Digital Marketing Full-Time Specialist" },
+      { name: "Digital Marketing Manager", description: "Digital Marketing Lead & Manager" },
     ];
 
     for (const r of requiredRoles) {
