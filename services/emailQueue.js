@@ -31,10 +31,10 @@ const initEmailQueue = async () => {
     return null;
   }
 
-  // Check if REDIS_URL is configured
-  if (!process.env.REDIS_URL) {
+  // Check if REDIS_URL is configured or Redis is disabled
+  if (!process.env.REDIS_URL || process.env.DISABLE_REDIS === "true") {
     console.warn(
-      "⚠️ REDIS_URL not configured in .env. Email queue will not be available.",
+      "⚠️ Redis disabled or REDIS_URL not configured. Email queue will not be available.",
     );
     console.warn("⚠️ Falling back to synchronous email sending.");
     return null;
@@ -180,11 +180,11 @@ const initEmailQueue = async () => {
     });
 
     emailQueue.on("error", (error) => {
-      console.error("❌ Email Queue Error:", error.message);
+      console.error("❌ Email Queue Error:", error?.message || error);
       redisConnected = false;
       // If we hit the maxrequest limit, pause the queue to prevent crash loops
       if (
-        error.message &&
+        error?.message &&
         (error.message.includes("max requests limit exceeded") ||
           error.message.includes("ECONNREFUSED") ||
           error.message.includes("ENOTFOUND"))
@@ -193,9 +193,12 @@ const initEmailQueue = async () => {
           "⚠️ Redis connection lost. Pausing queue and falling back to sync mode.",
         );
         try {
-          emailQueue.pause();
-          emailQueue.close();
-          emailQueue = null;
+          if (emailQueue) {
+            const queueToClose = emailQueue;
+            emailQueue = null;
+            queueToClose.pause().catch(() => {});
+            queueToClose.close().catch(() => {});
+          }
           redisConnected = false;
         } catch (e) {
           console.error("Error closing queue:", e);

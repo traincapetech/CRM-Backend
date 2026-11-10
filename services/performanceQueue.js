@@ -23,10 +23,10 @@ const initPerformanceQueue = async () => {
     return null;
   }
 
-  // Check if REDIS_URL is configured
-  if (!process.env.REDIS_URL) {
+  // Check if REDIS_URL is configured or Redis is disabled
+  if (!process.env.REDIS_URL || process.env.DISABLE_REDIS === "true") {
     console.warn(
-      "⚠️ REDIS_URL not configured in .env. Performance queue will not be available.",
+      "⚠️ Redis disabled or REDIS_URL not configured. Performance queue will not be available.",
     );
     console.warn("⚠️ Falling back to synchronous performance calculation.");
     return null;
@@ -119,10 +119,10 @@ const initPerformanceQueue = async () => {
     });
 
     performanceQueue.on("error", (error) => {
-      console.error("❌ Performance Queue Error:", error.message);
+      console.error("❌ Performance Queue Error:", error?.message || error);
       redisConnected = false;
       if (
-        error.message &&
+        error?.message &&
         (error.message.includes("max requests limit exceeded") ||
           error.message.includes("ECONNREFUSED") ||
           error.message.includes("ENOTFOUND"))
@@ -131,9 +131,12 @@ const initPerformanceQueue = async () => {
           "⚠️ Redis connection lost. Pausing performance queue.",
         );
         try {
-          performanceQueue.pause();
-          performanceQueue.close();
-          performanceQueue = null;
+          if (performanceQueue) {
+            const queueToClose = performanceQueue;
+            performanceQueue = null;
+            queueToClose.pause().catch(() => {});
+            queueToClose.close().catch(() => {});
+          }
           redisConnected = false;
         } catch (e) {
           console.error("Error closing performance queue:", e);

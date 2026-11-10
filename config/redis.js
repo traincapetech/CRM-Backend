@@ -9,16 +9,17 @@ const Redis = require("ioredis");
 let redisClient = null;
 
 const connectRedis = () => {
-  // Only connect if REDIS_URL is provided
-  if (!process.env.REDIS_URL) {
-    console.log("ℹ️  Redis not configured - caching disabled");
-    console.log("   To enable caching, set REDIS_URL in .env");
+  // Only connect if REDIS_URL is provided and not disabled
+  if (!process.env.REDIS_URL || process.env.DISABLE_REDIS === "true") {
+    console.log("ℹ️  Redis caching is disabled or REDIS_URL not configured");
+    console.log("   Continuing without cache...");
     return null;
   }
 
   try {
     redisClient = new Redis(process.env.REDIS_URL, {
       retryStrategy: (times) => {
+        if (times > 5) return null; // stop reconnecting after 5 attempts
         const delay = Math.min(times * 50, 2000);
         return delay;
       },
@@ -35,6 +36,9 @@ const connectRedis = () => {
       // If we hit the maxrequest limit, disable redis client to prevent future calls
       if (err.message && err.message.includes("max requests limit exceeded")) {
         console.warn("⚠️ Redis limit exceeded. Disabling cache features.");
+        try {
+          if (redisClient) redisClient.disconnect();
+        } catch (e) {}
         redisClient = null;
       }
     });

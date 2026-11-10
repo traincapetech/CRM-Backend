@@ -968,7 +968,10 @@ process.on("unhandledRejection", (err, promise) => {
   if (
     err &&
     err.message &&
-    err.message.includes("max requests limit exceeded")
+    (err.message.includes("max requests limit exceeded") ||
+      err.message.includes("reading 'pause'") ||
+      err.message.includes("Connection is closed") ||
+      err.message.includes("Command queue full"))
   ) {
     console.log("⚠️ Ignoring unhandled Redis limit error to keep server alive");
     return;
@@ -976,4 +979,25 @@ process.on("unhandledRejection", (err, promise) => {
 
   // Close server & exit process
   // server.close(() => process.exit(1));
+});
+
+// Handle uncaught exceptions (prevent Redis / EventEmitter errors from crashing Render instance)
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err ? err.message || err : "Unknown error");
+
+  if (
+    err &&
+    err.message &&
+    (err.message.includes("max requests limit exceeded") ||
+      err.message.includes("reading 'pause'") ||
+      err.message.includes("Connection is closed") ||
+      err.message.includes("Command queue full") ||
+      err.message.includes("Redis connection to"))
+  ) {
+    console.warn("⚠️ Ignored uncaught Redis error to prevent instance exit");
+    return;
+  }
+
+  // For genuine fatal exceptions, log and allow process to restart safely
+  console.error("💥 Critical Uncaught Exception:", err);
 });
