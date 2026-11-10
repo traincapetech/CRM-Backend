@@ -21,7 +21,7 @@ router
   .route("/kpis")
   .get(
     protect,
-    authorize("Admin", "HR", "Manager", "Lead Person"),
+    authorize("Admin", "HR", "Manager", "Lead Person", "Digital Marketing Manager"),
     getKPITemplates,
   )
   .post(protect, authorize("Admin", "HR"), createKPITemplate);
@@ -34,11 +34,11 @@ router
 
 router
   .route("/kpis/:id/assign")
-  .post(protect, authorize("Admin", "HR", "Manager"), assignKPIToEmployees);
+  .post(protect, authorize("Admin", "HR", "Manager", "Digital Marketing Manager"), assignKPIToEmployees);
 
 router
   .route("/kpis/:id/assignments")
-  .get(protect, authorize("Admin", "HR", "Manager"), getKPIAssignments);
+  .get(protect, authorize("Admin", "HR", "Manager", "Digital Marketing Manager"), getKPIAssignments);
 
 router
   .route("/kpis/:kpiId/assignments/:targetId")
@@ -54,7 +54,7 @@ router
 // Team Performance
 router
   .route("/team/:managerId")
-  .get(protect, authorize("Admin", "HR", "Manager"), getTeamPerformance);
+  .get(protect, authorize("Admin", "HR", "Manager", "Digital Marketing Manager"), getTeamPerformance);
 
 // Admin/Testing Routes
 const adminRoutes = require("./performanceAdmin");
