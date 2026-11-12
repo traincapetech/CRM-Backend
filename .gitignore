@@ -1,5 +1,3 @@
-.env
-.env.*
 
 
 # Uploads Directory - Contains sensitive user documents
@@ -24,7 +22,6 @@ ehthumbs.db
 Thumbs.db
 
 # IDE files
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -41,3 +38,4 @@ coverage/
 node_modules/
 config/google-credentials.json
 test-upload.txt
+config.bat

@@ -5,6 +5,33 @@ const Holiday = require('../models/Holiday');
 const { notifyAdmins } = require("../services/notificationService");
 const trackChanges = require("../utils/changeTracker");
 
+// Helper: Normalize any date to UTC Midnight for the IST (Asia/Kolkata) calendar day
+// Biometric records and system standards use YYYY-MM-DDT00:00:00.000Z
+const getTodayUtcMidnight = () => {
+  const istDateStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // "YYYY-MM-DD"
+  return new Date(`${istDateStr}T00:00:00.000Z`);
+};
+
+const getNormalizedDate = (dateInput) => {
+  if (!dateInput) return getTodayUtcMidnight();
+  if (typeof dateInput === "string") {
+    const trimmed = dateInput.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return new Date(`${trimmed}T00:00:00.000Z`);
+    }
+    const slashParts = trimmed.split("/");
+    if (slashParts.length === 3) {
+      return new Date(
+        `${slashParts[2]}-${slashParts[1].padStart(2, "0")}-${slashParts[0].padStart(2, "0")}T00:00:00.000Z`
+      );
+    }
+  }
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return getTodayUtcMidnight();
+  const istDateStr = d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  return new Date(`${istDateStr}T00:00:00.000Z`);
+};
+
 // @desc    Check-in employee
 // @route   POST /api/attendance/checkin
 // @access  Private
@@ -21,29 +48,48 @@ exports.checkIn = async (req, res) => {
       });
     }
 
-    // Get today's date
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Get today's normalized UTC midnight date for Asia/Kolkata
+    const today = getTodayUtcMidnight();
+    const legacyIstMidnight = new Date(today.getTime() - 5.5 * 3600 * 1000);
 
-    // Check if already checked in today
+    // Check if already checked in today (check both normalized and legacy offset)
     const existingAttendance = await Attendance.findOne({
       employeeId: employee._id,
-      date: today
+      $or: [
+        { date: today },
+        { date: legacyIstMidnight }
+      ]
     });
 
     if (existingAttendance) {
-      return res.status(400).json({
-        success: false,
-        message: 'Already checked in for today'
+      if (existingAttendance.checkIn) {
+        return res.status(400).json({
+          success: false,
+          message: 'Already checked in for today'
+        });
+      }
+      // If a placeholder existed without checkIn time, record the checkIn
+      existingAttendance.checkIn = new Date();
+      existingAttendance.date = today;
+      existingAttendance.status = existingAttendance.status || 'PRESENT';
+      if (notes) existingAttendance.notes = notes;
+      existingAttendance.source = existingAttendance.source || 'MANUAL';
+      await existingAttendance.save();
+
+      return res.status(200).json({
+        success: true,
+        data: existingAttendance,
+        message: 'Check-in successful'
       });
     }
 
-    // Create new attendance record
+    // Create new attendance record with normalized UTC midnight date
     const attendance = await Attendance.create({
       employeeId: employee._id,
       userId: req.user.id,
       date: today,
       checkIn: new Date(),
+      status: 'PRESENT',
       notes: notes || '',
       source: 'MANUAL'
     });
@@ -78,14 +124,17 @@ exports.checkOut = async (req, res) => {
       });
     }
 
-    // Get today's date
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Get today's normalized UTC midnight date
+    const today = getTodayUtcMidnight();
+    const legacyIstMidnight = new Date(today.getTime() - 5.5 * 3600 * 1000);
 
     // Find today's attendance record
     const attendance = await Attendance.findOne({
       employeeId: employee._id,
-      date: today
+      $or: [
+        { date: today },
+        { date: legacyIstMidnight }
+      ]
     });
 
     if (!attendance) {
@@ -103,9 +152,23 @@ exports.checkOut = async (req, res) => {
     }
 
     // Update attendance with check-out time
-    attendance.checkOut = new Date();
+    const checkOutTime = new Date();
+    attendance.checkOut = checkOutTime;
+    attendance.date = today; // Normalize date to UTC midnight if it was legacy
     if (notes) attendance.notes = notes;
     attendance.source = attendance.source || 'MANUAL';
+
+    // Calculate total hours if checkIn exists
+    if (attendance.checkIn) {
+      const diffMs = checkOutTime - new Date(attendance.checkIn);
+      const totalHours = Math.round((diffMs / (1000 * 60 * 60)) * 100) / 100;
+      attendance.totalHours = totalHours;
+      if (totalHours >= 8) {
+        attendance.status = 'PRESENT';
+      } else if (totalHours >= 4 && attendance.status !== 'PRESENT') {
+        attendance.status = 'HALF_DAY';
+      }
+    }
     
     await attendance.save();
 
@@ -139,14 +202,17 @@ exports.getTodayAttendance = async (req, res) => {
       });
     }
 
-    // Get today's date
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Get today's normalized UTC midnight date
+    const today = getTodayUtcMidnight();
+    const legacyIstMidnight = new Date(today.getTime() - 5.5 * 3600 * 1000);
 
     // Find today's attendance
     const attendance = await Attendance.findOne({
       employeeId: employee._id,
-      date: today
+      $or: [
+        { date: today },
+        { date: legacyIstMidnight }
+      ]
     });
 
     console.log('Found attendance:', attendance ? attendance._id : 'None');
@@ -186,9 +252,12 @@ exports.getAttendanceHistory = async (req, res) => {
     let query = { employeeId: employee._id };
     
     if (month && year) {
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 0);
-      query.date = { $gte: startDate, $lte: endDate };
+      const parsedMonth = parseInt(month);
+      const parsedYear = parseInt(year);
+      const startDate = new Date(Date.UTC(parsedYear, parsedMonth - 1, 1, 0, 0, 0, 0));
+      const nextMonthStart = new Date(Date.UTC(parsedYear, parsedMonth, 1, 0, 0, 0, 0));
+      const legacyStart = new Date(startDate.getTime() - 6 * 3600 * 1000);
+      query.date = { $gte: legacyStart, $lt: nextMonthStart };
     }
 
     // Get attendance records with pagination
@@ -249,47 +318,19 @@ exports.getAllAttendance = async (req, res) => {
     let query = {};
     
     if (date) {
-      // Handle date in various formats (ISO, dd/mm/yyyy, etc.)
-      let queryDate;
-      if (typeof date === 'string' && date.includes('/')) {
-        // Handle dd/mm/yyyy or mm/dd/yyyy format
-        const parts = date.split('/');
-        if (parts.length === 3) {
-          // Assume dd/mm/yyyy format (common in India/UK)
-          queryDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00.000Z`);
-        } else {
-          queryDate = new Date(date);
-        }
-      } else if (typeof date === 'string' && date.match(/^\d{4}-\d{2}-\d{2}$/)) {
-        // ISO date format (YYYY-MM-DD) - treat as UTC midnight
-        queryDate = new Date(`${date}T00:00:00.000Z`);
-      } else {
-        queryDate = new Date(date);
-      }
+      const startOfDay = getNormalizedDate(date);
+      const endOfDay = new Date(startOfDay.getTime() + 24 * 3600 * 1000);
+      const legacyIstMidnight = new Date(startOfDay.getTime() - 5.5 * 3600 * 1000);
       
-      // Ensure we're working with UTC dates to avoid timezone issues
-      const startOfDay = new Date(Date.UTC(
-        queryDate.getUTCFullYear(),
-        queryDate.getUTCMonth(),
-        queryDate.getUTCDate(),
-        0, 0, 0, 0
-      ));
-      
-      const endOfDay = new Date(Date.UTC(
-        queryDate.getUTCFullYear(),
-        queryDate.getUTCMonth(),
-        queryDate.getUTCDate() + 1,
-        0, 0, 0, 0
-      ));
-      
-      query.date = {
-        $gte: startOfDay,
-        $lt: endOfDay
-      };
+      query.$or = [
+        { date: { $gte: startOfDay, $lt: endOfDay } },
+        { date: legacyIstMidnight }
+      ];
       
       console.log('Attendance query date range:', {
         from: startOfDay.toISOString(),
         to: endOfDay.toISOString(),
+        legacyIstMidnight: legacyIstMidnight.toISOString(),
         input: date
       });
     }
@@ -386,10 +427,16 @@ exports.createAttendance = async (req, res) => {
       });
     }
 
+    const normalizedDate = getNormalizedDate(date);
+    const legacyIstMidnight = new Date(normalizedDate.getTime() - 5.5 * 3600 * 1000);
+
     // Check if attendance record already exists for this employee and date
     const existingAttendance = await Attendance.findOne({
       employeeId,
-      date: new Date(date)
+      $or: [
+        { date: normalizedDate },
+        { date: legacyIstMidnight }
+      ]
     });
 
     if (existingAttendance) {
@@ -413,7 +460,7 @@ exports.createAttendance = async (req, res) => {
     const attendanceData = {
       employeeId,
       userId: employee.userId || null, // Can be null for admin-created records
-      date: new Date(date),
+      date: normalizedDate,
       status,
       notes: notes || '',
       approvedBy: req.user.id,
@@ -540,22 +587,25 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
       });
     }
 
-    // Date range for the month
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0); // Last day of month
-    const daysInMonth = endDate.getDate();
+    // Date range for the month using UTC bounds
+    const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+    const nextMonthStart = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+    const legacyStart = new Date(startDate.getTime() - 6 * 3600 * 1000);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
     
     // Fetch all attendance records for the month
     const attendanceRecords = await Attendance.find({
       employeeId: employee._id,
-      date: { $gte: startDate, $lte: endDate }
+      date: { $gte: legacyStart, $lt: nextMonthStart }
     }).sort({ date: 1 });
 
     // Fetch holidays for the month
     const holidays = await Holiday.find({
-      date: { $gte: startDate, $lte: endDate }
+      date: { $gte: legacyStart, $lt: nextMonthStart }
     });
-    const holidayDates = new Set(holidays.map(h => h.date.toISOString().split('T')[0]));
+    const holidayDates = new Set(
+      holidays.map(h => new Date(h.date).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }))
+    );
 
     // Accurate calculation based on each day of the month
     let presentDays = 0;
@@ -564,26 +614,28 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
     let totalHours = 0;
 
     // Helper for local-safe date key to avoid timezone shifts
-    const toLocaleISOString = (date) => {
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, '0');
-      const d = String(date.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
+    const toDateKey = (dateInput) => {
+      const d = new Date(dateInput);
+      return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
     };
 
     // Pre-index attendance records in a Map by their date key for O(1) lookups
     const attendanceMap = new Map();
     attendanceRecords.forEach(record => {
       if (record && record.date) {
-        attendanceMap.set(toLocaleISOString(record.date), record);
+        attendanceMap.set(toDateKey(record.date), record);
       }
     });
 
+    const todayDateKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+
     // Loop through each day of the month
     for (let d = 1; d <= daysInMonth; d++) {
-      const currentDay = new Date(year, month - 1, d);
-      const dateKey = toLocaleISOString(currentDay);
-      const dayOfWeek = currentDay.getDay(); // 0 is Sunday, 6 is Saturday
+      const dayStr = String(d).padStart(2, '0');
+      const monthStr = String(month).padStart(2, '0');
+      const dateKey = `${year}-${monthStr}-${dayStr}`;
+      const currentDay = new Date(`${dateKey}T00:00:00.000Z`);
+      const dayOfWeek = currentDay.getUTCDay(); // 0 is Sunday, 6 is Saturday
       
       const record = attendanceMap.get(dateKey);
 
@@ -616,9 +668,7 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
         // We only count as absence if it's NOT a weekend and NOT a holiday
         if (!isWeekend && !isHoliday) {
           // Check if it's in the past (to avoid counting future days as absent)
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          if (currentDay < today) {
+          if (dateKey < todayDateKey) {
             absentDays++;
           }
         }
@@ -672,28 +722,21 @@ exports.bulkMarkAttendance = async (req, res) => {
       });
     }
 
-    // Parse the input date
-    const inputDate = new Date(date);
-    
     // Ensure we're working with UTC midnight to avoid timezone issues
-    // Use the input date's year, month, and day for UTC midnight
-    const startOfDay = new Date(Date.UTC(
-      inputDate.getFullYear(),
-      inputDate.getMonth(),
-      inputDate.getDate(),
-      0, 0, 0, 0
-    ));
+    const startOfDay = getNormalizedDate(date);
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 3600 * 1000);
+    const legacyIstMidnight = new Date(startOfDay.getTime() - 5.5 * 3600 * 1000);
 
     const results = [];
     const errors = [];
 
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
-
     // 1. Fetch all existing attendance records for the target employees on the target date
     const existingAttendance = await Attendance.find({
       employeeId: { $in: employeeIds },
-      date: { $gte: startOfDay, $lt: endOfDay }
+      $or: [
+        { date: { $gte: startOfDay, $lt: endOfDay } },
+        { date: legacyIstMidnight }
+      ]
     });
 
     const existingMap = new Map(existingAttendance.map(att => [att.employeeId.toString(), att]));
@@ -722,6 +765,7 @@ exports.bulkMarkAttendance = async (req, res) => {
             update: {
               $set: {
                 status,
+                date: startOfDay,
                 notes: notes !== undefined ? notes : existing.notes,
                 approvedBy: req.user.id,
                 source: 'MANUAL'
@@ -760,7 +804,10 @@ exports.bulkMarkAttendance = async (req, res) => {
       // 5. Fetch updated/inserted records to return in response to maintain API contract compatibility
       const updatedRecords = await Attendance.find({
         employeeId: { $in: processedEmployeeIds },
-        date: { $gte: startOfDay, $lt: endOfDay }
+        $or: [
+          { date: { $gte: startOfDay, $lt: endOfDay } },
+          { date: legacyIstMidnight }
+        ]
       });
       results.push(...updatedRecords);
     }

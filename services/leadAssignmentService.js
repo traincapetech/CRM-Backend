@@ -26,11 +26,10 @@ const ROLE_SENIORITY_SCORES = {
  * (Excludes users marked ABSENT or ON_LEAVE in Attendance or with approved Leave today)
  */
 const getPresentSalesPersons = async (targetDate = new Date()) => {
-  const startOfDay = new Date(targetDate);
-  startOfDay.setHours(0, 0, 0, 0);
-
-  const endOfDay = new Date(targetDate);
-  endOfDay.setHours(23, 59, 59, 999);
+  const istDateStr = new Date(targetDate).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const startOfDay = new Date(`${istDateStr}T00:00:00.000Z`);
+  const endOfDay = new Date(startOfDay.getTime() + 24 * 3600 * 1000);
+  const legacyIstMidnight = new Date(startOfDay.getTime() - 5.5 * 3600 * 1000);
 
   // 1. Fetch active users in Sales roles
   const salesRoles = [
@@ -61,11 +60,18 @@ const getPresentSalesPersons = async (targetDate = new Date()) => {
 
   // 2. Fetch Attendance records for today
   const todayAttendanceRecords = await Attendance.find({
-    date: { $gte: startOfDay, $lte: endOfDay },
     $or: [
-      { userId: { $in: userIds } },
-      { employeeId: { $in: employeeIds } },
+      { date: { $gte: startOfDay, $lt: endOfDay } },
+      { date: legacyIstMidnight }
     ],
+    $and: [
+      {
+        $or: [
+          { userId: { $in: userIds } },
+          { employeeId: { $in: employeeIds } },
+        ]
+      }
+    ]
   });
 
   const presentUserIds = new Set();
