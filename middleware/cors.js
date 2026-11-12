@@ -30,8 +30,8 @@ const isOriginAllowed = (origin) => {
 
   if (allowedOrigins.includes(origin)) return true;
 
-  // Allow any subdomain on traincapetech.in
-  if (/^https?:\/\/([a-z0-9-]+\.)?traincapetech\.in$/i.test(origin)) {
+  // Allow traincapetech.in and any (multi-level) subdomain, e.g. www.traincapecrm.traincapetech.in
+  if (/^https?:\/\/([a-z0-9-]+\.)*traincapetech\.in$/i.test(origin)) {
     return true;
   }
 

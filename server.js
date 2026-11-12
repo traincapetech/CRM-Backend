@@ -182,13 +182,10 @@ module.exports.app = app;
 // Socket.IO setup with CORS
 const io = socketIo(server, {
   cors: {
-    origin: [
-      "http://localhost:3000",
-      "https://verdaexports.com",
-      "http://localhost:5173",
-      "https://traincapecrm.traincapetech.in",
-      "http://traincapecrm.traincapetech.in"
-    ],
+    origin: (origin, callback) => {
+      const { isOriginAllowed } = require("./middleware/cors");
+      return callback(null, isOriginAllowed(origin));
+    },
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -892,7 +889,7 @@ app.use((err, req, res, next) => {
 
   // Always set CORS headers for allowed origins or in development
   const isTraincapeSubdomain = origin
-    ? /^https?:\/\/([a-z0-9-]+\.)?traincapetech\.in$/i.test(origin)
+    ? /^https?:\/\/([a-z0-9-]+\.)*traincapetech\.in$/i.test(origin)
     : false;
 
   if (
