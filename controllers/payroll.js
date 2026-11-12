@@ -16,22 +16,27 @@ const calculateAttendanceForMonth = async (employeeId, month, year) => {
     const employee = await Employee.findById(employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    // Date range for the month
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0); // Last day of month
-    const daysInMonth = endDate.getDate();
+    // Date range for the month using UTC bounds
+    const parsedMonth = parseInt(month);
+    const parsedYear = parseInt(year);
+    const startDate = new Date(Date.UTC(parsedYear, parsedMonth - 1, 1, 0, 0, 0, 0));
+    const nextMonthStart = new Date(Date.UTC(parsedYear, parsedMonth, 1, 0, 0, 0, 0));
+    const legacyStart = new Date(startDate.getTime() - 6 * 3600 * 1000);
+    const daysInMonth = new Date(Date.UTC(parsedYear, parsedMonth, 0)).getUTCDate();
     
     // Fetch all attendance records for the month
     const attendanceRecords = await Attendance.find({
       employeeId: employee._id,
-      date: { $gte: startDate, $lte: endDate }
+      date: { $gte: legacyStart, $lt: nextMonthStart }
     }).sort({ date: 1 });
 
     // Fetch holidays for the month
     const holidays = await Holiday.find({
-      date: { $gte: startDate, $lte: endDate }
+      date: { $gte: legacyStart, $lt: nextMonthStart }
     });
-    const holidayDates = new Set(holidays.map(h => h.date.toISOString().split('T')[0]));
+    const holidayDates = new Set(
+      holidays.map(h => new Date(h.date).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }))
+    );
 
     // Accurate calculation based on each day of the month
     let presentDays = 0;
@@ -40,26 +45,28 @@ const calculateAttendanceForMonth = async (employeeId, month, year) => {
     let overtimeHours = 0;
 
     // Helper for local-safe date key to avoid timezone shifts
-    const toLocaleISOString = (date) => {
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, '0');
-      const d = String(date.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
+    const toDateKey = (dateInput) => {
+      const d = new Date(dateInput);
+      return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
     };
 
     // Pre-index attendance records in a Map by their date key for O(1) lookups
     const attendanceMap = new Map();
     attendanceRecords.forEach(record => {
       if (record && record.date) {
-        attendanceMap.set(toLocaleISOString(record.date), record);
+        attendanceMap.set(toDateKey(record.date), record);
       }
     });
 
+    const todayDateKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+
     // Loop through each day of the month
     for (let d = 1; d <= daysInMonth; d++) {
-      const currentDay = new Date(year, month - 1, d);
-      const dateKey = toLocaleISOString(currentDay);
-      const dayOfWeek = currentDay.getDay(); // 0 is Sunday, 6 is Saturday
+      const dayStr = String(d).padStart(2, '0');
+      const monthStr = String(parsedMonth).padStart(2, '0');
+      const dateKey = `${parsedYear}-${monthStr}-${dayStr}`;
+      const currentDay = new Date(`${dateKey}T00:00:00.000Z`);
+      const dayOfWeek = currentDay.getUTCDay(); // 0 is Sunday, 6 is Saturday
       
       const record = attendanceMap.get(dateKey);
 
@@ -91,9 +98,7 @@ const calculateAttendanceForMonth = async (employeeId, month, year) => {
       } else {
         // No record exists. 
         if (!isWeekend && !isHoliday) {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          if (currentDay < today) {
+          if (dateKey < todayDateKey) {
             absentDays++;
           }
         }
