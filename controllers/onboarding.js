@@ -452,12 +452,29 @@ exports.finalizeOnboarding = async (req, res) => {
     }
 
     // Check for duplicate Employee email (catches orphaned Employee records from partial previous finalize)
-    const employeeEmailExists = await Employee.findOne({ email: officialEmail.toLowerCase() });
-    if (employeeEmailExists) {
-      return res.status(400).json({
-        success: false,
-        message: `An employee record already exists with email "${officialEmail}". This may be from a previous incomplete finalization. Please contact the admin to resolve the duplicate, or use a different email.`,
-      });
+    const candidatePersonalEmail = (invite.personalEmail || officialEmail).toLowerCase().trim();
+    const candidateOfficialEmail = officialEmail.toLowerCase().trim();
+
+    const existingEmp = await Employee.findOne({
+      $or: [
+        { email: candidatePersonalEmail },
+        { email: candidateOfficialEmail },
+        { officialEmail: candidateOfficialEmail },
+      ]
+    });
+
+    if (existingEmp) {
+      // Check if this existing employee is an orphaned record from a previously failed finalization for this candidate
+      const isOrphan = !existingEmp.userId || !(await User.findById(existingEmp.userId));
+      if (isOrphan && invite.onboardingStatus !== "JOINED") {
+        console.log(`🧹 Removing orphaned employee ${existingEmp._id} (${existingEmp.fullName}) from prior failed finalization before retry`);
+        await Employee.findByIdAndDelete(existingEmp._id);
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: `An employee record already exists with email "${officialEmail}". This may be from a previous incomplete finalization. Please contact the admin to resolve the duplicate, or use a different email.`,
+        });
+      }
     }
 
     // 1. Decrypt PII from invite
@@ -473,8 +490,16 @@ exports.finalizeOnboarding = async (req, res) => {
       if (foundBranch) resolvedBranchId = foundBranch._id;
     }
 
+    // Sanitize reportingManagerId so empty string "" or invalid value does not trigger CastError
+    const mongoose = require("mongoose");
+    const sanitizedManagerId = (reportingManagerId && mongoose.Types.ObjectId.isValid(reportingManagerId))
+      ? new mongoose.Types.ObjectId(reportingManagerId)
+      : null;
+
     // 2. Create User account (password hashed by pre('save'))
-    let newUser;
+    let newUser = null;
+    let newEmployee = null;
+
     try {
       newUser = await User.create({
         fullName: invite.fullName,
@@ -494,12 +519,13 @@ exports.finalizeOnboarding = async (req, res) => {
       // 3. Create Employee record (PII encrypted by pre('save'))
       const employeeData = {
         fullName: invite.fullName,
-        email: (invite.personalEmail || officialEmail).toLowerCase().trim(),
-        officialEmail: officialEmail.toLowerCase().trim(),
+        email: candidatePersonalEmail,
+        officialEmail: candidateOfficialEmail,
         phoneNumber: invite.phoneNumber,
         department: invite.department._id || invite.department,
         role: invite.role._id || invite.role,
         branchId: resolvedBranchId || null,
+        reportingManager: sanitizedManagerId,
         employmentType: invite.employmentType,
         salary: confirmedSalary || invite.proposedSalary,
         joiningDate: invite.joiningDate,
@@ -549,7 +575,7 @@ exports.finalizeOnboarding = async (req, res) => {
         });
       }
 
-      const newEmployee = await Employee.create(employeeData);
+      newEmployee = await Employee.create(employeeData);
 
       // 4. Link User -> Employee
       newUser.employeeId = newEmployee._id;
@@ -560,7 +586,7 @@ exports.finalizeOnboarding = async (req, res) => {
       invite.employeeId = newEmployee._id;
       invite.officialEmail = officialEmail;
       invite.username = username || officialEmail;
-      invite.reportingManagerId = reportingManagerId;
+      invite.reportingManagerId = sanitizedManagerId;
       invite.confirmedSalary = confirmedSalary;
       invite.probationPeriod = probationPeriod;
       invite.workMode = workMode;
@@ -570,7 +596,7 @@ exports.finalizeOnboarding = async (req, res) => {
 
       // (Optional success steps like emails)
       try {
-        await sendJoiningDayWelcomeEmail({ user: newUser, employee: newEmployee, password: temporaryPassword, reportingManagerId });
+        await sendJoiningDayWelcomeEmail({ user: newUser, employee: newEmployee, password: temporaryPassword, reportingManagerId: sanitizedManagerId });
         await JourneyService.startJourney("Employee Onboarding", newEmployee._id, req.user.id);
       } catch (e) { console.error("Non-critical finalize steps failed:", e.message); }
 
@@ -585,19 +611,17 @@ exports.finalizeOnboarding = async (req, res) => {
         data: { invite, employee: newEmployee, user: { _id: newUser._id, email: newUser.email } },
       });
     } catch (error) {
-      // 🚨 CRITICAL CLEANUP: If employee creation fails, delete the ghost user
+      // 🚨 CRITICAL CLEANUP: If finalize fails at any point, rollback created records
+      if (newEmployee && (!invite.employeeId || invite.onboardingStatus !== "JOINED")) {
+        console.log(`🧹 Cleaning up orphaned employee ${newEmployee._id} after finalize failure`);
+        await Employee.findByIdAndDelete(newEmployee._id);
+      }
       if (newUser) {
         console.log(`🧹 Cleaning up ghost user ${newUser.email} after finalize failure`);
         await User.findByIdAndDelete(newUser._id);
       }
       throw error;
     }
-
-    res.status(201).json({
-      success: true,
-      message: "Employee account created successfully",
-      data: { invite, employee: newEmployee, user: { _id: newUser._id, email: newUser.email } },
-    });
   } catch (error) {
     console.error("finalizeOnboarding error:", error);
     res.status(500).json({ success: false, message: error.message });
