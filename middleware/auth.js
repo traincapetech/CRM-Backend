@@ -10,13 +10,18 @@ const protect = async (req, res, next) => {
     token = req.cookies.token;
     console.log("Auth middleware - Token found in cookie");
   }
-  // Fallback: Check Authorization header (backward compatibility)
+  // Check Authorization header
   else if (
     req.headers.authorization &&
     req.headers.authorization.startsWith("Bearer")
   ) {
     token = req.headers.authorization.split(" ")[1];
     console.log("Auth middleware - Token found in Authorization header");
+  }
+  // Check for token in query parameter (for direct browser preview/download links)
+  else if (req.query && req.query.token) {
+    token = req.query.token;
+    console.log("Auth middleware - Token found in query parameter");
   }
 
   // Make sure token exists

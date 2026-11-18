@@ -1606,24 +1606,94 @@ exports.getDocument = async (req, res) => {
         .json({ success: false, message: "Invalid filename" });
     }
 
-    const baseDir = path.resolve(__dirname, "..", "uploads", "employees");
-    const filePath = path.resolve(baseDir, filename);
+    const candidateDirs = [
+      path.resolve(__dirname, "..", "uploads", "employees"),
+      path.resolve(__dirname, "..", "uploads", "documents"),
+      path.resolve(__dirname, "..", "uploads", "profile-pictures"),
+      path.resolve(__dirname, "..", "uploads", "incentives"),
+      path.resolve(__dirname, "..", "uploads", "tmp"),
+      path.resolve(__dirname, "..", "uploads"),
+    ];
 
-    // Verify canonical path resides strictly inside uploads/employees
-    if (!filePath.startsWith(baseDir + path.sep)) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Access denied" });
+    let foundFilePath = null;
+    let foundStats = null;
+
+    for (const dir of candidateDirs) {
+      const candidate = path.resolve(dir, filename);
+      if (candidate.startsWith(dir + path.sep) && fs.existsSync(candidate)) {
+        try {
+          const s = fs.statSync(candidate);
+          if (s.isFile()) {
+            foundFilePath = candidate;
+            foundStats = s;
+            break;
+          }
+        } catch (e) {
+          // continue checking
+        }
+      }
     }
 
-    if (!fs.existsSync(filePath)) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Document not found" });
-    }
+    if (!foundFilePath) {
+      // Check MongoDB if this document has an external URL (e.g. Cloudflare R2 or Drive)
+      try {
+        const Employee = require("../models/Employee");
+        const docQuery = {
+          $or: [
+            { "documents.photograph.filename": filename },
+            { "documents.tenthMarksheet.filename": filename },
+            { "documents.twelfthMarksheet.filename": filename },
+            { "documents.degree.filename": filename },
+            { "documents.panCard.filename": filename },
+            { "documents.aadharCard.filename": filename },
+            { "documents.cheque.filename": filename },
+            { "documents.passbook.filename": filename },
+            { "documents.experienceLetter.filename": filename },
+            { "documents.relievingLetter.filename": filename },
+            { "documents.salarySlip.filename": filename },
+            { "documents.resume.filename": filename },
+            { "documents.photograph.path": new RegExp(filename, "i") },
+            { "documents.tenthMarksheet.path": new RegExp(filename, "i") },
+            { "documents.twelfthMarksheet.path": new RegExp(filename, "i") },
+            { "documents.degree.path": new RegExp(filename, "i") },
+            { "documents.panCard.path": new RegExp(filename, "i") },
+            { "documents.aadharCard.path": new RegExp(filename, "i") },
+            { "documents.cheque.path": new RegExp(filename, "i") },
+            { "documents.passbook.path": new RegExp(filename, "i") },
+            { "documents.experienceLetter.path": new RegExp(filename, "i") },
+            { "documents.relievingLetter.path": new RegExp(filename, "i") },
+            { "documents.salarySlip.path": new RegExp(filename, "i") },
+            { "documents.resume.path": new RegExp(filename, "i") },
+          ],
+        };
+        const emp = await Employee.findOne(docQuery).lean();
+        if (emp && emp.documents) {
+          for (const docKey of Object.keys(emp.documents)) {
+            const docObj = emp.documents[docKey];
+            if (docObj) {
+              const url =
+                typeof docObj === "string"
+                  ? docObj
+                  : docObj.url || docObj.webViewLink;
+              const matchFn =
+                typeof docObj === "object"
+                  ? docObj.filename || docObj.path
+                  : docObj;
+              if (
+                url &&
+                (url.startsWith("http://") || url.startsWith("https://")) &&
+                matchFn &&
+                matchFn.includes(filename)
+              ) {
+                return res.redirect(url);
+              }
+            }
+          }
+        }
+      } catch (dbErr) {
+        console.error("Error looking up document fallback in DB:", dbErr);
+      }
 
-    const stats = fs.statSync(filePath);
-    if (!stats.isFile()) {
       return res
         .status(404)
         .json({ success: false, message: "Document not found" });
@@ -1641,11 +1711,14 @@ exports.getDocument = async (req, res) => {
     const contentType = mimeTypes[ext] || "application/octet-stream";
 
     res.setHeader("Content-Type", contentType);
-    res.setHeader("Content-Length", stats.size);
+    res.setHeader("Content-Length", foundStats.size);
     res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Content-Disposition", `inline; filename="${filename.replace(/"/g, "")}"`);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${filename.replace(/"/g, "")}"`,
+    );
 
-    fs.createReadStream(filePath).pipe(res);
+    fs.createReadStream(foundFilePath).pipe(res);
   } catch (err) {
     console.error("Error serving document:", err);
     res.status(500).json({ success: false, message: "Server Error" });
