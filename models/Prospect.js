@@ -152,7 +152,9 @@ const prospectSchema = new mongoose.Schema({
 prospectSchema.index({ email: 1 });
 prospectSchema.index({ phone: 1 });
 prospectSchema.index({ assignedTo: 1 });
+prospectSchema.index({ assignedTo: 1, nextFollowUpDate: 1 });
 prospectSchema.index({ createdBy: 1 });
+prospectSchema.index({ createdBy: 1, nextFollowUpDate: 1 });
 prospectSchema.index({ status: 1 });
 prospectSchema.index({ source: 1 });
 prospectSchema.index({ createdAt: -1 });

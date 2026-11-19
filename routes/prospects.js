@@ -7,15 +7,20 @@ const {
   updateProspect,
   deleteProspect,
   convertToLead,
-  getProspectStats
+  getProspectStats,
+  getDueFollowUps
 } = require('../controllers/prospectController');
 const { protect, authorize } = require('../middleware/auth');
 
 // Apply authentication to all prospect routes
 router.use(protect);
 
-// Apply role-based authorization (only Sales Person, Manager, Admin)
-router.use(authorize('Sales Person', 'Manager', 'Admin'));
+// GET /api/prospects/due-today - Get logged-in user's prospects scheduled for follow-up today
+// Accessible to any authenticated user (strictly returns only their own assigned prospects)
+router.get('/due-today', getDueFollowUps);
+
+// Apply role-based authorization
+router.use(authorize('Sales Person', 'Sales Team Leader', 'Team Leader', 'Senior Sales Executive', 'Sales Executive', 'Sales Manager', 'Manager', 'Admin', 'Branch Partner'));
 
 // GET /api/prospects - Get all prospects with filtering
 router.get('/', getProspects);
