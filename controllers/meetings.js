@@ -268,11 +268,56 @@ exports.createMeeting = async (req, res) => {
   }
 };
 
+/**
+ * Automatically transition stale active/scheduled meetings whose time window has passed
+ * into 'ended' so old meetings never appear as "Live Now" or "Today".
+ */
+const autoExpireStaleMeetings = async () => {
+  try {
+    const now = new Date();
+    // 30-minute grace period past scheduledEndTime
+    const endCutoff = new Date(now.getTime() - 30 * 60 * 1000);
+    // For legacy meetings without scheduledEndTime, expire after 3 hours from start/creation
+    const legacyCutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+
+    await Meeting.updateMany(
+      {
+        status: { $in: ["active", "scheduled"] },
+        $or: [
+          { scheduledEndTime: { $ne: null, $lt: endCutoff } },
+          {
+            $and: [
+              { $or: [{ scheduledEndTime: null }, { scheduledEndTime: { $exists: false } }] },
+              { scheduledAt: { $ne: null, $lt: legacyCutoff } },
+            ],
+          },
+          {
+            $and: [
+              { $or: [{ scheduledEndTime: null }, { scheduledEndTime: { $exists: false } }] },
+              { $or: [{ scheduledAt: null }, { scheduledAt: { $exists: false } }] },
+              { createdAt: { $lt: legacyCutoff } },
+            ],
+          },
+        ],
+      },
+      {
+        $set: {
+          status: "ended",
+          endedAt: now,
+        },
+      }
+    );
+  } catch (err) {
+    console.error("Auto-expire stale meetings error (non-blocking):", err.message);
+  }
+};
+
 // @desc    Get all meetings for a lead/contact or by type
 // @route   GET /api/meetings
 // @access  Private
 exports.getMeetings = async (req, res) => {
   try {
+    await autoExpireStaleMeetings();
     const { leadId, contactId, type } = req.query;
     let query = {};
 
@@ -385,6 +430,8 @@ exports.endMeeting = async (req, res) => {
 // @access  Private
 exports.getMyMeetings = async (req, res) => {
   try {
+    await autoExpireStaleMeetings();
+
     let userId = req.user.id;
     if (["Admin", "Manager", "IT Manager", "HR"].includes(req.user.role) && req.query.userId) {
       userId = req.query.userId;

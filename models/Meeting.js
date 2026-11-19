@@ -46,7 +46,7 @@ const MeetingSchema = new mongoose.Schema(
     },
     scheduledAt: {
       type: Date,
-      default: Date.now,
+      default: null,
     },
     scheduledEndTime: {
       type: Date,
