@@ -358,6 +358,54 @@ const getProspectStats = async (req, res) => {
   }
 };
 
+// Get prospects scheduled for follow-up TODAY for the currently logged-in user
+const getDueFollowUps = async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    // Use IST calendar date (matches <input type="date"> stored as UTC midnight YYYY-MM-DDT00:00:00.000Z)
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const startOfTodayUTC = new Date(`${todayStr}T00:00:00.000Z`);
+    const endOfTodayUTC = new Date(`${todayStr}T23:59:59.999Z`);
+
+    const ownerFilter = {
+      $or: [
+        { assignedTo: userId },
+        {
+          createdBy: userId,
+          $or: [{ assignedTo: null }, { assignedTo: { $exists: false } }]
+        }
+      ]
+    };
+
+    const dueToday = await Prospect.find({
+      ...ownerFilter,
+      status: { $nin: ['Converted to Lead', 'Lost', 'Not Interested'] },
+      nextFollowUpDate: {
+        $gte: startOfTodayUTC,
+        $lte: endOfTodayUTC
+      }
+    })
+      .select('name email phone company serviceInterest status priority nextFollowUpDate remark notes contactMethod source')
+      .sort({ priority: 1, nextFollowUpDate: 1 })
+      .limit(50)
+      .lean();
+
+    res.json({
+      success: true,
+      todayDate: todayStr,
+      count: dueToday.length,
+      data: dueToday
+    });
+  } catch (error) {
+    console.error('Get due follow-ups error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching due prospect follow-ups',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getProspects,
   getProspectById,
@@ -365,5 +413,6 @@ module.exports = {
   updateProspect,
   deleteProspect,
   convertToLead,
-  getProspectStats
+  getProspectStats,
+  getDueFollowUps
 }; 
